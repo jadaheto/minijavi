@@ -6,7 +6,8 @@ import { join, resolve, sep } from 'node:path';
 import * as QRCode from 'qrcode';
 import { ConfigService } from '../config/config.service';
 import { UsageService } from '../usage/usage.service';
-import { checkSite, SiteCheck } from './site-check';
+import { SiteCheck } from './site-check';
+import { blockedReason, detectGates, evaluateStop, GateResult, missingGate, repairPrompt, runGate, StopReason, treeHash, weakest } from './gates';
 
 export interface Project {
   slug: string;
@@ -23,7 +24,26 @@ export interface Project {
   check?: SiteCheck;         // revision automatica del sitio publicado tras el ultimo encargo
   repaired?: boolean;        // el ultimo encargo necesito una correccion automatica
   sessionJobs?: number;      // encargos hechos en la sesion actual de Claude Code (al llegar al tope se empieza una nueva)
+  run?: RunInfo;             // como cerro el ciclo del ultimo encargo: por que se detuvo y que dijo cada gate
 }
+/** Resultado del ciclo de un encargo (pasadas + comprobaciones del servidor). */
+export interface RunInfo {
+  at: string; stop: StopReason; passes: number; seconds: number;
+  gates: { id: string; kind: string; label: string; ok: boolean; exit: number | null; seconds: number; output: string }[];
+}
+/** Estado del ciclo en curso. */
+interface Run {
+  project: Project; task: string; formUrl: string; model: { id: string; label: string }; t0: number; deadline: number;
+  pass: number; maxPasses: number;
+  stale: number; weak?: string; hash?: string; // comprobaciones seguidas con el mismo gate en rojo y los archivos iguales
+  seen: Set<string>;                            // gates que ya existieron en este encargo (si desaparecen, fallan)
+  usd: number; turns: number;
+}
+interface Job {
+  slug: string; proc?: ChildProcess; t0: number; activity: string; spoken: string; steps: number; timer?: NodeJS.Timeout; cancelled?: boolean; timedOut?: boolean;
+  model: string; agents: Set<string>; agentsTotal: number; code: string[]; run: Run; checking?: boolean;
+}
+const GATE_ORDER = ['sitio', 'pruebas', 'lint'];
 /** Modelos de Claude Code que Javier puede elegir por voz (verificados con su suscripcion el 2026-11-17). */
 export const MODELS = [
   { key: 'fable', id: 'claude-fable-5-2', label: 'Fable 5.2' },
@@ -35,8 +55,9 @@ export const MODELS = [
 export interface WorkState {
   active: boolean; project?: string; model?: string; activity?: string; spoken?: string;
   steps?: number; agents?: number; agentsTotal?: number; seconds?: number; code?: string[];
+  pass?: number; passes?: number; checking?: boolean;
 }
-export interface JobDone { project: Project; ok: boolean; summary: string; seconds: number; site: boolean; check?: SiteCheck; }
+export interface JobDone { project: Project; ok: boolean; summary: string; seconds: number; site: boolean; check?: SiteCheck; stop: StopReason; }
 
 /** Nombre de carpeta seguro: minusculas, digitos y guiones. */
 export function slugify(name: string): string {
@@ -53,7 +74,7 @@ Trabajas para Javier Hermosilla, que te da los encargos hablando con su avatar d
 - No inventes datos de Javier, precios ni testimonios; si faltan, usa textos claramente marcados para completar y dilo en el informe.
 - Si te falta una decisión importante, toma la opción más razonable y dilo; si de verdad no puedes seguir, pregunta en el informe.
 - Memoria del proyecto: mantén en la raíz un archivo ESTADO.md corto (máximo 40 líneas, texto plano) con: qué es el proyecto y para quién, decisiones tomadas y su motivo, estructura de archivos, cómo probarlo y qué quedó pendiente. Si existe, léelo ANTES de empezar; actualízalo SIEMPRE antes de terminar. Cada cierto tiempo empezarás sin recordar la conversación anterior y ese archivo será lo único que tengas: escribe ahí lo que necesitarías saber, no la historia de lo que pasó.
-- Comprobar es parte del trabajo: antes de terminar, PRUEBA lo que hiciste. Abre los archivos que escribiste, verifica que cada enlace, imagen, estilo y script local exista con ese nombre exacto, ejecuta lo que se pueda ejecutar (node --check, pruebas, un servidor temporal y curl) y corrige lo que falle. Al terminar, el servidor revisa solo los enlaces y archivos de "sitio/"; si encuentra fallos te los devuelve.
+- Comprobar es parte del trabajo: antes de terminar, PRUEBA lo que hiciste. Abre los archivos que escribiste, verifica que cada enlace, imagen, estilo y script local exista con ese nombre exacto, ejecuta lo que se pueda ejecutar (node --check, pruebas, un servidor temporal y curl) y corrige lo que falle. Cuando termines, el servidor ejecuta sus propias comprobaciones: revisa los enlaces y archivos de "sitio/" y, si el package.json del proyecto tiene los scripts "test" o "lint", corre npm test y npm run lint. Si algo falla te devuelve la salida literal para otra pasada, y a Javier se le dice el resultado real de esas comprobaciones, no lo que tú afirmes. Si el proyecto tiene código con lógica (no una página estática), déjale un script "test" real que la compruebe.
 - Termina con un informe BREVE en español, en texto plano sin markdown (se leerá en voz alta): qué hiciste, qué quedó pendiente y, si aplica, la pregunta que necesitas que te respondan. Cierra con dos frases: "Comprobado:" (qué verificaste y cómo) y "Sin comprobar:" (lo que no pudiste verificar). No digas que algo funciona si no lo probaste.`;
 
 /**
@@ -73,10 +94,7 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
   private readonly log = new Logger(WorkshopService.name);
   private readonly root: string;
   private projects: Project[] = [];
-  private job?: {
-    slug: string; proc: ChildProcess; t0: number; activity: string; spoken: string; steps: number; timer: NodeJS.Timeout; cancelled?: boolean;
-    model: string; agents: Set<string>; agentsTotal: number; code: string[];
-  };
+  private job?: Job;
   private progressListeners: ((w: WorkState) => void)[] = [];
   private lastEmit = 0; private emitTimer?: NodeJS.Timeout;
   private listeners: ((d: JobDone) => void)[] = [];
@@ -93,7 +111,7 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
   async onModuleInit() {
     if (!this.enabled) return;
     for (const r of await this.db.query<{ data: string }>('SELECT data FROM projects ORDER BY updated_at')) try { this.projects.push(JSON.parse(r.data)); } catch { /* registro dañado */ }
-    for (const p of this.projects) if (p.status === 'trabajando') { p.status = 'error'; p.lastSummary = 'El servidor se reinició mientras trabajaba; el encargo quedó a medias.'; this.save(p); }
+    for (const p of this.projects) if (p.status === 'trabajando') { p.status = 'error'; p.lastSummary = 'El servidor se reinició mientras trabajaba; el encargo quedó a medias y no se reanudó solo.'; p.unseen = true; this.save(p); }
     this.log.log(`taller activo: ${this.projects.length} proyectos${this.cfg.tallerUser ? `, usuario ${this.cfg.tallerUser}` : ' (sin usuario separado)'}`);
   }
 
@@ -109,7 +127,7 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
   }
 
   get enabled() { return !!this.cfg.claudeToken; }
-  onModuleDestroy() { this.job?.proc.kill('SIGTERM'); }
+  onModuleDestroy() { const j = this.job; this.job = undefined; j?.proc?.kill('SIGTERM'); }
   onDone(fn: (d: JobDone) => void) { this.listeners.push(fn); }
   onProgress(fn: (w: WorkState) => void) { this.progressListeners.push(fn); }
 
@@ -127,6 +145,7 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     return {
       active: true, project: p?.name ?? j.slug, model: MODELS.find((m) => m.id === j.model)?.label ?? j.model, activity: j.activity, spoken: j.spoken,
       steps: j.steps, agents: j.agents.size, agentsTotal: j.agentsTotal, seconds: Math.round((Date.now() - j.t0) / 1000), code: j.code.slice(-14),
+      pass: j.run.pass, passes: j.run.maxPasses, checking: !!j.checking,
     };
   }
   /** Avisa el progreso como mucho una vez por segundo. */
@@ -166,7 +185,7 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     const p = this.projects.find((x) => x.slug === this.job!.slug);
     const min = Math.max(1, Math.round((Date.now() - this.job.t0) / 60000));
     const st = this.state();
-    return `Trabajando en "${p?.name ?? this.job.slug}" con ${st.model} hace ${min} min (${this.job.steps} pasos${st.agentsTotal ? `, ${st.agentsTotal} subagentes lanzados` : ''}). Ahora: ${this.job.activity}. Encargo: ${p?.lastTask ?? ''}`;
+    return `Trabajando en "${p?.name ?? this.job.slug}" con ${st.model} hace ${min} min (${this.job.run.pass > 1 ? `pasada ${this.job.run.pass} de ${this.job.run.maxPasses}, ` : ''}${this.job.steps} pasos${st.agentsTotal ? `, ${st.agentsTotal} subagentes lanzados` : ''}). Ahora: ${this.job.activity}. Encargo: ${p?.lastTask ?? ''}`;
   }
   busy() { return this.job?.slug; }
 
@@ -192,17 +211,22 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
 
   cancel(): string {
     if (!this.job) return 'No hay ningún encargo en curso.';
-    this.job.cancelled = true;
-    this.job.proc.kill('SIGTERM');
-    setTimeout(() => this.job?.proc.kill('SIGKILL'), 5000).unref();
+    const job = this.job;
+    job.cancelled = true;
+    job.proc?.kill('SIGTERM');
+    setTimeout(() => job.proc?.kill('SIGKILL'), 5000).unref();
     return 'Encargo cancelado. Lo que alcanzó a hacer queda en el proyecto.';
   }
 
   /**
    * Empieza un encargo y vuelve enseguida; el resultado llega por `onDone`.
    * Devuelve el texto para el modelo (si empezo o por que no).
+   *
+   * Un encargo es un CICLO: pasada de Claude Code -> el servidor ejecuta los gates (`gates.ts`) -> si alguno falla, otra
+   * pasada en la misma sesion con la salida literal del gate mas debil. Se detiene cuando todo pasa o por un limite
+   * (pasadas, sin progreso, tiempo). A Javier se le avisa UNA vez, al cerrar el ciclo, con el resultado real.
    */
-  start(projectName: string, task: string, formUrl: string, createIfMissing: boolean, modelName?: string, repair = false): string {
+  start(projectName: string, task: string, formUrl: string, createIfMissing: boolean, modelName?: string): string {
     if (!this.enabled) return 'El taller no está configurado (falta CLAUDE_CODE_OAUTH_TOKEN).';
     task = task.trim();
     if (task.length < 8) return 'Falta describir el encargo con más detalle.';
@@ -220,19 +244,39 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     const project = p;
     // Sesion de Claude Code: retomarla le da memoria, pero cada encargo relee toda la conversacion anterior. Tras
     // TALLER_SESSION_JOBS encargos se empieza una sesion nueva que arranca leyendo ESTADO.md (si el proyecto ya lo tiene;
-    // si no, se sigue retomando hasta que lo escriba). Una correccion automatica siempre sigue en la misma sesion.
+    // si no, se sigue retomando hasta que lo escriba). Las pasadas de correccion de un encargo siguen en su misma sesion.
     let prompt = task;
-    if (project.sessionId && !repair && (project.sessionJobs ?? project.jobs) >= this.cfg.tallerSessionJobs && existsSync(join(this.dir(project.slug), 'ESTADO.md'))) {
+    if (project.sessionId && (project.sessionJobs ?? project.jobs) >= this.cfg.tallerSessionJobs && existsSync(join(this.dir(project.slug), 'ESTADO.md'))) {
       this.log.log(`taller: sesión nueva para "${project.slug}" tras ${project.sessionJobs ?? project.jobs} encargos`);
       project.sessionId = undefined; project.sessionJobs = 0;
       prompt = `(Empiezas una sesión nueva sobre un proyecto que ya existe y no recuerdas la conversación anterior. Lee primero ESTADO.md y revisa los archivos que haga falta antes de cambiar nada.)\n\n${task}`;
     }
-    if (!repair) project.sessionJobs = (project.sessionJobs ?? 0) + 1;
+    const model = this.model(modelName);
+    const cwd = this.dir(project.slug);
+    try { mkdirSync(cwd, { recursive: true, mode: 0o777 }); if (this.cfg.tallerUser) chmodSync(cwd, 0o777); } catch (e) { return `No se pudo crear la carpeta del proyecto: ${(e as Error).message}`; }
+
+    const t0 = Date.now();
+    const run: Run = { project, task, formUrl, model, t0, deadline: t0 + this.cfg.tallerMaxMinutes * 60_000, pass: 0, maxPasses: this.cfg.tallerAutoFix ? this.cfg.tallerMaxPasses : 1, stale: 0, seen: new Set(), usd: 0, turns: 0 };
+    const job: Job = { slug: project.slug, t0, activity: 'empezando', spoken: 'está empezando', steps: 0, model: model.id, agents: new Set(), agentsTotal: 0, code: [], run };
+    this.job = job;
+    const err = this.pass(job, prompt);
+    if (err) { this.job = undefined; return err; }
+    project.sessionJobs = (project.sessionJobs ?? 0) + 1;
+    project.status = 'trabajando'; project.lastTask = task.slice(0, 500); project.updatedAt = new Date().toISOString(); project.jobs++; project.unseen = false; project.model = model.label;
+    this.save(project);
+    this.log.log(`taller: encargo en "${project.slug}" con ${model.label}${project.sessionId ? ' (retoma sesión)' : ''}: ${task.slice(0, 120)}`);
+    this.emit(true);
+    return `Encargo iniciado en el proyecto "${project.name}"${project.jobs > 1 ? ' (continúa lo anterior)' : ' (proyecto nuevo)'} con el modelo ${model.label}. Claude Code está trabajando en segundo plano y puede tardar varios minutos. ` +
+      'Dile a Javier que ya empezó y que le avisarás cuando termine; mientras tanto puede seguir hablando contigo.';
+  }
+
+  /** Lanza una pasada de Claude Code. Devuelve un texto solo si no pudo arrancar. */
+  private pass(job: Job, prompt: string): string | undefined {
+    const run = job.run, project = run.project, model = run.model;
     const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits',
       '--allowedTools', 'Bash,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,TodoWrite,Agent,Task', '--max-turns', String(this.cfg.tallerMaxTurns),
-      '--append-system-prompt', RULES(project.slug, formUrl)];
+      '--append-system-prompt', RULES(project.slug, run.formUrl)];
     if (project.sessionId) args.push('--resume', project.sessionId);
-    const model = this.model(modelName);
     if (model.id) args.push('--model', model.id);
     // Entorno minimo: nada de las claves del avatar llega a Claude Code ni a los comandos que ejecute.
     const env: NodeJS.ProcessEnv = {
@@ -240,28 +284,23 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
       DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1',
     };
     let cmd = this.cfg.claudeBin, argv = args;
-    const cwd = this.dir(project.slug);
     if (this.cfg.tallerUser) {
       // sudo solo permite ejecutar claude como el usuario del taller (ver Dockerfile); la carpeta del proyecto queda abierta para el.
       argv = ['-n', '-H', '-u', this.cfg.tallerUser, '--preserve-env=PATH,LANG,CLAUDE_CODE_OAUTH_TOKEN,DISABLE_AUTOUPDATER,DISABLE_TELEMETRY,DISABLE_ERROR_REPORTING', this.cfg.claudeBin, ...args];
       cmd = 'sudo';
     } else { env.HOME = process.env.HOME; }
-    try { mkdirSync(cwd, { recursive: true, mode: 0o777 }); if (this.cfg.tallerUser) chmodSync(cwd, 0o777); } catch (e) { return `No se pudo crear la carpeta del proyecto: ${(e as Error).message}`; }
 
     let proc: ChildProcess;
-    try { proc = spawn(cmd, argv, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] }); }
+    try { proc = spawn(cmd, argv, { cwd: this.dir(project.slug), env, stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch (e) { return `No se pudo iniciar Claude Code: ${(e as Error).message}`; }
     try { if (proc.pid && this.cfg.tallerNice) require('node:os').setPriority(proc.pid, this.cfg.tallerNice); } catch { /* sin permiso para cambiar la prioridad */ }
+    run.pass++;
+    job.proc = proc; job.checking = false;
+    // El tiempo maximo es de TODO el encargo (todas las pasadas y sus comprobaciones), no de cada pasada.
+    job.timer = setTimeout(() => { job.activity = 'tiempo agotado'; job.timedOut = true; proc.kill('SIGTERM'); setTimeout(() => proc.kill('SIGKILL'), 5000).unref(); }, Math.max(1000, run.deadline - Date.now()));
 
-    const t0 = Date.now();
-    const job: NonNullable<WorkshopService['job']> & { timedOut?: boolean } = { slug: project.slug, proc, t0, activity: 'empezando', spoken: 'está empezando', steps: 0, model: model.id, agents: new Set(), agentsTotal: 0, code: [], timer: setTimeout(() => { job.activity = 'tiempo agotado'; job.timedOut = true; proc.kill('SIGTERM'); setTimeout(() => proc.kill('SIGKILL'), 5000).unref(); }, this.cfg.tallerMaxMinutes * 60_000) };
-    this.job = job;
-    project.status = 'trabajando'; project.lastTask = task.slice(0, 500); project.updatedAt = new Date().toISOString(); project.jobs++; project.unseen = false; project.model = model.label;
-    this.save(project);
-    this.log.log(`taller: encargo en "${project.slug}" con ${model.label}${project.sessionId ? ' (retoma sesión)' : ''}: ${task.slice(0, 120)}`);
-    this.emit(true);
-
-    let pending = '', result: any, stderr = '', lastText = '';
+    const passT0 = Date.now();
+    let pending = '', result: any, stderr = '', lastText = '', closed = false;
     proc.stdout!.on('data', (d: Buffer) => {
       pending += d.toString('utf8');
       let nl: number;
@@ -292,43 +331,96 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     });
     proc.stderr!.on('data', (d: Buffer) => { stderr = (stderr + d.toString('utf8')).slice(-600); });
     const finish = (code: number | null, err?: Error) => {
-      if (this.job !== job) return;
-      clearTimeout(job.timer); this.job = undefined; this.emit(true);
-      const seconds = Math.round((Date.now() - t0) / 1000);
-      // Consumo del encargo. total_cost_usd es el equivalente a precio de API que informa Claude Code; con la suscripcion no se cobra aparte.
-      this.usage.add('claude_jobs'); this.usage.add('claude_s', seconds); this.usage.add('claude_turns', Number(result?.num_turns) || 0); this.usage.add('claude_usd', Number(result?.total_cost_usd) || 0);
-      if (result?.session_id) project.sessionId = result.session_id;
-      let ok = !!result && !result.is_error && code === 0;
-      let summary = String(result?.result ?? '').trim() || lastText;
-      if (job.cancelled) { ok = false; summary = 'El encargo se canceló antes de terminar.' + (lastText ? ` Lo último que dijo: ${lastText}` : ''); }
-      else if (job.timedOut) { ok = false; summary = `Se acabó el tiempo (${this.cfg.tallerMaxMinutes} min) y el encargo quedó a medias.` + (lastText ? ` Lo último que dijo: ${lastText}` : ''); }
-      else if (result?.subtype === 'error_max_turns') { ok = false; summary = `Llegó al máximo de pasos y quedó a medias. ${lastText}`; }
-      else if (!ok) summary = `Claude Code falló${err ? `: ${err.message}` : ''}. ${summary || stderr.replace(/\s+/g, ' ').slice(-300) || `código ${code}`}`;
-      project.status = ok || job.cancelled ? 'libre' : 'error';
-      // Prueba antes de "terminado": el servidor revisa el sitio publicado. Si hay fallos, se le devuelven a Claude Code
-      // UNA vez (misma sesion) antes de avisarle a Javier; si siguen, el aviso lo dice.
-      const check = this.hasSite(project.slug) ? checkSite(join(this.dir(project.slug), 'sitio')) : undefined;
-      void this.db.query('INSERT INTO jobs (slug, at, seconds, model, ok, repair, turns, usd, issues, task, summary) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
-        [project.slug, new Date(t0).toISOString(), seconds, model.label, ok ? 1 : 0, repair ? 1 : 0, Number(result?.num_turns) || 0, Number(result?.total_cost_usd) || 0, check ? check.issues.length : null, task.slice(0, 2000), summary.slice(0, 4000)])
-        .catch((e) => this.log.error(`No se pudo guardar el encargo: ${(e as Error).message}`));
-      project.check = check; project.repaired = repair;
-      if (check && !check.ok) this.log.warn(`taller: la revisión de "${project.slug}" encontró ${check.issues.length} problemas${repair ? ' (tras la corrección)' : ''}`);
-      if (ok && check && !check.ok && !repair && this.cfg.tallerAutoFix) {
-        const original = project.lastTask;
-        project.lastSummary = summary.slice(0, 4000); this.save(project);
-        this.start(project.name, `La revisión automática del servidor encontró estos problemas en la carpeta sitio/ después de tu último trabajo:\n- ${check.issues.join('\n- ')}\nCorrígelos, vuelve a comprobar cada enlace y archivo, y termina con el informe completo del encargo original (no solo de esta corrección).`, formUrl, false, modelName, true);
-        if (this.job) { project.lastTask = original; this.save(project); return; } // el aviso a Javier sale cuando termine la correccion
-      }
-      project.lastSummary = summary.slice(0, 4000); project.updatedAt = new Date().toISOString(); project.unseen = true;
-      this.save(project);
-      this.log.log(`taller: "${project.slug}" ${ok ? 'terminó' : 'NO terminó'} en ${seconds} s, ${job.steps} pasos${result?.num_turns ? `, ${result.num_turns} turnos` : ''}`);
-      const done: JobDone = { project, ok, summary: project.lastSummary, seconds, site: this.hasSite(project.slug), check };
-      for (const fn of this.listeners) try { fn(done); } catch (e) { this.log.error(`aviso del taller: ${(e as Error).message}`); }
+      if (this.job !== job || closed) return;
+      closed = true; clearTimeout(job.timer); job.proc = undefined;
+      void this.afterPass(job, { code, err, result, lastText, stderr, passT0, prompt }).catch((e) => {
+        this.log.error(`taller: fallo al cerrar la pasada de "${project.slug}": ${(e as Error).message}`);
+        if (this.job === job) this.close(job, 'fallo', [], `El servidor falló al comprobar el resultado: ${(e as Error).message}`);
+      });
     };
     proc.on('error', (e) => finish(null, e));
     proc.on('close', (code) => finish(code));
-    return `Encargo iniciado en el proyecto "${project.name}"${project.jobs > 1 ? ' (continúa lo anterior)' : ' (proyecto nuevo)'} con el modelo ${model.label}. Claude Code está trabajando en segundo plano y puede tardar varios minutos. ` +
-      'Dile a Javier que ya empezó y que le avisarás cuando termine; mientras tanto puede seguir hablando contigo.';
+    return undefined;
+  }
+
+  /** Termino una pasada: se ejecutan los gates y se decide, en codigo, si hay otra pasada o por que se detiene. */
+  private async afterPass(job: Job, r: { code: number | null; err?: Error; result: any; lastText: string; stderr: string; passT0: number; prompt: string }) {
+    const run = job.run, project = run.project, dir = this.dir(project.slug), { result, lastText } = r;
+    const seconds = Math.round((Date.now() - r.passT0) / 1000);
+    // Consumo de la pasada. total_cost_usd es el equivalente a precio de API que informa Claude Code; con la suscripcion no se cobra aparte.
+    const turns = Number(result?.num_turns) || 0, usd = Number(result?.total_cost_usd) || 0;
+    this.usage.add('claude_jobs'); this.usage.add('claude_s', seconds); this.usage.add('claude_turns', turns); this.usage.add('claude_usd', usd);
+    run.turns += turns; run.usd += usd;
+    if (result?.session_id) project.sessionId = result.session_id;
+    let ok = !!result && !result.is_error && r.code === 0;
+    let summary = String(result?.result ?? '').trim() || lastText;
+    if (job.cancelled) { ok = false; summary = 'El encargo se canceló antes de terminar.' + (lastText ? ` Lo último que dijo: ${lastText}` : ''); }
+    else if (job.timedOut) { ok = false; summary = `Se acabó el tiempo (${this.cfg.tallerMaxMinutes} min) y el encargo quedó a medias.` + (lastText ? ` Lo último que dijo: ${lastText}` : ''); }
+    else if (result?.subtype === 'error_max_turns') { ok = false; summary = `Llegó al máximo de pasos y quedó a medias. ${lastText}`; }
+    else if (!ok) summary = `Claude Code falló${r.err ? `: ${r.err.message}` : ''}. ${summary || r.stderr.replace(/\s+/g, ' ').slice(-300) || `código ${r.code}`}`;
+    let stop: StopReason | undefined = job.cancelled ? 'cancelado' : job.timedOut ? 'tiempo' : !ok ? 'fallo' : undefined;
+
+    // CHECK: lo ejecuta el servidor, diga lo que diga el informe. Si la pasada no termino bien solo se mira el sitio
+    // (no ejecuta nada), para que el panel muestre en que estado quedo lo publicado.
+    const gates = detectGates(dir).filter((g) => !stop || g.kind === 'sitio');
+    const results: GateResult[] = [];
+    job.checking = true;
+    for (const g of gates) {
+      if (job.cancelled) break;
+      if (g.kind === 'comando') { job.activity = `comprobando: ${g.label}`; job.spoken = 'está ejecutando las comprobaciones'; this.emit(true); }
+      results.push(await runGate(g, dir, { npmBin: this.cfg.npmBin, user: this.cfg.tallerUser, nice: this.cfg.tallerNice, onProc: (p) => { job.proc = p; },
+        seconds: Math.max(5, Math.min(this.cfg.tallerGateSeconds, Math.round((run.deadline - Date.now()) / 1000))) }));
+    }
+    job.checking = false; job.proc = undefined;
+    if (this.job !== job) return; // el servidor se esta apagando
+    if (!stop) {
+      for (const id of run.seen) if (!gates.some((g) => g.id === id)) results.push(missingGate(id));
+      for (const g of gates) run.seen.add(g.id);
+      results.sort((a, b) => GATE_ORDER.indexOf(a.id) - GATE_ORDER.indexOf(b.id));
+      if (job.cancelled) stop = 'cancelado';
+    }
+    const site = results.find((x) => x.kind === 'sitio')?.site;
+    const at = new Date().toISOString(), runAt = new Date(run.t0).toISOString();
+    void this.db.query('INSERT INTO jobs (slug, at, seconds, model, ok, repair, turns, usd, issues, task, summary) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+      [project.slug, new Date(r.passT0).toISOString(), seconds, run.model.label, ok ? 1 : 0, run.pass > 1 ? 1 : 0, turns, usd, site ? site.issues.length : null, (run.pass > 1 ? `(Pasada ${run.pass}, corrección tras las comprobaciones) ` : '') + run.task.slice(0, 2000), summary.slice(0, 4000)])
+      .catch((e) => this.log.error(`No se pudo guardar el encargo: ${(e as Error).message}`));
+    for (const g of results) void this.db.query('INSERT INTO job_gates (business, slug, run_at, pass, at, gate, kind, ok, exit_code, seconds, output) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+      [this.cfg.businessId, project.slug, runAt, run.pass, at, g.id, g.kind, g.ok ? 1 : 0, g.exit, g.seconds, g.output])
+      .catch((e) => this.log.error(`No se pudo guardar el gate: ${(e as Error).message}`));
+
+    if (!stop) {
+      const w = weakest(results), hash = w ? treeHash(dir) : '';
+      run.stale = w ? (w.id === run.weak && hash === run.hash ? run.stale + 1 : 1) : 0;
+      run.weak = w?.id; run.hash = hash;
+      stop = evaluateStop({ results, pass: run.pass, maxPasses: run.maxPasses, stale: run.stale, maxStale: this.cfg.tallerNoProgress, msLeft: run.deadline - Date.now(), blocked: !!blockedReason(summary) });
+      if (!stop && w) {
+        this.log.warn(`taller: "${project.slug}" pasada ${run.pass}: falla ${results.filter((x) => !x.ok).map((x) => x.id).join(', ')}; va otra pasada`);
+        job.activity = `pasada ${run.pass + 1}: corrigiendo «${w.id}»`; job.spoken = `está corrigiendo lo que encontró la comprobación, va en la pasada ${run.pass + 1}`;
+        project.lastSummary = summary.slice(0, 4000); this.save(project);
+        const err = this.pass(job, repairPrompt(results, run.pass, run.maxPasses));
+        if (!err) { this.emit(true); return; } // el aviso a Javier sale cuando se cierre el ciclo
+        stop = 'fallo'; summary = `${err} ${summary}`;
+      }
+    }
+    this.close(job, stop ?? 'fallo', results, summary);
+  }
+
+  /** Cierra el encargo: guarda el resultado real del ciclo y avisa una sola vez. */
+  private close(job: Job, stop: StopReason, results: GateResult[], summary: string) {
+    const run = job.run, project = run.project;
+    clearTimeout(job.timer); this.job = undefined; this.emit(true);
+    const seconds = Math.round((Date.now() - run.t0) / 1000), site = results.find((x) => x.kind === 'sitio')?.site;
+    project.status = stop === 'fallo' || stop === 'tiempo' ? 'error' : 'libre';
+    project.check = site; project.repaired = run.pass > 1;
+    project.run = { at: new Date(run.t0).toISOString(), stop, passes: run.pass, seconds, gates: results.map((g) => ({ id: g.id, kind: g.kind, label: g.label, ok: g.ok, exit: g.exit, seconds: g.seconds, output: g.output.slice(0, 2500) })) };
+    project.lastSummary = summary.slice(0, 4000); project.updatedAt = new Date().toISOString(); project.unseen = true;
+    this.save(project);
+    void this.db.query('INSERT INTO job_runs (business, slug, at, model, passes, stop, verified, seconds, turns, usd, failing, task) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
+      [this.cfg.businessId, project.slug, project.run.at, run.model.label, run.pass, stop, stop === 'verificado' ? 1 : 0, seconds, run.turns, run.usd, results.filter((g) => !g.ok).map((g) => g.id).join(','), run.task.slice(0, 2000)])
+      .catch((e) => this.log.error(`No se pudo guardar el ciclo del encargo: ${(e as Error).message}`));
+    this.log.log(`taller: "${project.slug}" cerró en ${seconds} s, ${run.pass} ${run.pass === 1 ? 'pasada' : 'pasadas'}, ${job.steps} pasos: ${stop}${results.length ? ` (${results.map((g) => `${g.id} ${g.ok ? 'pasa' : 'FALLA'}`).join(', ')})` : ''}`);
+    const done: JobDone = { project, ok: stop === 'verificado' || stop === 'sin_comprobar', summary: project.lastSummary, seconds, site: this.hasSite(project.slug), check: site, stop };
+    for (const fn of this.listeners) try { fn(done); } catch (e) { this.log.error(`aviso del taller: ${(e as Error).message}`); }
   }
 
   /**

@@ -115,6 +115,12 @@ export class ConfigService {
   readonly saveConversations: boolean;
   /** Si la revision del sitio encuentra fallos, devolverselos una vez a Claude Code antes de avisar. */
   readonly tallerAutoFix: boolean;
+  /** Ciclo del encargo: pasadas como maximo, comprobaciones seguidas sin cambios que lo detienen, y tope por comando de comprobacion. */
+  readonly tallerMaxPasses: number;
+  readonly tallerNoProgress: number;
+  readonly tallerGateSeconds: number;
+  /** npm con el que el servidor ejecuta las comprobaciones (en Docker, la ruta exacta que permite sudo). */
+  readonly npmBin: string;
   /** Encargos por sesion de Claude Code antes de empezar una nueva (que arranca leyendo ESTADO.md). */
   readonly tallerSessionJobs: number;
   /** Fotos de Unsplash (vacia = sin busqueda) y generacion con Magnific (vacia = sin generacion). Topes por conversacion de visitante y por dia. */
@@ -250,6 +256,10 @@ export class ConfigService {
     this.micGateRms = process.env.MIC_GATE === '0' ? 0 : Math.min(0.2, Math.max(0.002, Number(process.env.MIC_GATE_RMS) || 0.012));
     this.tallerAutoFix = process.env.TALLER_AUTO_FIX !== '0';
     this.tallerSessionJobs = int('TALLER_SESSION_JOBS', 4, 1);
+    this.tallerMaxPasses = Math.min(10, int('TALLER_MAX_PASSES', 4, 1));
+    this.tallerNoProgress = int('TALLER_NO_PROGRESS', 2, 2);
+    this.tallerGateSeconds = int('TALLER_GATE_SECONDS', 300, 5);
+    this.npmBin = str('NPM_BIN', this.tallerUser ? '/usr/local/bin/npm' : 'npm');
     this.unsplashAccessKey = (process.env.UNSPLASH_ACCESS_KEY ?? '').trim();
     this.magnificApiKey = (process.env.MAGNIFIC_API_KEY ?? '').trim();
     this.imagesDailyGenerations = int('IMAGES_DAILY_GENERATIONS', 20, 0);

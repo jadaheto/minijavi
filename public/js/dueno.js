@@ -465,6 +465,20 @@ async function loadImages() {
   }));
 }
 
+const STOPS = { verificado: 'Verificado: todas las comprobaciones pasaron', sin_comprobar: 'Terminó sin nada que comprobar (no hay sitio ni pruebas)', pasadas: 'Se detuvo: máximo de pasadas y aún hay fallos',
+  sin_progreso: 'Se detuvo: la última pasada no cambió nada', tiempo: 'Se detuvo: se acabó el tiempo', bloqueado: 'Se detuvo: necesita una decisión tuya', cancelado: 'Cancelado', fallo: 'Claude Code no pudo terminar' };
+/** Resultado del ciclo del último encargo: por qué se detuvo y qué dijo cada comprobación del servidor (salida literal). */
+function runBox(p) {
+  const r = p.run;
+  if (!r) return !p.check ? null : el('div', { style: `color:${p.check.ok ? 'var(--ok)' : 'var(--warn)'};white-space:pre-wrap`, textContent: p.check.ok
+    ? `✓ Sitio revisado: ${p.check.pages} páginas, ${p.check.files} archivos, sin enlaces rotos` : `⚠ La revisión encontró ${p.check.issues.length} problemas:\n- ${p.check.issues.join('\n- ')}` });
+  const good = r.stop === 'verificado';
+  const head = el('div', { style: `color:${good ? 'var(--ok)' : 'var(--warn)'}`, textContent: `${good ? '✓' : '⚠'} ${STOPS[r.stop] || r.stop} · ${r.passes} ${r.passes === 1 ? 'pasada' : 'pasadas'} · ${Math.round(r.seconds / 60) || 1} min` });
+  const gates = r.gates.map((g) => el('details', {}, el('summary', { style: `color:${g.ok ? 'var(--ok)' : 'var(--warn)'}`, textContent: `${g.ok ? '✓ pasa' : '✗ falla'} · ${g.label}${g.exit === null ? '' : ` · salida ${g.exit}`}${g.seconds ? ` · ${g.seconds} s` : ''}` }),
+    el('pre', { textContent: g.output || '(sin salida)' })));
+  return el('div', {}, head, ...gates);
+}
+
 let projectTimer = null;
 async function loadProjects() {
   const { enabled, busy, progress, projects } = await json('projects');
@@ -472,9 +486,7 @@ async function loadProjects() {
   $('project-progress').textContent = !enabled ? 'El taller no está configurado en el servidor.' : busy ? progress : 'Sin encargos en curso.';
   $('project-list').replaceChildren(...projects.map((p) => {
     const sum = el('pre', { textContent: p.lastSummary || 'Sin resultado todavía.' });
-    const chk = !p.check ? null : el('div', { style: `color:${p.check.ok ? 'var(--ok)' : 'var(--warn)'};white-space:pre-wrap`, textContent: p.check.ok
-      ? `✓ Sitio revisado: ${p.check.pages} páginas, ${p.check.files} archivos, sin enlaces rotos${p.repaired ? ' (tras una corrección automática)' : ''}`
-      : `⚠ La revisión encontró ${p.check.issues.length} problemas:\n- ${p.check.issues.join('\n- ')}` });
+    const chk = runBox(p);
     const links = el('div', { className: 'row' }, p.url ? el('a', { href: p.url, target: '_blank', rel: 'noopener', textContent: 'Abrir sitio' }) : null, el('a', { href: `./owner/projects/${p.slug}/descargar`, textContent: 'Descargar código' }), del);
     const del = el('button', { type: 'button', className: 'small danger', textContent: 'Eliminar proyecto', disabled: busy === p.slug, title: busy === p.slug ? 'Tiene un encargo en curso' : '' });
     del.addEventListener('click', async () => {

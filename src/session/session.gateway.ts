@@ -10,6 +10,7 @@ import { CardsService } from '../cards/cards.service';
 import { DeepSeekService, LlmEvent } from '../llm/deepseek.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { MODELS, WorkshopService } from '../workshop/workshop.service';
+import { STOP_TEXT } from '../workshop/gates';
 import { MusicService, MusicState } from '../music/music.service';
 import { MemoryService, VisitorMemory } from '../memory/memory.service';
 import { INTERESTS, LeadsService } from '../leads/leads.service';
@@ -244,9 +245,14 @@ export class SessionGateway implements OnGatewayConnection {
     const p = this.workshop.list().find((x) => x.slug === slug);
     if (!p || !s.ready) return;
     const card = await this.workshop.card(slug, s.origin).catch(() => null);
-    const c = p.check, review = !c ? '' : c.ok
-      ? `Revisión automática del servidor: sin problemas en ${c.pages} ${c.pages === 1 ? 'página' : 'páginas'} y ${c.files} archivos (enlaces, imágenes, estilos y scripts locales existen)${p.repaired ? '; hizo falta una corrección automática' : ''}. Puedes decir que quedó publicado y revisado. `
-      : `Revisión automática del servidor: ENCONTRÓ ${c.issues.length} problemas que siguen sin resolver${p.repaired ? ' aun después de una corrección automática' : ''}. No digas que quedó listo: dile a Javier que terminó pero con fallos, cuéntale cuáles en palabras simples y pregúntale si los mandas a corregir. Problemas: ${asData('la revisión del sitio', c.issues.join(' | '))} `;
+    // Resultado REAL del ciclo: lo que dijeron las comprobaciones del servidor, no lo que afirma el informe.
+    const r = p.run, bad = r ? r.gates.filter((g) => !g.ok) : [];
+    const passes = r && r.passes > 1 ? ` tras ${r.passes} pasadas` : '';
+    const review = !r ? '' : r.stop === 'verificado'
+      ? `Comprobaciones del servidor: pasaron todas (${r.gates.map((g) => g.label).join(', ')})${passes}. Puedes decir que quedó verificado. `
+      : r.stop === 'sin_comprobar'
+        ? 'El servidor no tenía ninguna comprobación que ejecutar en este proyecto (no hay sitio publicado ni pruebas): di que terminó, pero que nadie lo comprobó. '
+        : `Comprobaciones del servidor: el ciclo se detuvo${passes} porque ${STOP_TEXT[r.stop]}.${bad.length ? ` SIGUEN fallando: ${bad.map((g) => g.label).join(', ')}.` : ''} No digas que quedó listo: dile a Javier en palabras simples qué pasó y qué sigue fallando, y pregúntale cómo quiere seguir.${bad.length ? ` Detalle: ${asData('las comprobaciones del servidor', bad.map((g) => `${g.label}: ${g.output.slice(0, 500)}`).join(' | '))}` : ''} `;
     const text = `(Aviso del taller, escrito por el sistema: Claude Code ${p.status === 'error' ? 'NO pudo terminar' : 'terminó'} el encargo del proyecto "${p.name}". ` +
       `${card ? 'El sitio está publicado y su código QR se muestra en pantalla. ' : 'No hay sitio publicado para este proyecto. '}${review}Informe de Claude Code: ${asData('el informe de Claude Code', (p.lastSummary ?? 'sin informe').slice(0, 1500))})`;
     // Si el encargo era de bocetos, van a la galeria (cada uno es una pagina en vivo) en vez de la tarjeta con el QR.

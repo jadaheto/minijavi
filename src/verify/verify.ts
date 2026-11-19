@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { mkdtempSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -659,6 +659,74 @@ async function main() {
     must(q.untrusted === true && /DATOS/.test(q.text) && /(enviadas|bloqueadas)/.test(q.text) && /Mensaje de seguimiento/.test(q.text), `"qué hiciste" no resume la bitácora: ${q.text.slice(0, 200)}`);
   });
   A.now = () => new Date();
+
+  // ---- Taller con gates: Claude Code SIMULADO (un guion por proyecto) y comprobaciones reales del servidor (npm test local).
+  const fakeDir = mkdtempSync(join(tmpdir(), 'minijavi-claude-falso-')), fakeBin = join(fakeDir, 'claude');
+  writeFileSync(fakeBin, `#!/usr/bin/env node
+const fs = require('fs'), path = require('path');
+const slug = path.basename(process.cwd()), here = __dirname;
+const plan = JSON.parse(fs.readFileSync(path.join(here, 'plan-' + slug + '.json'), 'utf8'));
+const nf = path.join(here, 'n-' + slug), n = fs.existsSync(nf) ? Number(fs.readFileSync(nf, 'utf8')) : 0; fs.writeFileSync(nf, String(n + 1));
+const step = plan[Math.min(n, plan.length - 1)], args = process.argv.slice(2);
+fs.appendFileSync(path.join(here, 'prompts-' + slug + '.txt'), args[args.indexOf('-p') + 1] + '\\n=====\\n');
+for (const [f, c] of Object.entries(step.write || {})) { const t = path.join(process.cwd(), f); fs.mkdirSync(path.dirname(t), { recursive: true }); fs.writeFileSync(t, c); }
+console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-' + slug }));
+console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: step.say || 'Hecho.', session_id: 's-' + slug, num_turns: 1, total_cost_usd: 0.01 }));
+`, { mode: 0o755 });
+  Object.assign(process.env, { CLAUDE_CODE_OAUTH_TOKEN: 'token-de-simulacion', CLAUDE_BIN: fakeBin, TALLER_USER: '', TALLER_MAX_PASSES: '3', TALLER_NO_PROGRESS: '2', TALLER_AUTO_FIX: '1' });
+  const { WorkshopService } = await import('../workshop/workshop.service');
+  const { evaluateStop } = await import('../workshop/gates');
+  const wcfg = new ConfigService(), ws = new WorkshopService(wcfg, usage, P.db); await ws.onModuleInit();
+  let doneCalls = 0, onDone: ((d: any) => void) | undefined;
+  ws.onDone((d) => { doneCalls++; onDone?.(d); });
+  type Step = { write?: Record<string, string>; say?: string };
+  const job = async (slug: string, plan: Step[]) => {
+    writeFileSync(join(fakeDir, `plan-${slug}.json`), JSON.stringify(plan));
+    const before = doneCalls, finished = new Promise<any>((r) => { onDone = r; });
+    const started = ws.start(slug, 'Encargo de prueba para la verificación', 'http://localhost/formulario', true);
+    must(/Encargo iniciado/.test(started), `el encargo no arrancó: ${started}`);
+    const d = await Promise.race([finished, wait(90_000).then(() => { throw new Error('el encargo no terminó en 90 s'); })]);
+    await wait(100);
+    return { d, run: d.project.run, calls: doneCalls - before, prompts: readFileSync(join(fakeDir, `prompts-${slug}.txt`), 'utf8').split('\n=====\n').filter(Boolean),
+      rows: await P.db.query<any>('SELECT pass, gate, ok FROM job_gates WHERE slug = $1 ORDER BY id', [slug]) };
+  };
+  const TEST_FAIL = { 'package.json': JSON.stringify({ scripts: { test: 'node t.js' } }), 't.js': `require('fs').writeFileSync('entorno.json', JSON.stringify(Object.keys(process.env))); console.log('1 prueba falla: suma'); process.exit(1);` };
+
+  await check('Taller: un fallo de las comprobaciones vuelve a Claude Code y el encargo solo cierra verificado cuando pasan', async () => {
+    const a = await job('ciclo-sitio', [{ write: { 'sitio/index.html': '<title>Prueba</title><img src="foto.png">' }, say: 'Listo, todo funciona.' }, { write: { 'sitio/foto.png': 'x' }, say: 'Corregido.' }]);
+    must(a.run.stop === 'verificado' && a.run.passes === 2 && a.d.ok, `debía cerrar verificado en la pasada 2: ${a.run.stop}, ${a.run.passes}`);
+    must(a.calls === 1, `a Javier se le debe avisar una sola vez, hubo ${a.calls} avisos`);
+    must(a.prompts.length === 2 && /foto\.png/.test(a.prompts[1]) && /«sitio»/.test(a.prompts[1]) && /Pasada 2 de 3/.test(a.prompts[1]), 'la segunda pasada no recibió la salida literal del gate');
+    must(a.rows.length === 2 && a.rows[0].ok === 0 && a.rows[1].ok === 1, `el registro de gates no tiene las dos pasadas: ${JSON.stringify(a.rows)}`);
+    const b = await job('ciclo-pruebas', [{ write: { 'package.json': JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"', lint: 'node -e "process.exit(0)"' } }) } }]);
+    must(b.run.stop === 'verificado' && b.run.passes === 1 && b.run.gates.map((g: any) => g.id).join() === 'pruebas,lint' && b.run.gates.every((g: any) => g.exit === 0), `npm test y npm run lint debían pasar: ${JSON.stringify(b.run)}`);
+    const c = await job('ciclo-nada', [{ write: { 'notas.txt': 'apuntes' }, say: 'Terminé y lo probé todo.' }]);
+    must(c.run.stop === 'sin_comprobar' && c.run.passes === 1, `sin sitio ni pruebas no puede decir verificado: ${c.run.stop}`);
+    return 'sitio con enlace roto → corregido en la pasada 2; npm test y lint reales; sin gates no se afirma nada';
+  });
+
+  await check('Taller: el ciclo se detiene por límites en código (sin progreso, máximo de pasadas, bloqueo) y nunca afirma que pasó', async () => {
+    const a = await job('para-igual', [{ write: TEST_FAIL, say: 'Todo quedó funcionando y probado.' }, { say: 'Ya lo arreglé.' }]);
+    must(a.run.stop === 'sin_progreso' && a.run.passes === 2 && !a.d.ok, `sin cambios debía parar en la pasada 2: ${a.run.stop}, ${a.run.passes}`);
+    must(a.run.gates[0].exit === 1 && /1 prueba falla/.test(a.run.gates[0].output), 'no quedó la salida literal de npm test');
+    const b = await job('para-tope', [{ write: TEST_FAIL }, { write: { 'a.txt': '1' } }, { write: { 'a.txt': '2' } }, { write: { 'a.txt': '3' } }]);
+    must(b.run.stop === 'pasadas' && b.run.passes === 3 && b.prompts.length === 3, `debía parar en el máximo de 3 pasadas: ${b.run.stop}, ${b.run.passes}`);
+    const c = await job('para-bloqueo', [{ write: TEST_FAIL, say: 'No puedo seguir.\nBLOQUEADO: falta la clave del servicio del cliente' }]);
+    must(c.run.stop === 'bloqueado' && c.run.passes === 1, `un bloqueo declarado debía detener el ciclo: ${c.run.stop}`);
+    // Quitar la prueba no es pasarla: el gate que existia y desaparece cuenta como fallo.
+    const d = await job('para-trampa', [{ write: TEST_FAIL }, { write: { 'package.json': '{}' }, say: 'Todas las pruebas pasan.' }, { say: 'Listo.' }]);
+    must(d.run.stop !== 'verificado' && !d.d.ok && d.run.gates.some((g: any) => g.id === 'pruebas' && !g.ok && /ya no está/.test(g.output)), `borrar el script de pruebas no puede dar verificado: ${JSON.stringify(d.run)}`);
+    must(evaluateStop({ results: a.run.gates, pass: 1, maxPasses: 4, stale: 1, maxStale: 2, msLeft: 30_000, blocked: false }) === 'tiempo', 'sin tiempo para otra pasada debía parar');
+    return 'sin progreso en 2, tope en 3, bloqueo en 1, y quitar la prueba cuenta como fallo';
+  });
+
+  await check('Taller: los comandos de comprobación corren sin las claves del avatar', async () => {
+    const keys: string[] = JSON.parse(readFileSync(join(ws.dir('para-igual'), 'entorno.json'), 'utf8'));
+    const leaked = keys.filter((k) => /KEY|TOKEN|SECRET|DATABASE_URL|PASSWORD/i.test(k) && !k.startsWith('npm_'));
+    must(keys.includes('CI') && leaked.length === 0, `llegaron variables sensibles al comando: ${leaked.join(', ')}`);
+    return `npm test recibió ${keys.filter((k) => !k.startsWith('npm_')).length} variables propias, ninguna clave`;
+  });
+  rmSync(fakeDir, { recursive: true, force: true });
 
   rmSync(dir, { recursive: true, force: true });
   const icon = { ok: '✓', FALLA: '✗', omitida: '–' };
