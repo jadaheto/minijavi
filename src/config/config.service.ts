@@ -128,6 +128,13 @@ export class ConfigService {
   /** Modelo "auto": del nivel mas bajo al mas alto, que modelo usa cada uno. Y tope de la auditoria (tres lectores en paralelo). */
   readonly tallerAutoModels: string[];
   readonly tallerAuditSeconds: number;
+  /** Historial git de cada proyecto (fuera de su carpeta) y publicacion en GitHub desde el panel (solo con token). */
+  readonly tallerGit: boolean;
+  readonly tallerGitName: string;
+  readonly tallerGitEmail: string;
+  readonly tallerGithubToken: string;
+  readonly tallerGithubApi: string;
+  readonly tallerGithubUrl: string;
   /** Encargos por sesion de Claude Code antes de empezar una nueva (que arranca leyendo ESTADO.md). */
   readonly tallerSessionJobs: number;
   /** Fotos de Unsplash (vacia = sin busqueda) y generacion con Magnific (vacia = sin generacion). Topes por conversacion de visitante y por dia. */
@@ -272,6 +279,12 @@ export class ConfigService {
     this.tallerReviewModel = str('TALLER_REVIEW_MODEL');
     this.tallerAutoModels = str('TALLER_AUTO_MODELS', 'haiku,sonnet,opus').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean).slice(0, 3);
     this.tallerAuditSeconds = int('TALLER_AUDIT_SECONDS', 300, 30);
+    this.tallerGit = process.env.TALLER_GIT !== '0';
+    this.tallerGitName = str('TALLER_GIT_NAME', 'Taller de minijavi').slice(0, 60);
+    this.tallerGitEmail = str('TALLER_GIT_EMAIL', 'taller-minijavi@users.noreply.github.com').slice(0, 100);
+    this.tallerGithubToken = str('TALLER_GITHUB_TOKEN');
+    this.tallerGithubApi = str('TALLER_GITHUB_API', 'https://api.github.com').replace(/\/+$/, '');
+    this.tallerGithubUrl = str('TALLER_GITHUB_URL', 'https://github.com').replace(/\/+$/, '');
     this.unsplashAccessKey = (process.env.UNSPLASH_ACCESS_KEY ?? '').trim();
     this.magnificApiKey = (process.env.MAGNIFIC_API_KEY ?? '').trim();
     this.imagesDailyGenerations = int('IMAGES_DAILY_GENERATIONS', 20, 0);

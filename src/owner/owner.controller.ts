@@ -270,11 +270,11 @@ export class OwnerController {
     const projects = await Promise.all(this.workshop.list().map(async (p) => {
       const url = this.workshop.siteUrl(p.slug, origin);
       return {
-        slug: p.slug, name: p.name, status: p.status, updatedAt: p.updatedAt, jobs: p.jobs, lastTask: p.lastTask ?? '', lastSummary: p.lastSummary ?? '', check: p.check ?? null, repaired: !!p.repaired, run: p.run ?? null, audit: p.audit ?? null,
+        slug: p.slug, name: p.name, status: p.status, updatedAt: p.updatedAt, jobs: p.jobs, lastTask: p.lastTask ?? '', lastSummary: p.lastSummary ?? '', check: p.check ?? null, repaired: !!p.repaired, run: p.run ?? null, audit: p.audit ?? null, github: p.github ?? null, versions: await this.workshop.versions(p.slug),
         url, qr: url ? await QRCode.toDataURL(url, { margin: 1, width: 240 }) : '', files: this.workshop.files(p.slug, 60),
       };
     }));
-    return { enabled: this.workshop.enabled, busy: this.workshop.busy() ?? null, progress: this.workshop.progress(), projects, metrics: this.workshop.enabled ? await this.workshop.metrics(30) : null };
+    return { enabled: this.workshop.enabled, busy: this.workshop.busy() ?? null, progress: this.workshop.progress(), projects, metrics: this.workshop.enabled ? await this.workshop.metrics(30) : null, canPublish: this.workshop.canPublish };
   }
 
   /** Borra el proyecto con su codigo y su sitio publicado. No se puede deshacer. */
@@ -284,6 +284,15 @@ export class OwnerController {
     const err = await this.workshop.remove(slug);
     if (err) throw new HttpException({ error: err }, err === 'no_existe' ? 404 : err === 'ocupado' ? 409 : 500);
     return { ok: true };
+  }
+
+  /** Publica el historial del proyecto en un repositorio privado de GitHub que ya existe. Es el clic del dueño: no hay otra via. */
+  @Post('projects/:slug/publicar')
+  async publishProject(@Req() req: Request, @Param('slug') slug: string, @Body() body: { repo?: unknown }) {
+    this.require(req);
+    const r = await this.workshop.publish(slug, String(body?.repo ?? ''));
+    if (!r.ok) throw new HttpException({ error: r.error, files: r.files ?? [] }, 400);
+    return { ok: true, published: r.published };
   }
 
   /** Descarga el proyecto como .tar.gz (sin node_modules ni .git). tar no sigue enlaces simbolicos. */

@@ -2,6 +2,7 @@ import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, OnModuleIn
 import { DecisionsService } from '../decisions/decisions.service';
 import { QUESTIONS } from '../decisions/questions';
 import { Audit, runAudit } from './audit';
+import { ProjectGit, Published, PublishResult } from './git';
 import { DbService } from '../db/db.service';
 import { ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -31,6 +32,7 @@ export interface Project {
   sessionJobs?: number;      // encargos hechos en la sesion actual de Claude Code (al llegar al tope se empieza una nueva)
   run?: RunInfo;             // como cerro el ciclo del ultimo encargo: por que se detuvo y que dijo cada gate
   audit?: Audit;             // ultima auditoria pedida por Javier (tres lectores de solo lectura)
+  github?: Published;        // ultima publicacion en GitHub (desde el panel)
 }
 /** Resultado del ciclo de un encargo (pasadas + comprobaciones del servidor). */
 export interface RunInfo {
@@ -110,9 +112,11 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
   private listeners: ((d: JobDone) => void)[] = [];
 
   private auditListeners: ((p: Project) => void)[] = [];
+  private readonly git: ProjectGit;
 
   constructor(private readonly cfg: ConfigService, private readonly usage: UsageService, private readonly db: DbService, @Optional() private readonly decisions?: DecisionsService) {
     this.root = resolve(cfg.dataDir, 'proyectos');
+    this.git = new ProjectGit(cfg, this.root);
     if (!this.enabled) return;
     mkdirSync(this.root, { recursive: true });
     // El usuario del taller debe poder crear archivos aqui; lo demas de DATA_DIR queda solo para el avatar.
@@ -219,6 +223,7 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     try { rmSync(dir, { recursive: true, force: true }); } catch (e) { this.log.warn(`no se pudo borrar ${slug}: ${(e as Error).message}`); }
     if (existsSync(dir)) return 'archivos';
     await this.db.query('DELETE FROM projects WHERE slug = $1', [slug]);
+    this.git.remove(slug);
     this.projects.splice(i, 1);
     this.log.log(`taller: proyecto "${slug}" borrado`);
     return null;
@@ -437,6 +442,19 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     this.close(job, stop, results, summary, review);
   }
 
+  get canPublish() { return this.git.canPublish; }
+  versions(slug: string) { return this.git.versions(slug); }
+  /** Publica el historial del proyecto en GitHub. Solo lo llama el panel del dueño (un clic); nunca la voz ni un encargo. */
+  async publish(slug: string, repo: string): Promise<PublishResult> {
+    const p = this.projects.find((x) => x.slug === slug);
+    if (!p) return { ok: false, error: 'No existe ese proyecto.' };
+    if (this.job?.slug === slug) return { ok: false, error: 'El proyecto tiene un trabajo en curso; espera a que termine.' };
+    const r = await this.git.publish(slug, repo);
+    if (r.ok) { p.github = r.published; this.save(p); this.log.log(`taller: "${slug}" publicado en ${r.published.repo} (${r.published.branch}, ${r.published.commit.slice(0, 7)})`); }
+    else this.log.warn(`taller: no se publicó "${slug}": ${r.error}`);
+    return r;
+  }
+
   private tracker(job: Job) { return (p: ChildProcess, alive: boolean) => { job.readers ??= new Set(); if (alive) job.readers.add(p); else job.readers.delete(p); }; }
 
   /**
@@ -519,6 +537,8 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     void this.db.query('INSERT INTO job_runs (business, slug, at, model, passes, stop, verified, seconds, turns, usd, failing, task, review) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)',
       [this.cfg.businessId, project.slug, project.run.at, run.model.label, run.pass, stop, stop === 'verificado' ? 1 : 0, seconds, run.turns, run.usd, results.filter((g) => !g.ok).map((g) => g.id).join(','), run.task.slice(0, 2000), review?.verdict ?? ''])
       .catch((e) => this.log.error(`No se pudo guardar el ciclo del encargo: ${(e as Error).message}`));
+    // Version del proyecto tal como quedo, con el resultado real en el mensaje (sirve para volver atras tambien si quedo mal).
+    void this.git.commit(project.slug, `[${stop}] ${run.task.split('\n')[0]}`).catch(() => undefined);
     if (run.decision) void this.decisions?.outcome(run.decision, `${run.model.label}: ${stop} en ${run.pass} ${run.pass === 1 ? 'pasada' : 'pasadas'}`);
     this.log.log(`taller: "${project.slug}" cerró en ${seconds} s, ${run.pass} ${run.pass === 1 ? 'pasada' : 'pasadas'}, ${job.steps} pasos: ${stop}${results.length ? ` (${results.map((g) => `${g.id} ${g.ok ? 'pasa' : 'FALLA'}`).join(', ')})` : ''}${review?.verdict ? `; el revisor recomienda ${review.verdict}` : ''}`);
     const done: JobDone = { project, ok: stop === 'verificado' || stop === 'sin_comprobar', summary: project.lastSummary, seconds, site: this.hasSite(project.slug), check: site, stop };

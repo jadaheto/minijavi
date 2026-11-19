@@ -1,5 +1,6 @@
 import 'reflect-metadata';
-import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -29,8 +30,9 @@ async function main() {
   const realFetch = globalThis.fetch, sent: string[] = [];
   let capableFetch: ((url: string, body: any) => Response) | undefined; // respuesta simulada del modelo capaz (cada prueba pone la suya)
   const tg: { method: string; body: any }[] = []; let tgWebhook = '';
+  let githubFetch: ((url: string, init: any) => Response) | undefined; // GitHub simulado (cada prueba pone el suyo)
   globalThis.fetch = (async (url: any, init?: any) => { sent.push(String(url));
-    if (String(url).includes('api.telegram.org')) { const method = String(url).split('/').pop()!, body = JSON.parse(String(init?.body ?? '{}')); tg.push({ method, body }); return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: tgWebhook } : method === 'getUpdates' ? [] : { message_id: 9000 + tg.length } }), { status: 200 }); } if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
+    if (String(url).includes('api.telegram.org')) { const method = String(url).split('/').pop()!, body = JSON.parse(String(init?.body ?? '{}')); tg.push({ method, body }); return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: tgWebhook } : method === 'getUpdates' ? [] : { message_id: 9000 + tg.length } }), { status: 200 }); } if (githubFetch && String(url).includes('api.github.invalid')) return githubFetch(String(url), init); if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
 
   const { ConfigService } = await import('../config/config.service');
   const { DbService } = await import('../db/db.service');
@@ -824,6 +826,45 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     ws.markAuditSeen(slug); must(ws.pendingAudits().length === 0, 'el aviso de la auditoría no se marcó como contado');
     must(!parseAudit(json({ findings: [{ severity: 'gravísima', problem: 'x' }], summary: 'y' })).ok && parseAudit(json({ findings: [], summary: 'Sin hallazgos.' })).ok, 'el contrato de la auditoría no valida bien');
     return `2 hallazgos de 2 lectores (grave primero), 1 lector sin resultado válido, ${ms} ms en paralelo`;
+  });
+
+  await check('Taller: cada encargo deja una versión en un historial que vive fuera del proyecto', async () => {
+    const gitOf = (slug: string, ...args: string[]) => execFileSync('git', ['--git-dir', join(dir, 'git', `${slug}.git`), ...args], { encoding: 'utf8' }).trim();
+    const KEY = 'ghp_' + 'a1B2c3D4e5'.repeat(4);
+    const a = await job('git-proyecto', [{ write: { 'sitio/index.html': '<title>Git</title>', 'node_modules/x/index.js': 'x', '.env': 'CLAVE=1', 'config.js': `const k = "${KEY}";` } }]);
+    for (let i = 0; i < 40 && !(await ws.versions('git-proyecto')).length; i++) await wait(100);
+    const v = await ws.versions('git-proyecto'), files = gitOf('git-proyecto', 'ls-tree', '-r', '--name-only', 'HEAD').split('\n');
+    must(v.length === 1 && v[0].message.startsWith(`[${a.run.stop}]`), `no quedó una versión con el resultado en el mensaje: ${JSON.stringify(v)}`);
+    must(files.includes('sitio/index.html') && files.includes('config.js') && !files.some((f) => f.startsWith('node_modules') || f === '.env'), `el historial guardó lo que no debía: ${files.join(', ')}`);
+    must(!existsSync(join(ws.dir('git-proyecto'), '.git')), 'el historial quedó dentro de la carpeta del proyecto');
+    must((await ws.versions('para-igual')).some((x) => x.message.startsWith('[sin_progreso]')), 'un encargo que no quedó verificado también debía guardar su versión');
+    // Publicar: GitHub simulado y repositorios remotos locales. Nunca sale a internet.
+    const remotes = mkdtempSync(join(tmpdir(), 'minijavi-remotos-')), TOKEN = 'github_pat_' + 'S1mulad0'.repeat(8);
+    const remote = (name: string) => { const d = join(remotes, 'dueno', `${name}.git`); mkdirSync(d, { recursive: true }); execFileSync('git', ['init', '-q', '--bare', '-b', 'main', d]); return d; };
+    const vacio = remote('vacio'), ocupado = remote('ocupado'); remote('con-clave');
+    const other = mkdtempSync(join(tmpdir(), 'minijavi-otro-')); writeFileSync(join(other, 'LEEME.md'), 'otra historia');
+    for (const args of [['init', '-q', '-b', 'main'], ['add', '-A'], ['-c', 'user.name=x', '-c', 'user.email=x@x.invalid', 'commit', '-q', '-m', 'otra'], ['push', '-q', ocupado, 'main']]) execFileSync('git', args, { cwd: other });
+    Object.assign(process.env, { TALLER_GITHUB_TOKEN: TOKEN, TALLER_GITHUB_API: 'https://api.github.invalid', TALLER_GITHUB_URL: `file://${remotes}` });
+    const wsG = new WorkshopService(new ConfigService(), usage, P.db); await wsG.onModuleInit();
+    const asked: { url: string; auth: string }[] = [];
+    githubFetch = (url, init) => { asked.push({ url, auth: String(init?.headers?.Authorization ?? '') }); const name = url.split('/').pop()!;
+      if (name === 'no-existe') return new Response('{}', { status: 404 });
+      return new Response(JSON.stringify({ private: name !== 'publico', default_branch: 'main', permissions: { push: name !== 'solo-lectura' } }), { status: 200 }); };
+    const pub = (slug: string, repo: string) => wsG.publish(slug, repo) as Promise<any>;
+    must(/público/.test((await pub('ciclo-sitio', 'dueno/publico')).error) && /permiso de escritura/.test((await pub('ciclo-sitio', 'dueno/solo-lectura')).error) && /no encuentra/.test((await pub('ciclo-sitio', 'dueno/no-existe')).error), 'publicó (o no explicó) en un repositorio público, sin permiso o inexistente');
+    must(/dueño\/nombre/.test((await pub('ciclo-sitio', '../../etc')).error) && /No existe/.test((await pub('no-hay', 'dueno/vacio')).error), 'aceptó un repositorio o un proyecto inválido');
+    const blocked = await pub('git-proyecto', 'dueno/con-clave');
+    must(!blocked.ok && blocked.files.includes('config.js') && !JSON.stringify(blocked).includes(KEY), `debía bloquear por la clave y decir solo el archivo: ${JSON.stringify(blocked).slice(0, 200)}`);
+    must(!readdirSync(join(remotes, 'dueno', 'con-clave.git', 'refs', 'heads')).length, 'subió algo a pesar de la clave');
+    const ok = await pub('ciclo-sitio', 'https://github.com/dueno/vacio.git');
+    must(ok.ok && ok.published.repo === 'dueno/vacio' && execFileSync('git', ['--git-dir', vacio, 'rev-parse', 'main'], { encoding: 'utf8' }).trim() === ok.published.commit, `no publicó en el repositorio vacío: ${JSON.stringify(ok)}`);
+    must(asked.every((x) => x.auth === `Bearer ${TOKEN}` && x.url.startsWith('https://api.github.invalid/repos/dueno/')) && wsG.list().find((x) => x.slug === 'ciclo-sitio')!.github?.repo === 'dueno/vacio', 'la consulta a GitHub o el registro de la publicación no quedaron bien');
+    const before = execFileSync('git', ['--git-dir', ocupado, 'rev-parse', 'main'], { encoding: 'utf8' }).trim(), clash = await pub('ciclo-sitio', 'dueno/ocupado');
+    must(!clash.ok && /otra historia/.test(clash.error) && execFileSync('git', ['--git-dir', ocupado, 'rev-parse', 'main'], { encoding: 'utf8' }).trim() === before, `no debía forzar sobre un repositorio con otra historia: ${JSON.stringify(clash)}`);
+    const stored = ['config', 'info/exclude'].map((f) => readFileSync(join(dir, 'git', 'ciclo-sitio.git', f), 'utf8')).join('') + readFileSync(join(dir, 'git', 'askpass.sh'), 'utf8');
+    must(!stored.includes(TOKEN) && !stored.includes('github_pat_'), 'el token quedó escrito en disco');
+    githubFetch = undefined; rmSync(remotes, { recursive: true, force: true }); rmSync(other, { recursive: true, force: true });
+    return 'versión por encargo (también los no verificados), sin node_modules ni .env; publica solo en privado, con permiso, sin claves y sin forzar';
   });
   rmSync(fakeDir, { recursive: true, force: true });
 

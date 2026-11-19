@@ -483,6 +483,28 @@ function runBox(p) {
   return el('div', {}, head, ...gates, review);
 }
 
+/** Publicar en GitHub: es un clic del dueño (con confirmación) y solo a un repositorio privado que ya exista. */
+function publishBox(p, canPublish, working) {
+  if (!p.versions.length) return null;
+  const last = p.github ? `Publicado en ${p.github.repo} (rama ${p.github.branch}) el ${fecha(p.github.at)}, versión ${p.github.commit.slice(0, 7)}.` : '';
+  if (!canPublish) return el('small', { textContent: last || 'Para publicar en GitHub falta TALLER_GITHUB_TOKEN en el servidor.' });
+  const input = el('input', { type: 'text', placeholder: 'dueño/repositorio (privado y ya creado)', value: p.github ? p.github.repo : '', size: 34, ariaLabel: `Repositorio de GitHub para ${p.name}` });
+  const btn = el('button', { type: 'button', className: 'small', textContent: 'Publicar en GitHub', disabled: working });
+  const msg = el('small', { textContent: last });
+  btn.addEventListener('click', async () => {
+    const repo = input.value.trim();
+    if (!repo) { msg.textContent = 'Escribe el repositorio como dueño/nombre.'; return; }
+    if (btn.dataset.sure !== repo) { btn.dataset.sure = repo; btn.textContent = `¿Subir todas las versiones a ${repo}? Toca otra vez`; return; }
+    btn.disabled = true; btn.textContent = 'Publicando…'; delete btn.dataset.sure;
+    const r = await api(`projects/${p.slug}/publicar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ repo }) });
+    const data = r ? await r.json().catch(() => ({})) : {};
+    btn.disabled = false; btn.textContent = 'Publicar en GitHub';
+    if (r && r.ok) { msg.style.color = 'var(--ok)'; msg.textContent = `Publicado en ${data.published.repo}, rama ${data.published.branch}, versión ${data.published.commit.slice(0, 7)}.`; }
+    else { msg.style.color = 'var(--warn)'; msg.textContent = `${data.error || 'No se pudo publicar.'}${data.files && data.files.length ? ` Archivos: ${data.files.join(', ')}` : ''}`; }
+  });
+  return el('div', {}, el('div', { className: 'row' }, input, btn), msg);
+}
+
 /** Cifras del taller en los últimos días: salen del registro de ciclos, sin ningún modelo. */
 function showMetrics(m) {
   const box = $('project-metrics'), note = $('project-metrics-note').firstChild;
@@ -503,7 +525,7 @@ function showMetrics(m) {
 
 let projectTimer = null;
 async function loadProjects() {
-  const { enabled, busy, progress, projects, metrics } = await json('projects');
+  const { enabled, busy, progress, projects, metrics, canPublish } = await json('projects');
   showMetrics(metrics);
   $('project-count').textContent = `(${projects.length})`;
   $('project-progress').textContent = !enabled ? 'El taller no está configurado en el servidor.' : busy ? progress : 'Sin encargos en curso.';
@@ -512,6 +534,8 @@ async function loadProjects() {
     const chk = runBox(p);
     const a = p.audit, audit = !a ? null : el('details', {}, el('summary', { textContent: `Auditoría del ${fecha(a.at)} (${a.model}): ${a.findings.length} ${a.findings.length === 1 ? 'hallazgo' : 'hallazgos'}${a.failed.length ? ` · sin resultado de: ${a.failed.join(', ')}` : ''}` }),
       el('pre', { textContent: [...a.summaries.map((x) => `${x.focus}: ${x.text}`), '', ...a.findings.map((f) => `[${f.severity}] ${f.focus} · ${f.file || 'general'}\n  ${f.problem}${f.fix ? `\n  Arreglo: ${f.fix}` : ''}`)].join('\n') || 'Sin hallazgos.' }));
+    const hist = !p.versions.length ? null : el('details', {}, el('summary', { textContent: `Versiones guardadas (${p.versions.length})` }), el('pre', { textContent: p.versions.map((v) => `${fecha(v.at)}  ${v.hash.slice(0, 7)}  ${v.message}`).join('\n') }));
+    const pub = publishBox(p, canPublish, busy === p.slug);
     const links = el('div', { className: 'row' }, p.url ? el('a', { href: p.url, target: '_blank', rel: 'noopener', textContent: 'Abrir sitio' }) : null, el('a', { href: `./owner/projects/${p.slug}/descargar`, textContent: 'Descargar código' }), del);
     const del = el('button', { type: 'button', className: 'small danger', textContent: 'Eliminar proyecto', disabled: busy === p.slug, title: busy === p.slug ? 'Tiene un encargo en curso' : '' });
     del.addEventListener('click', async () => {
@@ -523,7 +547,7 @@ async function loadProjects() {
     });
     const files = el('details', {}, el('summary', { textContent: `Archivos (${p.files.length})` }), el('pre', { textContent: p.files.join('\n') }));
     return el('li', {}, el('div', { className: 'row' }, el('strong', { textContent: p.name }), el('span', { className: 'tag', textContent: p.status })),
-      el('small', { textContent: `${fecha(p.updatedAt)} · ${p.jobs} ${p.jobs === 1 ? 'encargo' : 'encargos'} · último: ${p.lastTask || 'ninguno'}` }), sum, chk, audit, links,
+      el('small', { textContent: `${fecha(p.updatedAt)} · ${p.jobs} ${p.jobs === 1 ? 'encargo' : 'encargos'} · último: ${p.lastTask || 'ninguno'}` }), sum, chk, audit, hist, pub, links,
       p.qr ? el('img', { src: p.qr, alt: `Código QR de ${p.name}`, width: 160, height: 160 }) : null, files);
   }));
   const { jobs } = await json('jobs');
