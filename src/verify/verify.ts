@@ -31,9 +31,10 @@ async function main() {
   let capableFetch: ((url: string, body: any) => Response) | undefined; // respuesta simulada del modelo capaz (cada prueba pone la suya)
   const tg: { method: string; body: any }[] = []; let tgWebhook = '';
   let imageFetch: ((url: string, init: any) => Response) | undefined; // OpenAI Images y Magnific simulados
+  let musicFetch: ((url: string, init: any) => Response) | undefined; // Spotify y YouTube simulados
   let githubFetch: ((url: string, init: any) => Response) | undefined; // GitHub simulado (cada prueba pone el suyo)
   globalThis.fetch = (async (url: any, init?: any) => { sent.push(String(url));
-    if (String(url).includes('api.telegram.org')) { const method = String(url).split('/').pop()!, body = JSON.parse(String(init?.body ?? '{}')); tg.push({ method, body }); return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: tgWebhook } : method === 'getUpdates' ? [] : { message_id: 9000 + tg.length } }), { status: 200 }); } if (githubFetch && String(url).includes('api.github.invalid')) return githubFetch(String(url), init); if (imageFetch && /api\.openai\.com\/v1\/images|magnific/.test(String(url))) return imageFetch(String(url), init); if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
+    if (String(url).includes('api.telegram.org')) { const method = String(url).split('/').pop()!, body = JSON.parse(String(init?.body ?? '{}')); tg.push({ method, body }); return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: tgWebhook } : method === 'getUpdates' ? [] : { message_id: 9000 + tg.length } }), { status: 200 }); } if (githubFetch && String(url).includes('api.github.invalid')) return githubFetch(String(url), init); if (musicFetch && /spotify\.com|googleapis\.com\/youtube/.test(String(url))) return musicFetch(String(url), init); if (imageFetch && /api\.openai\.com\/v1\/images|magnific/.test(String(url))) return imageFetch(String(url), init); if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
 
   const { ConfigService } = await import('../config/config.service');
   const { DbService } = await import('../db/db.service');
@@ -976,6 +977,72 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     must(new ImagesService(new ConfigService(), usage, P.db).generators.join() === 'Magnific', 'sin clave de OpenAI debía quedar solo Magnific');
     imageFetch = undefined; process.env.MAGNIFIC_API_KEY = '';
     return 'OpenAI primero; sin saldo → Magnific y se avisa; rechazo por contenido → no se reintenta; sin clave de OpenAI → solo Magnific';
+  });
+
+  await check('Música: suena primero Spotify y, si no puede, YouTube; el token de Spotify no sale sin dueño', async () => {
+    const { SpotifyService } = await import('../music/spotify.service');
+    const { MusicService } = await import('../music/music.service');
+    Object.assign(process.env, { SPOTIFY_CLIENT_ID: 'id-de-prueba', SPOTIFY_CLIENT_SECRET: 'secreto-de-prueba', SPOTIFY_REDIRECT_URI: 'https://avatar.invalid/api/spotify/callback', YOUTUBE_API_KEY: 'clave-youtube' });
+    const mcfg = new ConfigService(), spotify = new SpotifyService(mcfg, P.db, usage), music = new MusicService(mcfg, usage, spotify);
+    await spotify.onModuleInit();
+    const calls: string[] = []; let search: () => Response, refreshes = 0, refresh: () => Response;
+    const J = (o: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(o), { status, headers });
+    const TRACK = { id: 'abcdefghij0123456789ab', name: 'La rebelión', is_playable: true, artists: [{ name: 'Joe Arroyo' }], album: { name: 'Fuego en mi mente', images: [{ url: 'https://i.scdn.co/image/caratula', width: 640, height: 640 }] }, external_urls: { spotify: 'https://open.spotify.com/track/abcdefghij0123456789ab' } };
+    musicFetch = (url, init) => {
+      if (url.includes('accounts.spotify.com/api/token')) {
+        const b = new URLSearchParams(String(init.body)); calls.push(`token:${b.get('grant_type')}:${init.headers.Authorization}`);
+        if (b.get('grant_type') === 'authorization_code') return b.get('code') === 'codigo-bueno' ? J({ access_token: 'acceso-1', expires_in: 3600, refresh_token: 'refresco-1', scope: 'streaming' }) : J({ error: 'invalid_grant' }, 400);
+        refreshes++; return refresh();
+      }
+      if (url.includes('api.spotify.com/v1/me')) return J({ display_name: 'Javier' });
+      if (url.includes('api.spotify.com/v1/search')) { calls.push(`spotify:${new URL(url).searchParams.get('limit')}:${new URL(url).searchParams.get('market')}:${init.headers.Authorization}`); return search(); }
+      if (url.includes('googleapis.com/youtube')) { calls.push('youtube'); return J({ items: [{ id: { videoId: 'vid1' }, snippet: { title: 'La rebelión (video)', channelTitle: 'Canal' } }] }); }
+      return J({}, 404);
+    };
+    refresh = () => J({ access_token: 'acceso-2', expires_in: 3600 });
+    search = () => J({ tracks: { items: [TRACK, { ...TRACK, id: 'zzzzzzzzzz0123456789zz', album: { images: [{ url: 'https://malo.invalid/x.jpg' }] } }] } });
+    // Sin conectar: YouTube, y se dice por que.
+    must(spotify.configured && !spotify.connected, 'recién configurado no debe figurar como conectado');
+    const a = await music.find('joe arroyo');
+    must(a.source === 'youtube' && /no está conectado/.test(a.note) && calls.join() === 'youtube', `sin conectar debía ir a YouTube: ${JSON.stringify(a.note)} ${calls}`);
+    must(await music.spotifyToken().then(() => false, () => true), 'sin cuenta conectada no debe haber token');
+    // Conexion: el state vale una vez y solo si lo emitio este servidor.
+    const url = new URL(spotify.authUrl()), state = url.searchParams.get('state')!;
+    must(url.origin === 'https://accounts.spotify.com' && url.searchParams.get('redirect_uri') === mcfg.spotifyRedirectUri && /streaming/.test(url.searchParams.get('scope') ?? '') && !url.toString().includes('secreto-de-prueba'), 'la dirección de autorización no es la esperada');
+    must(await spotify.finish('codigo-bueno', 'state-inventado').then(() => false, () => true), 'un state inventado debe rechazarse');
+    await spotify.finish('codigo-bueno', state);
+    must(await spotify.finish('codigo-bueno', state).then(() => false, () => true), 'el mismo state no puede usarse dos veces');
+    must(spotify.connected && spotify.status.name === 'Javier' && calls.some((c) => c === `token:authorization_code:Basic ${Buffer.from('id-de-prueba:secreto-de-prueba').toString('base64')}`), 'la cuenta no quedó conectada');
+    must(!JSON.stringify(spotify.status).includes('refresco-1'), 'el estado para el panel no debe traer el token de refresco');
+    // Conectado: Spotify primero, con limite 10 y sin tocar YouTube. Las caratulas solo de servidores de Spotify.
+    calls.length = 0;
+    const b = await music.find('joe arroyo');
+    must(b.source === 'spotify' && b.tracks.length === 2 && calls.join() === 'spotify:10:CO:Bearer acceso-1', `conectado debía buscar solo en Spotify: ${calls}`);
+    must(b.tracks[0].uri === 'spotify:track:abcdefghij0123456789ab' && b.tracks[0].image === 'https://i.scdn.co/image/caratula' && b.tracks[0].channel === 'Joe Arroyo' && b.tracks[1].image === '', `pista mal armada: ${JSON.stringify(b.tracks)}`);
+    // Sobrevive a un reinicio y renueva el token de acceso con el de refresco.
+    const again = new SpotifyService(mcfg, P.db, usage); await again.onModuleInit();
+    must(again.connected && (await again.accessToken()) === 'acceso-2' && refreshes === 1 && (await again.accessToken()) === 'acceso-2' && refreshes === 1, 'tras reiniciar debía seguir conectado y renovar el token una sola vez');
+    // Spotify falla (limite, error, sin resultados) -> YouTube con el motivo.
+    for (const [resp, why] of [[() => J({ error: { message: 'boom' } }, 500), /respondió 500/], [() => J({ tracks: { items: [] } }), /no encontró/], [() => J({}, 429, { 'retry-after': '1' }), /esperar/]] as const) {
+      calls.length = 0; search = resp;
+      const r = await music.find(`otra ${why.source}`);
+      must(r.source === 'youtube' && why.test(r.note) && calls.at(-1) === 'youtube', `con Spotify fallando debía seguir YouTube (${why}): ${r.note} ${calls}`);
+    }
+    // El reproductor de Spotify falla en el navegador: misma busqueda por YouTube y no se reintenta en la sesion.
+    const m = music.newState(); Object.assign(m, { queue: b.tracks, source: 'spotify', query: 'joe arroyo', playing: true });
+    const out: any = await music.fallback(m, 'account_error: sin Premium');
+    must(out?.action === 'play' && out.source === 'youtube' && m.source === 'youtube' && m.spotifyOff && /sin Premium/.test(m.note) && m.queue[0].id === 'vid1', `relevo del navegador: ${JSON.stringify(out)}`);
+    must((await music.fallback(m, 'otra vez')) === undefined, 'con YouTube sonando un aviso de fallo de Spotify no debe hacer nada');
+    // La sesion: el token solo se entrega a una sesion de dueño con musica.
+    const gwSrc = (await import('node:fs')).readFileSync(join(__dirname, '..', '..', 'src', 'session', 'session.gateway.ts'), 'utf8');
+    must(/msg\?\.type === 'spotify_token'\) \{ if \(s\.owner && s\.music\)/.test(gwSrc), 'la entrega del token debe exigir sesión de dueño');
+    // La conexion vencio o fue revocada: queda desconectado y la musica sigue por YouTube.
+    await wait(1100); (spotify as any).access = undefined; refresh = () => J({ error: 'invalid_grant' }, 400); search = () => J({ tracks: { items: [TRACK] } }); calls.length = 0;
+    const c = await music.find('nueva búsqueda');
+    must(c.source === 'youtube' && /venció/.test(c.note) && !spotify.connected && /volver a conectar/.test(spotify.status.error), `con la conexión vencida: ${c.note}`);
+    await spotify.disconnect();
+    musicFetch = undefined; Object.assign(process.env, { SPOTIFY_CLIENT_ID: '', SPOTIFY_CLIENT_SECRET: '', SPOTIFY_REDIRECT_URI: '', YOUTUBE_API_KEY: '' });
+    return 'sin conectar → YouTube; conectado → Spotify; error, vacío, límite, conexión vencida o reproductor fallido → YouTube; state de un solo uso; token solo para el dueño';
   });
 
   rmSync(dir, { recursive: true, force: true });

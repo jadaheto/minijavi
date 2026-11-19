@@ -407,10 +407,10 @@ export class ToolsService {
         return { text: parts.join('\n'), scene, untrusted: leads.length > 0 || calls.length > 0 };
       },
     };
-    // Musica de fondo de YouTube: el servidor busca y lleva la cola; el navegador la reproduce en un mini reproductor.
+    // Musica de fondo: el servidor busca (Spotify primero, YouTube de respaldo) y lleva la cola; el navegador la reproduce.
     if (music.enabled) this.ownerTools.musica = {
       description:
-        'Controla la música de fondo (YouTube) que suena en la pantalla de Javier. Úsala cuando pida poner una canción, artista o género, ' +
+        'Controla la música de fondo (Spotify o, si no se puede, YouTube) que suena en la pantalla de Javier. Úsala cuando pida poner una canción, artista o género, ' +
         'cambiarla, pausarla, quitarla, pasar a la siguiente, subir o bajar el volumen, o cuando pregunte qué está sonando.',
       parameters: {
         type: 'object',
@@ -423,14 +423,17 @@ export class ToolsService {
       },
       run: async (args: Record<string, unknown>, ctx: ToolContext) => {
         const m = ctx.music; if (!m) return 'La música no está disponible en esta sesión.';
-        const now = () => m.queue[m.index], name = (t = now()) => (t ? `"${t.title}" del canal ${t.channel}` : 'nada');
-        const play = (text: string): ToolResult => { m.playing = true; m.since ||= Date.now(); return { text, music: { action: 'play', queue: m.queue, index: m.index, volume: m.volume } }; };
+        const now = () => m.queue[m.index], where = () => (m.source === 'spotify' ? 'Spotify' : 'YouTube');
+        const name = (t = now()) => (t ? (m.source === 'spotify' ? `"${t.title}" de ${t.channel}` : `"${t.title}" del canal ${t.channel}`) : 'nada');
+        const play = (text: string): ToolResult => { m.playing = true; m.since ||= Date.now(); return { text, music: { action: 'play', source: m.source, queue: m.queue, index: m.index, volume: m.volume } }; };
         switch (String(args.accion)) {
           case 'poner': {
-            const tracks = await music.search(String(args.busqueda || cfg.musicDefaultQuery));
-            if (!tracks.length) return 'No encontré música con esa búsqueda. Pídele otra forma de decirlo.';
-            m.queue = tracks; m.index = 0;
-            return play(`Suena ${name()} a volumen ${m.volume} por ciento. Hay ${tracks.length - 1} más en cola. Dilo en una frase corta, sin leer el título completo si es largo.`);
+            const query = String(args.busqueda || cfg.musicDefaultQuery);
+            let found; try { found = await music.find(query, m.spotifyOff); } catch (e) { return `No se pudo poner música: ${(e as Error).message}.`; }
+            if (!found.tracks.length) return 'No encontré música con esa búsqueda. Pídele otra forma de decirlo.';
+            m.queue = found.tracks; m.index = 0; m.source = found.source; m.query = query;
+            if (!m.spotifyOff) m.note = found.note;
+            return play(`Suena ${name()} en ${where()} a volumen ${m.volume} por ciento. Hay ${found.tracks.length - 1} más en cola.${m.source === 'youtube' && m.note ? ` No fue por Spotify porque ${m.note}: díselo en pocas palabras.` : ''} Dilo en una frase corta, sin leer el título completo si es largo.`);
           }
           case 'siguiente': case 'anterior': {
             if (!m.queue.length) return 'No hay música puesta. Pregúntale qué quiere escuchar.';
@@ -445,7 +448,7 @@ export class ToolsService {
             m.volume = Math.round(Math.max(0, Math.min(100, v.includes('sub') ? m.volume + 15 : v.includes('baj') ? m.volume - 10 : Number.isFinite(n) && /\d/.test(v) ? n : m.volume)));
             return { text: `Volumen de la música en ${m.volume} por ciento.`, music: { action: 'volume', volume: m.volume } };
           }
-          case 'que_suena': return m.playing ? `Suena ${name()}, a volumen ${m.volume} por ciento.` : m.queue.length ? `Está en pausa ${name()}.` : 'No hay música puesta.';
+          case 'que_suena': return m.playing ? `Suena ${name()} en ${where()}, a volumen ${m.volume} por ciento.${m.source === 'youtube' && m.note ? ` No es Spotify porque ${m.note}.` : ''}` : m.queue.length ? `Está en pausa ${name()}.` : 'No hay música puesta.';
           default: return 'Acción de música desconocida.';
         }
       },

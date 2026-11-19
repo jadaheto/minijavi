@@ -9,7 +9,7 @@ export const USAGE_KEYS = [
   'deepseek_calls', 'deepseek_in', 'deepseek_cache', 'deepseek_out', 'deepseek_sin_dato',
   'eleven_calls', 'eleven_chars',
   'jev_calls', 'jev_in', 'capaz_calls', 'capaz_in', 'capaz_out', 'decisiones', 'decisiones_defecto',
-  'nvidia_calls', 'youtube_searches', 'wa_in', 'wa_out', 'image_searches', 'image_generations', 'image_openai', 'image_magnific',
+  'nvidia_calls', 'youtube_searches', 'spotify_searches', 'wa_in', 'wa_out', 'image_searches', 'image_generations', 'image_openai', 'image_magnific',
   'claude_jobs', 'claude_s', 'claude_turns', 'claude_usd', 'respaldo_jobs', 'respaldo_calls', 'respaldo_in', 'respaldo_out',
 ] as const;
 export type UsageKey = (typeof USAGE_KEYS)[number];
@@ -81,6 +81,7 @@ export class UsageService implements OnModuleDestroy {
     if (d.eleven_chars) parts.push(`voz (ElevenLabs) ${n(d.eleven_chars)} caracteres`);
     if (d.nvidia_calls) parts.push(`búsquedas en la base de conocimiento ${n(d.nvidia_calls)}`);
     if (d.wa_out) parts.push(`mensajes de WhatsApp respondidos ${n(d.wa_out)}`);
+    if (d.spotify_searches) parts.push(`búsquedas de Spotify ${n(d.spotify_searches)}`);
     if (d.youtube_searches) parts.push(`búsquedas de YouTube ${n(d.youtube_searches)}`);
     if (d.image_searches) parts.push(`búsquedas de fotos ${n(d.image_searches)}`);
     if (d.image_generations) parts.push(`imágenes generadas ${n(d.image_generations)}`);

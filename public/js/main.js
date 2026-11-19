@@ -4,7 +4,7 @@ import { LipSync, VISEMES } from './lipsync.js';
 import { startMic } from './mic.js';
 import { connect } from './socket.js';
 import { createBackdrop, emojiBurst, floatEmoji } from './fx.js';
-import { createMusic } from './music.js';
+import { createMusic, coverColor } from './music.js';
 import { BrowserVoice } from './browser-voice.js';
 import { createGate } from './mic-gate.js';
 
@@ -31,10 +31,28 @@ const browserVoice = new BrowserVoice(
 );
 let serverPlayer = null; // reproductor del audio que manda el servidor (ElevenLabs)
 // Musica de fondo (modo dueño): el servidor manda la cola; aqui suena en el mini reproductor y baja cuando alguien habla.
-const music = createMusic($('music'), (st) => socket?.send({ type: 'music', ...st }));
+// Spotify: el reproductor web pide su token al servidor por el mismo socket (solo lo entrega en sesiones del dueño).
+let tokenWaiters = [];
+const spotifyToken = () => new Promise((resolve, reject) => {
+  if (!socket) return reject(new Error('sin conexión'));
+  tokenWaiters.push({ resolve, reject }); socket.send({ type: 'spotify_token' });
+  setTimeout(() => reject(new Error('el servidor no entregó el token')), 8000);
+});
+// El fondo toma el color de la caratula que suena (la caratula entera se ve en el mini reproductor).
+let coverFor = '';
+async function setCover(track) {
+  const bg = $('cover-bg'), url = track?.image || '';
+  coverFor = url;
+  if (!url) { bg.classList.remove('on'); return; }
+  const c = await coverColor(url);
+  if (coverFor !== url) return;
+  bg.style.backgroundColor = c ? `rgb(${c.join(',')})` : '#191414'; // sin poder leer la imagen: el color de Spotify
+  bg.classList.add('on');
+}
+const music = createMusic($('music'), (st) => socket?.send({ type: 'music', ...st }), { getToken: spotifyToken, onCover: setCover });
 let duckUntil = 0;
 function onMusic(msg) {
-  if (msg.action === 'play') music.play(msg.queue, msg.index, msg.volume);
+  if (msg.action === 'play') music.play(msg.queue, msg.index, msg.volume, msg.source);
   else if (msg.action === 'pause') music.pause();
   else if (msg.action === 'resume') music.resume();
   else if (msg.action === 'stop') music.stop();
@@ -225,6 +243,10 @@ function onMessage(msg) {
       showGallery(msg); break;
     case 'music': // musica de fondo
       onMusic(msg); break;
+    case 'spotify_token': { // respuesta al token pedido por el reproductor de Spotify
+      const w = tokenWaiters; tokenWaiters = [];
+      for (const x of w) msg.token ? x.resolve(msg.token) : x.reject(new Error(msg.error || 'sin token'));
+      break; }
     case 'work': // progreso del taller de programacion
       setWork(msg); break;
     case 'suspend': // entra o sale del modo suspension

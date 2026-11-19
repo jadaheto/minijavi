@@ -203,10 +203,10 @@ IMÁGENES: en la pantalla puedes mostrar imágenes: la seleccionada se ve en gra
 - Imagen creada con IA: si Javier pide crear, generar o dibujar una imagen, usa generar_imagen con todos los detalles. Tarda cerca de un minuto: dile que ya la estás creando. Un mensaje que empieza por "(Aviso del sistema" lo escribió el sistema, no Javier.` : ''}${sketches ? `
 - BOCETOS: si Javier pide DISEÑAR un sitio o ver cómo podría quedar, usa bocetos (no programar), pasando todas sus ideas y, si el tema se presta, un tema de fotos. Dile que en unos minutos le muestras tres propuestas. Cuando llegue el aviso del taller con los bocetos en pantalla, empieza con "Así podría quedar tu sitio", di en una frase en qué se diferencia cada uno y pregúntale cuál le gusta. Cuando elija, usa programar con el MISMO proyecto pidiendo construir el sitio completo a partir de ese boceto.` : ''}`;
 
-/** Musica de fondo. Va solo en sesiones del dueño y si hay clave de YouTube. */
+/** Musica de fondo. Va solo en sesiones del dueño y si hay Spotify o clave de YouTube. */
 const MUSIC_RULES = (def: string, taller: boolean) => `
 
-MÚSICA: con la herramienta musica puedes poner música de YouTube de fondo en la pantalla de Javier (suena bajito y baja sola cuando alguien habla).
+MÚSICA: con la herramienta musica puedes poner música de fondo en la pantalla de Javier (suena bajito y baja sola cuando alguien habla). Sale por Spotify y, si Spotify no puede, por YouTube: la herramienta te dice por cuál sonó.
 ${taller ? '- Cuando acabes de iniciar un encargo de programación (y no haya música sonando), pregúntale en la misma respuesta: "¿Quieres escuchar alguna canción mientras tanto?".\n' : ''}- Si dice una canción, artista o género, ponla. Si dice "lo que sea", "pon algo" o algo parecido, pon "${def}". Si dice que no, no insistas.
 - También puede pedir música en cualquier momento, aunque no esté programando. Obedece sus órdenes de volumen, pausa, siguiente, cambio de canción y "qué suena".
 - Al confirmar, una frase corta; no leas títulos largos ni enlaces.`;
@@ -346,6 +346,9 @@ export class SessionGateway implements OnGatewayConnection {
         return;
       }
       // El navegador avisa cuando la musica cambia sola de cancion o se detiene (fin de la cola, error del reproductor).
+      // El reproductor web de Spotify pide su token (solo sesiones del dueño; dura 1 h) y avisa si no pudo reproducir.
+      if (msg?.type === 'spotify_token') { if (s.owner && s.music) void this.music.spotifyToken().then((token) => this.send(client, { type: 'spotify_token', token }), (e) => this.send(client, { type: 'spotify_token', error: (e as Error).message })); return; }
+      if (msg?.type === 'music' && s.music && typeof msg.failed === 'string') { const m = s.music; void this.music.fallback(m, msg.failed).then((out) => { if (out && s.music === m && client.readyState === client.OPEN) this.send(client, { type: 'music', ...out }); }).catch(() => undefined); return; }
       if (msg?.type === 'music' && s.music) { if (Number.isInteger(msg.index) && msg.index >= 0 && msg.index < s.music.queue.length) s.music.index = msg.index; if (typeof msg.playing === 'boolean') s.music.playing = msg.playing; return; }
       if (msg?.type === 'gallery' && s.gallery && msg.hide === true) { Object.assign(s.gallery, { title: '', kind: '', items: [], index: 0 }); return; } // toco al avatar: se quitan las imagenes
       if (msg?.type === 'gallery' && s.gallery) { if (Number.isInteger(msg.index) && msg.index >= 0 && msg.index < s.gallery.items.length) s.gallery.index = msg.index; return; }

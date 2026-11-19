@@ -94,6 +94,11 @@ export class ConfigService {
   readonly tallerStatusSeconds: number;
   /** Musica de YouTube en modo dueño. Sin clave = sin musica. */
   readonly youtubeApiKey: string;
+  /** Spotify como primera fuente de musica (la cuenta se conecta desde el panel). Faltando alguna = solo YouTube. */
+  readonly spotifyClientId: string;
+  readonly spotifyClientSecret: string;
+  readonly spotifyRedirectUri: string;
+  readonly spotifyMarket: string;
   readonly musicDefaultQuery: string;
   readonly musicVolume: number;
   readonly musicDailySearches: number;
@@ -272,6 +277,11 @@ export class ConfigService {
     this.tallerMaxProjects = int('TALLER_MAX_PROJECTS', 50, 1);
     this.tallerNice = int('TALLER_NICE', 10, 0);
     this.youtubeApiKey = str('YOUTUBE_API_KEY');
+    const spotifyOn = str('SPOTIFY', '1') !== '0';
+    this.spotifyClientId = spotifyOn ? str('SPOTIFY_CLIENT_ID') : '';
+    this.spotifyClientSecret = spotifyOn ? str('SPOTIFY_CLIENT_SECRET') : '';
+    this.spotifyRedirectUri = spotifyOn ? str('SPOTIFY_REDIRECT_URI') : '';
+    this.spotifyMarket = /^[A-Za-z]{2}$/.test(str('SPOTIFY_MARKET')) ? str('SPOTIFY_MARKET').toUpperCase() : 'CO';
     this.musicDefaultQuery = str('MUSIC_DEFAULT_QUERY', 'lofi para programar');
     this.musicVolume = Math.min(100, int('MUSIC_VOLUME', 15, 0));
     this.musicDailySearches = int('MUSIC_DAILY_SEARCHES', 80, 1);

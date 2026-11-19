@@ -288,10 +288,18 @@
           <div class="card"><h2>Historial de encargos</h2><div class="scroll"><table id="jobs-table"></table></div></div>
         </section>
 
-        <section data-view="dispositivos" class="card" hidden>
-          <h2>Dispositivos autorizados</h2>
-          <p id="me" class="ok"></p>
-          <ul class="list" id="list"></ul>
+        <section data-view="dispositivos" style="display:grid;gap:16px" hidden>
+          <div class="card">
+            <h2>Dispositivos autorizados</h2>
+            <p id="me" class="ok"></p>
+            <ul class="list" id="list"></ul>
+          </div>
+          <div class="card" id="spotify-card" hidden>
+            <h2>Spotify</h2>
+            <p id="spotify-state"></p>
+            <p><small id="spotify-note"></small></p>
+            <div class="row"><button type="button" id="spotify-connect">Conectar Spotify</button><button type="button" class="small danger" id="spotify-disconnect" hidden>Desconectar</button></div>
+          </div>
         </section>
       </div>
     </div>

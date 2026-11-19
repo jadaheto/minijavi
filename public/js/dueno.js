@@ -286,7 +286,7 @@ async function loadUsage() {
     ['Día', (d) => d.day], ['Conversaciones', (d) => n(d.sesiones)], ['Escucha (min)', (d) => min(d.deepgram_s)], ['Suspendido (min)', (d) => min(d.deepgram_susp_s)],
     ['Modelo: llamadas', (d) => n((d.deepseek_calls || 0) + (d.deepseek_sin_dato || 0))], ['Tokens leídos', (d) => n(d.deepseek_in)],
     ['En caché', (d) => (d.deepseek_in ? Math.round(((d.deepseek_cache || 0) / d.deepseek_in) * 100) + ' %' : '')], ['Tokens escritos', (d) => n(d.deepseek_out)],
-    ['Voz (caracteres)', (d) => n(d.eleven_chars)], ['Jev (decisiones)', (d) => (d.jev_calls ? `${n(d.jev_calls)} · ${n(d.jev_in)} tokens` : '')], ['YouTube', (d) => n(d.youtube_searches)], ['WhatsApp (respuestas)', (d) => n(d.wa_out)],
+    ['Voz (caracteres)', (d) => n(d.eleven_chars)], ['Jev (decisiones)', (d) => (d.jev_calls ? `${n(d.jev_calls)} · ${n(d.jev_in)} tokens` : '')], ['Spotify', (d) => n(d.spotify_searches)], ['YouTube', (d) => n(d.youtube_searches)], ['WhatsApp (respuestas)', (d) => n(d.wa_out)],
     ['Claude Code', (d) => (d.claude_jobs ? `${n(d.claude_jobs)} · ${min(d.claude_s)} min · ${(d.claude_usd || 0).toFixed(2)} USD equiv.` : '')],
     ['Estimado (USD)', (d) => (d.estimado_usd === undefined ? '' : d.estimado_usd.toFixed(2))],
   ];
@@ -565,6 +565,7 @@ async function loadProjects() {
 
 // ---------- dispositivos ----------
 async function loadDevices() {
+  loadSpotify();
   const devices = await json('devices');
   $('list').replaceChildren(...devices.map((d) => {
     const btn = el('button', { type: 'button', className: 'small danger', textContent: 'Revocar' });
@@ -572,6 +573,28 @@ async function loadDevices() {
     return el('li', {}, el('div', { className: 'row between' }, el('div', {}, el('strong', { textContent: d.name + (d.current ? ' (este)' : '') }), el('small', { style: 'display:block', textContent: `Registrado ${fecha(d.createdAt)} · último uso ${fecha(d.lastSeen)}` })), btn));
   }));
 }
+
+// Spotify: la cuenta se conecta aqui (el avatar pone la musica por Spotify y, si no puede, por YouTube).
+const SPOTIFY_BACK = { ok: 'Cuenta de Spotify conectada.', cancelado: 'No se conectó: la autorización se canceló en Spotify.', error: 'No se pudo conectar con Spotify. Inténtalo de nuevo.' };
+let spotifyBack = new URLSearchParams(location.search).get('spotify') || '';
+if (spotifyBack) history.replaceState(null, '', location.pathname + location.hash); // la marca de vuelta no se queda en la dirección
+async function loadSpotify() {
+  let st; try { st = await json('spotify'); } catch { return; }
+  $('spotify-card').hidden = !st.configured;
+  if (!st.configured) return;
+  $('spotify-state').textContent = st.connected ? `Conectado${st.name ? ` como ${st.name}` : ''} desde ${fecha(st.since)}.` : 'Sin conectar: la música sale solo por YouTube.';
+  $('spotify-state').className = st.connected ? 'ok' : '';
+  $('spotify-note').textContent = [SPOTIFY_BACK[spotifyBack] || '', st.error || '', st.connected ? `Spotify pide volver a conectar cada 6 meses (hacia ${fecha(st.expires)}). Necesita cuenta Premium.` : 'Te lleva a Spotify para autorizar y vuelve aquí. Necesita cuenta Premium.'].filter(Boolean).join(' ');
+  $('spotify-connect').textContent = st.connected ? 'Volver a conectar' : 'Conectar Spotify';
+  $('spotify-disconnect').hidden = !st.connected;
+}
+$('spotify-connect').addEventListener('click', async () => {
+  const r = await api('spotify/connect', { method: 'POST' });
+  const d = await r.json().catch(() => ({}));
+  if (r.ok && typeof d.url === 'string' && d.url.startsWith('https://accounts.spotify.com/')) location.href = d.url;
+  else $('spotify-note').textContent = 'No se pudo iniciar la conexión con Spotify.';
+});
+$('spotify-disconnect').addEventListener('click', async () => { await api('spotify', { method: 'DELETE' }); spotifyBack = ''; loadSpotify(); });
 
 $('form').addEventListener('submit', async (ev) => {
   ev.preventDefault(); $('msg').textContent = '';

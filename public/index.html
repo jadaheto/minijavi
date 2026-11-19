@@ -11,6 +11,7 @@
   </script>
 </head>
 <body>
+  <div id="cover-bg" class="cover-bg" aria-hidden="true"></div>
   <canvas id="backdrop" aria-hidden="true"></canvas>
   <div id="photo-bg" class="photo-bg" aria-hidden="true"></div>
   <canvas id="stage" aria-label="Avatar"></canvas>
@@ -39,7 +40,14 @@
 
   <aside id="music" class="music" hidden>
     <div id="music-player"></div>
+    <a class="music-cover" target="_blank" rel="noopener" hidden><img alt=""></a>
     <div class="music-bar"><span class="music-title"></span><span class="music-vol"></span></div>
+    <div class="music-ctl">
+      <button type="button" data-act="prev" aria-label="Anterior">⏮</button>
+      <button type="button" data-act="toggle" aria-label="Pausar">⏸</button>
+      <button type="button" data-act="next" aria-label="Siguiente">⏭</button>
+      <a class="music-open" target="_blank" rel="noopener" hidden>Abrir en Spotify</a>
+    </div>
   </aside>
 
   <section id="subtitles" class="subtitles" aria-live="polite">
