@@ -266,11 +266,12 @@ export class SessionGateway implements OnGatewayConnection {
     // Resultado REAL del ciclo: lo que dijeron las comprobaciones del servidor, no lo que afirma el informe.
     const r = p.run, bad = r ? r.gates.filter((g) => !g.ok) : [];
     const passes = r && r.passes > 1 ? ` tras ${r.passes} pasadas` : '';
-    const review = !r ? '' : r.stop === 'verificado'
+    const viaBackup = r?.backup ? `OJO: ${r.backup.reason}, así que este encargo lo hizo el modelo de respaldo (${r.backup.model}), que se cobra por uso. Díselo a Javier en una frase. ` : '';
+    const review = !r ? '' : viaBackup + (r.stop === 'verificado'
       ? `Comprobaciones del servidor: pasaron todas (${r.gates.map((g) => g.label).join(', ')})${passes}. Puedes decir que quedó verificado. `
       : r.stop === 'sin_comprobar'
         ? 'El servidor no tenía ninguna comprobación que ejecutar en este proyecto (no hay sitio publicado ni pruebas): di que terminó, pero que nadie lo comprobó. '
-        : `Comprobaciones del servidor: el ciclo se detuvo${passes} porque ${STOP_TEXT[r.stop]}.${bad.length ? ` SIGUEN fallando: ${bad.map((g) => g.label).join(', ')}.` : ''} No digas que quedó listo: dile a Javier en palabras simples qué pasó y qué sigue fallando, y pregúntale cómo quiere seguir.${bad.length ? ` Detalle: ${asData('las comprobaciones del servidor', bad.map((g) => `${g.label}: ${g.output.slice(0, 500)}`).join(' | '))}` : ''} `;
+        : `Comprobaciones del servidor: el ciclo se detuvo${passes} porque ${STOP_TEXT[r.stop]}.${bad.length ? ` SIGUEN fallando: ${bad.map((g) => g.label).join(', ')}.` : ''} No digas que quedó listo: dile a Javier en palabras simples qué pasó y qué sigue fallando, y pregúntale cómo quiere seguir.${bad.length ? ` Detalle: ${asData('las comprobaciones del servidor', bad.map((g) => `${g.label}: ${g.output.slice(0, 500)}`).join(' | '))}` : ''} `);
     const rv = r?.review, opinion = !rv ? '' : rv.verdict
       ? `Un revisor independiente (otro Claude Code que no vio el trabajo y solo leyó el resultado) recomienda ${rv.verdict === 'aprobar' ? 'APROBAR' : 'RECHAZAR'}. Es una opinión, no una prueba: cuéntasela a Javier en una frase${rv.verdict === 'rechazar' ? ' y pregúntale si mandas a corregir lo que señala' : ''}. Lo que dijo: ${asData('el revisor', `${rv.summary} ${(rv.checks ?? []).filter((c) => !c.pass).map((c) => `No pasa "${c.check}": ${c.reason}`).join(' ')}`)} `
       : 'El revisor independiente no pudo revisar esta vez; no lo menciones salvo que Javier pregunte. ';

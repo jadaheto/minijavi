@@ -17,6 +17,8 @@ import { KnowledgeService } from './knowledge/knowledge.service';
 import { KnowledgeController } from './knowledge/knowledge.controller';
 import { N8nController } from './n8n/n8n.controller';
 import { WorkshopService } from './workshop/workshop.service';
+import { WorkshopBackupService } from './workshop/backup.service';
+import { WorkshopBackupController } from './workshop/backup.controller';
 import { MusicService } from './music/music.service';
 import { SitesController } from './workshop/sites.controller';
 import { WhatsAppService } from './whatsapp/whatsapp.service';
@@ -48,7 +50,7 @@ import { VisitsService } from './visits/visits.service';
       exclude: ['/health', '/owner/{*path}', '/webhooks/{*path}', '/knowledge/{*path}', '/n8n/{*path}', '/p/{*path}', '/imagenes/{*path}', '/formulario'],
     }),
   ],
-  controllers: [HealthController, OwnerController, CallsController, KnowledgeController, N8nController, SitesController],
-  providers: [ConfigService, DbService, AlertsService, OpsService, UsageService, ImagesService, PortfolioService, WorkshopService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, PolicyService, ActionsService, ApprovalsService, CatalogService, TelegramService, OptOutService, InjectionGuard],
+  controllers: [HealthController, OwnerController, CallsController, KnowledgeController, N8nController, SitesController, WorkshopBackupController],
+  providers: [ConfigService, DbService, AlertsService, OpsService, UsageService, ImagesService, PortfolioService, WorkshopService, WorkshopBackupService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, PolicyService, ActionsService, ApprovalsService, CatalogService, TelegramService, OptOutService, InjectionGuard],
 })
 export class AppModule {}

@@ -686,6 +686,9 @@ if (args.includes('--no-session-persistence')) { // es el revisor: contexto fres
   console.log(JSON.stringify({ type: 'result', is_error: false, result: outs ? outs[Math.min(k, outs.length - 1)] : ok, total_cost_usd: 0.002 }));
   process.exit(0);
 }
+fs.appendFileSync(path.join(here, 'env-' + slug + '.txt'), JSON.stringify(process.env) + '\\n');
+const lim = path.join(here, 'limite-' + slug);
+if (fs.existsSync(lim) && process.env.CLAUDE_CODE_OAUTH_TOKEN) { fs.writeFileSync(nf, String(n)); console.log(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: fs.readFileSync(lim, 'utf8'), num_turns: 0 })); process.exit(1); }
 const step = plan[Math.min(n, plan.length - 1)];
 fs.appendFileSync(path.join(here, 'prompts-' + slug + '.txt'), args[args.indexOf('-p') + 1] + '\\n=====\\n');
 for (const [f, c] of Object.entries(step.write || {})) { const t = path.join(process.cwd(), f); fs.mkdirSync(path.dirname(t), { recursive: true }); fs.writeFileSync(t, c); }
@@ -865,6 +868,64 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     must(!stored.includes(TOKEN) && !stored.includes('github_pat_'), 'el token quedó escrito en disco');
     githubFetch = undefined; rmSync(remotes, { recursive: true, force: true }); rmSync(other, { recursive: true, force: true });
     return 'versión por encargo (también los no verificados), sin node_modules ni .env; publica solo en privado, con permiso, sin claves y sin forzar';
+  });
+  await check('Taller: si la suscripción de Claude no puede (límite, saldo, credencial), el encargo sigue con el modelo de respaldo', async () => {
+    const { bridgeRequest, BridgeStream } = await import('../workshop/anthropic-bridge');
+    const { ItemStore } = await import('../llm/openai-responses');
+    const { WorkshopBackupService } = await import('../workshop/backup.service');
+    // 1. Traduccion Anthropic <-> Responses, y el razonamiento vuelve junto a la llamada a herramienta.
+    const store = new ItemStore(), st = new BridgeStream('m', store), evs: any[] = [...st.start()];
+    for (const ev of [{ type: 'response.output_text.delta', delta: 'Voy.' }, { type: 'response.output_item.done', item: { type: 'reasoning', id: 'rs_1', encrypted_content: 'cifrado' } },
+      { type: 'response.output_item.added', output_index: 2, item: { type: 'function_call', call_id: 'call_1', name: 'Write', arguments: '' } }, { type: 'response.function_call_arguments.delta', output_index: 2, delta: '{"file_path":"a.txt"}' },
+      { type: 'response.output_item.done', output_index: 2, item: { type: 'function_call', call_id: 'call_1', name: 'Write', arguments: '{"file_path":"a.txt"}' } },
+      { type: 'response.completed', response: { usage: { input_tokens: 100, output_tokens: 20, input_tokens_details: { cached_tokens: 60 } } } }]) evs.push(...st.push(ev));
+    const names = evs.map((e) => e.event).join(',');
+    must(names === 'message_start,content_block_start,content_block_delta,content_block_stop,content_block_start,content_block_delta,content_block_stop,message_delta,message_stop', `secuencia de eventos: ${names}`);
+    must(evs[4].data.content_block.type === 'tool_use' && evs[4].data.content_block.id === 'call_1' && evs[7].data.delta.stop_reason === 'tool_use' && evs[7].data.usage.cache_read_input_tokens === 60 && st.message().content[1].input.file_path === 'a.txt', 'la llamada a herramienta o el consumo no se tradujeron bien');
+    const body: any = bridgeRequest({ system: [{ type: 'text', text: 'Reglas.' }], max_tokens: 100, tool_choice: { type: 'any' }, tools: [{ name: 'Write', description: 'd', input_schema: { type: 'object' } }, { type: 'web_search_20250305', name: 'web_search' }],
+      messages: [{ role: 'user', content: 'hazlo' }, { role: 'assistant', content: [{ type: 'thinking', thinking: 'x' }, { type: 'text', text: 'Voy.' }, { type: 'tool_use', id: 'call_1', name: 'Write', input: {} }] },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', is_error: true, content: [{ type: 'text', text: 'no existe' }] }, { type: 'text', text: 'sigue' }] },
+        { role: 'assistant', content: [{ type: 'tool_use', id: 'otra', name: 'Write', input: { a: 1 } }] }] }, 'modelo-real', { reasoning: { effort: 'low' } }, store);
+    must(body.model === 'modelo-real' && body.instructions === 'Reglas.' && body.tools.length === 1 && body.tools[0].type === 'function' && body.tools[0].name === 'Write' && body.tool_choice === 'required' && body.max_output_tokens >= 16000 && body.reasoning.effort === 'low', `cuerpo: ${JSON.stringify(body).slice(0, 300)}`);
+    must(body.input[1].type === 'reasoning' && body.input[1].encrypted_content === 'cifrado' && body.input[2].call_id === 'call_1' && body.input[3].type === 'function_call_output' && body.input[3].output === 'ERROR: no existe' && body.input[4].content[0].text === 'sigue' && body.input[5].type === 'function_call' && body.input[5].arguments === '{"a":1}', `entrada: ${JSON.stringify(body.input).slice(0, 400)}`);
+    // 2. El servicio: solo con OpenAI por la API Responses; la peticion sale con la clave del servidor y vuelve en formato Anthropic.
+    must(/API Responses/.test(new WorkshopBackupService(wcfg, new CapableModelService(wcfg, usage), usage).problem), 'con un proveedor que no es OpenAI el respaldo debía quedar apagado y decir por qué');
+    Object.assign(process.env, { MODELO_CAPAZ_PROVEEDOR: 'openai', MODELO_CAPAZ: 'gpt-de-prueba', MODELO_CAPAZ_KEY: 'clave-real-de-openai', TALLER_RESPALDO_DIA: '2' });
+    const bcfg = new ConfigService(), backup = new WorkshopBackupService(bcfg, new CapableModelService(bcfg, usage), usage);
+    must(backup.available && !backup.valid('x'.repeat(64)), `el respaldo debía estar disponible: ${backup.problem}`);
+    const asked: any[] = [];
+    capableFetch = (url, b) => { asked.push({ url, b }); return sse([{ type: 'response.output_text.delta', delta: 'Hola.' }, { type: 'response.completed', response: { usage: { input_tokens: 5, output_tokens: 2 } } }]); };
+    const got: any = { sse: [] as any[], status: 0, json: undefined };
+    await backup.handle({ stream: true, model: 'claude-lo-que-sea', messages: [{ role: 'user', content: 'hola' }] }, { head: (s) => { got.status = s; }, sse: (e) => got.sse.push(e), json: (v) => { got.json = v; } });
+    must(got.status === 200 && got.sse.map((e: any) => e.event).join(',') === 'message_start,content_block_start,content_block_delta,content_block_stop,message_delta,message_stop' && asked[0].url.endsWith('/responses') && asked[0].b.model === 'gpt-de-prueba' && asked[0].b.store === false && asked[0].b.stream === true, `respuesta del respaldo: ${JSON.stringify(got).slice(0, 300)}`);
+    capableFetch = () => new Response(JSON.stringify({ error: { message: 'sin saldo' } }), { status: 429 });
+    await backup.handle({ stream: true, messages: [] }, { head: (s) => { got.status = s; }, sse: () => undefined, json: (v) => { got.json = v; } });
+    must(got.status === 429 && got.json.error.type === 'rate_limit_error' && /sin saldo/.test(got.json.error.message), 'un error de OpenAI debía volver con la forma de Anthropic');
+    capableFetch = undefined;
+    // 3. El relevo en el ciclo del taller.
+    const wsB = new WorkshopService(bcfg, usage, P.db, undefined, backup); await wsB.onModuleInit();
+    const runB = async (slug: string, failure: string, plan: Step[]) => {
+      writeFileSync(join(fakeDir, `plan-${slug}.json`), JSON.stringify(plan)); writeFileSync(join(fakeDir, `limite-${slug}`), failure);
+      const finished = new Promise<any>((r) => wsB.onDone((d) => { if (d.project.slug === slug) r(d); }));
+      must(/Encargo iniciado/.test(wsB.start(slug, 'Encargo de prueba del respaldo', 'http://localhost/formulario', true)), 'el encargo no arrancó');
+      const d = await Promise.race([finished, wait(60_000).then(() => { throw new Error('el encargo no terminó en 60 s'); })]);
+      return { d, run: d.project.run, envs: readFileSync(join(fakeDir, `env-${slug}.txt`), 'utf8').trim().split('\n').map((l) => JSON.parse(l)) };
+    };
+    const PASS = [{ write: { 'package.json': JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }) }, say: 'Hecho con el respaldo.' }];
+    const a = await runB('respaldo-uno', "You've hit your usage limit · resets 5pm", PASS);
+    must(a.run.stop === 'verificado' && a.run.passes === 1 && a.run.backup?.model === 'openai: gpt-de-prueba' && /límite/.test(a.run.backup.reason), `debía cerrar verificado con el respaldo: ${JSON.stringify(a.run).slice(0, 300)}`);
+    const first = a.envs[0], second = a.envs[1], token = second.ANTHROPIC_AUTH_TOKEN;
+    must(first.CLAUDE_CODE_OAUTH_TOKEN && !first.ANTHROPIC_BASE_URL && !second.CLAUDE_CODE_OAUTH_TOKEN && /^http:\/\/127\.0\.0\.1:\d+\/taller-llm$/.test(second.ANTHROPIC_BASE_URL) && /^[0-9a-f]{64}$/.test(token) && second.ANTHROPIC_MODEL === 'gpt-de-prueba', 'el respaldo no recibió el entorno correcto');
+    must(a.envs.every((e) => !JSON.stringify(e).includes('clave-real-de-openai') && !JSON.stringify(e).includes('clave-de-simulacion')), 'la clave de OpenAI llegó al entorno del taller');
+    must(!backup.valid(token) && !wsB.list().find((p) => p.slug === 'respaldo-uno')!.sessionId, 'al cerrar, la clave temporal debía dejar de valer y la sesión empezar de nuevo');
+    const net = await runB('respaldo-red', 'fetch failed: ECONNRESET', PASS);
+    must(net.run.stop === 'fallo' && !net.run.backup && net.envs.length === 1, 'un fallo de red no debe activar el respaldo');
+    const sat = await runB('respaldo-dos', 'API Error: 529 Overloaded', PASS);
+    must(sat.run.backup && /saturado/.test(sat.run.backup.reason), 'la saturación de Claude debía activar el respaldo');
+    const cap = await runB('respaldo-tope', "You've hit your usage limit", PASS);
+    must(cap.run.stop === 'fallo' && !cap.run.backup && /tope diario/.test(cap.d.summary), `con el tope diario alcanzado no debía usar el respaldo: ${cap.d.summary.slice(0, 200)}`);
+    Object.assign(process.env, { MODELO_CAPAZ_PROVEEDOR: 'otro', MODELO_CAPAZ: 'modelo-capaz-de-prueba', MODELO_CAPAZ_KEY: 'clave-de-simulacion' });
+    return 'límite simulado → misma pasada con el respaldo, sin la clave de OpenAI en el taller, clave temporal revocada; saturación también lo activa; fallo de red no; tope diario si se configura';
   });
   rmSync(fakeDir, { recursive: true, force: true });
 

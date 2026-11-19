@@ -12,7 +12,8 @@ import { ConfigService } from '../config/config.service';
 import { UsageService } from '../usage/usage.service';
 import { SiteCheck } from './site-check';
 import { runReview } from './reviewer';
-import { explainClaudeError } from './errors';
+import { ACCOUNT_FAILURE, accountFailure, explainClaudeError } from './errors';
+import { WorkshopBackupService } from './backup.service';
 import { blockedReason, detectGates, evaluateStop, GateResult, missingGate, repairPrompt, runGate, StopReason, treeHash, weakest } from './gates';
 
 export interface Project {
@@ -40,6 +41,8 @@ export interface RunInfo {
   gates: { id: string; kind: string; label: string; ok: boolean; exit: number | null; seconds: number; output: string }[];
   /** Opinion del revisor independiente (informa, no decide). `error` = no hubo revision y por que. */
   review?: { verdict?: 'aprobar' | 'rechazar'; checks?: { check: string; pass: boolean; reason: string }[]; summary?: string; error?: string; seconds: number; attempts: number };
+  /** El encargo lo termino el modelo de respaldo, y por que la suscripcion no pudo. */
+  backup?: { model: string; reason: string };
 }
 /** Estado del ciclo en curso. */
 interface Run {
@@ -49,6 +52,7 @@ interface Run {
   seen: Set<string>;                            // gates que ya existieron en este encargo (si desaparecen, fallan)
   usd: number; turns: number;
   decision?: number | null;                     // decision del modelo "auto": al cerrar se anota como le fue
+  backup?: { token: string; model: string; reason: string }; // el encargo siguio con el modelo de respaldo
 }
 interface Job {
   slug: string; proc?: ChildProcess; t0: number; activity: string; spoken: string; steps: number; timer?: NodeJS.Timeout; cancelled?: boolean; timedOut?: boolean;
@@ -114,7 +118,7 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
   private auditListeners: ((p: Project) => void)[] = [];
   private readonly git: ProjectGit;
 
-  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService, private readonly db: DbService, @Optional() private readonly decisions?: DecisionsService) {
+  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService, private readonly db: DbService, @Optional() private readonly decisions?: DecisionsService, @Optional() private readonly backup?: WorkshopBackupService) {
     this.root = resolve(cfg.dataDir, 'proyectos');
     this.git = new ProjectGit(cfg, this.root);
     if (!this.enabled) return;
@@ -271,6 +275,9 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
       project.sessionId = undefined; project.sessionJobs = 0;
       prompt = `(Empiezas una sesión nueva sobre un proyecto que ya existe y no recuerdas la conversación anterior. Lee primero ESTADO.md y revisa los archivos que haga falta antes de cambiar nada.)\n\n${task}`;
     }
+    else if (!project.sessionId && project.jobs > 0 && existsSync(join(this.dir(project.slug), 'ESTADO.md'))) {
+      prompt = `(Empiezas una sesión nueva sobre un proyecto que ya existe y no recuerdas la conversación anterior. Lee primero ESTADO.md y revisa los archivos que haga falta antes de cambiar nada.)\n\n${task}`;
+    }
     const model = this.model(modelName);
     const cwd = this.dir(project.slug);
     try { mkdirSync(cwd, { recursive: true, mode: 0o777 }); if (this.cfg.tallerUser) chmodSync(cwd, 0o777); } catch (e) { return `No se pudo crear la carpeta del proyecto: ${(e as Error).message}`; }
@@ -294,19 +301,21 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
   private pass(job: Job, prompt: string): string | undefined {
     const run = job.run, project = run.project, model = run.model;
     const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits',
-      '--allowedTools', 'Bash,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,TodoWrite,Agent,Task', '--max-turns', String(this.cfg.tallerMaxTurns),
+      // Con el respaldo no hay busqueda web: es una herramienta del servidor de Anthropic.
+      '--allowedTools', `Bash,Read,Edit,Write,Glob,Grep,WebFetch,${run.backup ? '' : 'WebSearch,'}TodoWrite,Agent,Task`, '--max-turns', String(this.cfg.tallerMaxTurns),
       '--append-system-prompt', RULES(project.slug, run.formUrl)];
     if (project.sessionId) args.push('--resume', project.sessionId);
-    if (model.id) args.push('--model', model.id);
+    if (model.id && !run.backup) args.push('--model', model.id);
     // Entorno minimo: nada de las claves del avatar llega a Claude Code ni a los comandos que ejecute.
     const env: NodeJS.ProcessEnv = {
-      PATH: process.env.PATH, LANG: 'C.UTF-8', CLAUDE_CODE_OAUTH_TOKEN: this.cfg.claudeToken,
-      DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1',
+      PATH: process.env.PATH, LANG: 'C.UTF-8', DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1',
+      // Con el respaldo no va la credencial de la suscripcion: va la direccion de este servidor y una clave temporal.
+      ...(run.backup && this.backup ? this.backup.env(run.backup.token) : { CLAUDE_CODE_OAUTH_TOKEN: this.cfg.claudeToken }),
     };
     let cmd = this.cfg.claudeBin, argv = args;
     if (this.cfg.tallerUser) {
       // sudo solo permite ejecutar claude como el usuario del taller (ver Dockerfile); la carpeta del proyecto queda abierta para el.
-      argv = ['-n', '-H', '-u', this.cfg.tallerUser, '--preserve-env=PATH,LANG,CLAUDE_CODE_OAUTH_TOKEN,DISABLE_AUTOUPDATER,DISABLE_TELEMETRY,DISABLE_ERROR_REPORTING', this.cfg.claudeBin, ...args];
+      argv = ['-n', '-H', '-u', this.cfg.tallerUser, `--preserve-env=${Object.keys(env).join(',')}`, this.cfg.claudeBin, ...args];
       cmd = 'sudo';
     } else { env.HOME = process.env.HOME; }
 
@@ -368,7 +377,8 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     const run = job.run, project = run.project, dir = this.dir(project.slug), { result, lastText } = r;
     const seconds = Math.round((Date.now() - r.passT0) / 1000);
     // Consumo de la pasada. total_cost_usd es el equivalente a precio de API que informa Claude Code; con la suscripcion no se cobra aparte.
-    const turns = Number(result?.num_turns) || 0, usd = Number(result?.total_cost_usd) || 0;
+    // Con el respaldo esa cifra no vale (Claude Code la calcula con precios de Anthropic): el consumo real va en respaldo_in/out.
+    const turns = Number(result?.num_turns) || 0, usd = run.backup ? 0 : Number(result?.total_cost_usd) || 0;
     this.usage.add('claude_jobs'); this.usage.add('claude_s', seconds); this.usage.add('claude_turns', turns); this.usage.add('claude_usd', usd);
     run.turns += turns; run.usd += usd;
     if (result?.session_id) project.sessionId = result.session_id;
@@ -380,6 +390,22 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     else if (!ok) {
       const raw = `${summary} ${r.stderr}`, known = explainClaudeError(raw);
       summary = known ? `Claude Code no pudo trabajar: ${known}.` : `Claude Code falló${r.err ? `: ${r.err.message}` : ''}. ${summary || r.stderr.replace(/\s+/g, ' ').slice(-300) || `código ${r.code}`}`;
+    }
+    // RELEVO: si lo que fallo es la cuenta o el servicio (limite, credencial, saldo o saturacion) y hay modelo de respaldo, la MISMA pasada se repite
+    // con el respaldo, en sesion nueva (la de la suscripcion no se puede retomar con otro proveedor). Una vez por encargo.
+    if (!ok && !job.cancelled && !job.timedOut && !run.backup && result?.subtype !== 'error_max_turns') {
+      const kind = accountFailure(`${String(result?.result ?? '')} ${lastText} ${r.stderr}`), why = kind ? (this.backup ? this.backup.refuse() : 'no está configurado') : '';
+      if (kind && !why && this.backup && run.deadline - Date.now() > 60_000) {
+        run.backup = { token: this.backup.issue(), model: this.backup.label, reason: ACCOUNT_FAILURE[kind] };
+        this.log.warn(`taller: "${project.slug}": ${run.backup.reason}; el encargo sigue con el respaldo (${run.backup.model})`);
+        const before = { sessionId: project.sessionId, model: run.model };
+        project.sessionId = undefined; run.model = { id: '', label: `${run.backup.model} (respaldo)` }; project.model = run.model.label; run.pass--;
+        job.model = run.backup.model; job.activity = 'la suscripción no pudo: sigue con el modelo de respaldo'; job.spoken = 'sigue trabajando con el modelo de respaldo, porque la suscripción de Claude no pudo';
+        const err = this.pass(job, `(Mensaje del servidor. Continúas un encargo que otro modelo no pudo hacer o dejó a medias, y no recuerdas nada de lo anterior: lee ESTADO.md si existe y revisa los archivos antes de cambiar nada.${r.prompt === run.task ? '' : ` El encargo original de Javier era: «${run.task.slice(0, 3000)}».`})\n\n${r.prompt}`);
+        if (!err) { this.save(project); this.emit(true); return; }
+        this.backup.revoke(run.backup.token); run.backup = undefined; run.pass++; project.sessionId = before.sessionId; run.model = before.model; project.model = before.model.label;
+        summary += ` No se pudo pasar al modelo de respaldo: ${err}`;
+      } else if (kind && why) summary += ` No se usó el modelo de respaldo: ${why}.`;
     }
     let stop: StopReason | undefined = job.cancelled ? 'cancelado' : job.timedOut ? 'tiempo' : !ok ? 'fallo' : undefined;
 
@@ -431,10 +457,10 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     if (this.cfg.tallerReview && ['verificado', 'sin_comprobar', 'pasadas', 'sin_progreso'].includes(stop)) {
       job.checking = true; job.activity = 'revisor independiente: leyendo el resultado'; job.spoken = 'ya terminó, y un revisor independiente está leyendo el resultado'; this.emit(true);
       const out = await runReview(dir, run.task, results, run.formUrl, { claudeBin: this.cfg.claudeBin, token: this.cfg.claudeToken, user: this.cfg.tallerUser, nice: this.cfg.tallerNice, seconds: this.cfg.tallerReviewSeconds,
-        model: this.cfg.tallerReviewModel ? this.model(this.cfg.tallerReviewModel).id : run.model.id, track: this.tracker(job), cancelled: () => !!job.cancelled || this.job !== job });
+        model: this.cfg.tallerReviewModel ? this.model(this.cfg.tallerReviewModel).id : run.model.id, env: run.backup && this.backup ? this.backup.env(run.backup.token) : undefined, track: this.tracker(job), cancelled: () => !!job.cancelled || this.job !== job });
       job.checking = false;
       if (this.job !== job) return;
-      const reviewUsd = out.ok ? out.review.usd : out.usd;
+      const reviewUsd = run.backup ? 0 : out.ok ? out.review.usd : out.usd;
       this.usage.add('claude_usd', reviewUsd); run.usd += reviewUsd;
       if (!job.cancelled) review = out.ok ? { verdict: out.review.verdict, checks: out.review.checks, summary: out.review.summary, seconds: out.review.seconds, attempts: out.review.attempts } : { error: out.error.slice(0, 300), seconds: out.seconds, attempts: out.attempts };
       if (review?.error) this.log.warn(`taller: no hubo revisión de "${project.slug}": ${review.error}`);
@@ -442,6 +468,8 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     this.close(job, stop, results, summary, review);
   }
 
+  /** Estado del respaldo, para el panel. */
+  get backupStatus() { return this.backup?.status ?? { available: false, model: '', problem: 'no está configurado', usedToday: 0, dailyMax: 0 }; }
   get canPublish() { return this.git.canPublish; }
   versions(slug: string) { return this.git.versions(slug); }
   /** Publica el historial del proyecto en GitHub. Solo lo llama el panel del dueño (un clic); nunca la voz ni un encargo. */
@@ -528,10 +556,12 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
   private close(job: Job, stop: StopReason, results: GateResult[], summary: string, review?: RunInfo['review']) {
     const run = job.run, project = run.project;
     clearTimeout(job.timer); this.job = undefined; this.emit(true);
+    // La clave temporal del respaldo deja de valer, y el siguiente encargo vuelve a intentar con la suscripcion en sesion nueva.
+    if (run.backup) { this.backup?.revoke(run.backup.token); project.sessionId = undefined; project.sessionJobs = 0; }
     const seconds = Math.round((Date.now() - run.t0) / 1000), site = results.find((x) => x.kind === 'sitio')?.site;
     project.status = stop === 'fallo' || stop === 'tiempo' ? 'error' : 'libre';
     project.check = site; project.repaired = run.pass > 1;
-    project.run = { at: new Date(run.t0).toISOString(), stop, passes: run.pass, seconds, gates: results.map((g) => ({ id: g.id, kind: g.kind, label: g.label, ok: g.ok, exit: g.exit, seconds: g.seconds, output: g.output.slice(0, 2500) })), review };
+    project.run = { at: new Date(run.t0).toISOString(), stop, passes: run.pass, seconds, gates: results.map((g) => ({ id: g.id, kind: g.kind, label: g.label, ok: g.ok, exit: g.exit, seconds: g.seconds, output: g.output.slice(0, 2500) })), review, ...(run.backup ? { backup: { model: run.backup.model, reason: run.backup.reason } } : {}) };
     project.lastSummary = summary.slice(0, 4000); project.updatedAt = new Date().toISOString(); project.unseen = true;
     this.save(project);
     void this.db.query('INSERT INTO job_runs (business, slug, at, model, passes, stop, verified, seconds, turns, usd, failing, task, review) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)',

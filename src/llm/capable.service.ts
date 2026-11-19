@@ -3,9 +3,10 @@ import Anthropic from '@anthropic-ai/sdk';
 import { ConfigService } from '../config/config.service';
 import { UsageService } from '../usage/usage.service';
 import { LlmEvent, ToolCall } from './deepseek.service';
+import { extraForResponses, flatTool, ItemStore, responseFailure, responsesEvents, responseUsage } from './openai-responses';
 
 /** Un proveedor conocido: donde queda su API, con que formato habla y como se le pide el tope de salida. */
-interface Preset { url: string; format: 'openai' | 'anthropic'; tokensField: string; extra?: Record<string, unknown>; verified: string }
+interface Preset { url: string; format: 'openai' | 'anthropic'; api?: 'responses'; tokensField: string; extra?: Record<string, unknown>; verified: string }
 
 /**
  * Proveedores del modelo capaz. Todos menos Anthropic hablan el formato "chat completions" de OpenAI.
@@ -14,7 +15,7 @@ interface Preset { url: string; format: 'openai' | 'anthropic'; tokensField: str
  */
 export const PRESETS: Record<string, Preset> = {
   deepseek: { url: 'https://api.deepseek.com', format: 'openai', tokensField: 'max_tokens', extra: { thinking: { type: 'disabled' } }, verified: 'documentación y llamadas reales' },
-  openai: { url: 'https://api.openai.com/v1', format: 'openai', tokensField: 'max_completion_tokens', verified: 'SIN verificar: su referencia de la API no se dejó leer (403)' },
+  openai: { url: 'https://api.openai.com/v1', format: 'openai', api: 'responses', tokensField: 'max_completion_tokens', verified: 'API Responses (guías leídas el 2026-11-19 y probada con gpt-6.2-astra: pregunta y herramienta). Los gpt-6.x no aceptan herramientas por /chat/completions; MODELO_CAPAZ_API=chat vuelve a esa API' },
   gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/openai', format: 'openai', tokensField: '', verified: 'probado con gemini-4-neon el 2026-11-18 (pregunta y herramienta); exige devolver la firma de razonamiento de cada llamada a herramienta, y el conector lo hace' },
   kimi: { url: 'https://api.moonshot.ai/v1', format: 'openai', tokensField: 'max_completion_tokens', verified: 'dirección, streaming y herramientas según su documentación' },
   grok: { url: 'https://api.x.ai/v1', format: 'openai', tokensField: '', verified: 'SIN verificar: su documentación solo describe otra API (Responses)' },
@@ -43,6 +44,8 @@ export class CapableModelService implements OnModuleInit {
    * recibirlo de vuelta en el historial; sin el responde 400). Se guardan por id de la llamada y se reponen al enviar.
    */
   private readonly extras = new Map<string, Record<string, unknown>>();
+  /** Salida completa de las respuestas de la API Responses que pidieron herramientas (traen su razonamiento cifrado). */
+  private readonly items = new ItemStore();
   /** Un proveedor que rechazo los campos opcionales: de ahi en adelante se le habla con el cuerpo minimo. */
   private minimal = false;
   readonly problem: string = '';
@@ -71,7 +74,38 @@ export class CapableModelService implements OnModuleInit {
   /** Misma forma que DeepSeekService.chat. */
   chat(messages: unknown[], tools: unknown[], signal?: AbortSignal, maxTokens = 4000): AsyncGenerator<LlmEvent> {
     if (!this.preset) throw new Error('no hay modelo capaz configurado');
-    return this.preset.format === 'anthropic' ? this.chatAnthropic(messages as OpenAiMessage[], tools as OpenAiTool[], signal, maxTokens) : this.chatOpenAi(messages, tools, signal, maxTokens);
+    if (this.preset.format === 'anthropic') return this.chatAnthropic(messages as OpenAiMessage[], tools as OpenAiTool[], signal, maxTokens);
+    return this.usesResponses ? this.chatResponses(messages as OpenAiMessage[], tools as OpenAiTool[], signal, maxTokens) : this.chatOpenAi(messages, tools, signal, maxTokens);
+  }
+  /** OpenAI se habla por su API Responses, salvo que MODELO_CAPAZ_API diga otra cosa. */
+  get usesResponses() { return !!this.preset && this.preset.format === 'openai' && (this.cfg.capableApi ? this.cfg.capableApi === 'responses' : this.preset.api === 'responses'); }
+  /** Para el respaldo del taller: a donde y con que clave se llama a la API Responses (la clave no sale del servidor). */
+  get responsesTarget() { return this.usesResponses ? { url: this.url, key: this.key, model: this.cfg.capableModel, extra: extraForResponses(this.cfg.capableExtra) } : undefined; }
+
+  // ---- OpenAI, API Responses (ver openai-responses.ts) ----
+  private async *chatResponses(messages: OpenAiMessage[], tools: OpenAiTool[], signal: AbortSignal | undefined, maxTokens: number): AsyncGenerator<LlmEvent> {
+    const { instructions, input } = toResponsesInput(messages, this.items);
+    const body = {
+      model: this.cfg.capableModel, input, ...(instructions ? { instructions } : {}),
+      ...(tools.length ? { tools: tools.map((t) => flatTool(t.function.name, t.function.description, t.function.parameters)) } : {}),
+      max_output_tokens: Math.max(maxTokens, 8000), // el razonamiento cuenta dentro del tope: se deja espacio
+      include: ['reasoning.encrypted_content'], ...extraForResponses(this.cfg.capableExtra),
+    };
+    const output: any[] = [];
+    let counted = false;
+    try {
+      for await (const ev of responsesEvents(this.url, this.key, body, signal)) {
+        if (!counted) { counted = true; this.usage.add('capaz_calls'); }
+        if (ev.type === 'response.output_text.delta' && typeof ev.delta === 'string' && ev.delta) yield { type: 'text', delta: ev.delta };
+        else if (ev.type === 'response.output_item.done' && ev.item) output.push(ev.item);
+        else if (ev.type === 'response.completed' || ev.type === 'response.incomplete') { const u = responseUsage(ev); this.usage.add('capaz_in', u.input); this.usage.add('capaz_out', u.output); }
+        else if (ev.type === 'response.failed' || ev.type === 'error') throw new Error(responseFailure(ev));
+      }
+    } catch (e) { throw new Error(`${this.label} ${(e as any).status ? `respondió ${(e as any).status}: ` : 'falló: '}${(e as Error).message}`); }
+    const calls = output.filter((i) => i.type === 'function_call' && i.name);
+    if (!calls.length) return;
+    this.items.save(output);
+    yield { type: 'tool_calls', calls: calls.map((c) => ({ id: String(c.call_id), name: String(c.name), arguments: String(c.arguments || '{}') })) };
   }
 
   // ---- Formato OpenAI (chat completions con SSE) ----
@@ -180,4 +214,31 @@ export function toAnthropic(messages: OpenAiMessage[], kept: Map<string, unknown
   }
   if (out[0]?.role !== 'user') out.unshift({ role: 'user', content: [{ type: 'text', text: '(Inicio de la conversación.)' }] }); // su API exige empezar por el usuario
   return { system: system.join('\n\n'), messages: out };
+}
+
+/**
+ * Historial en formato OpenAI (chat) -> entrada de la API Responses: los `system` van en `instructions`; una respuesta
+ * con herramientas pasa a los items originales guardados (con su razonamiento) o, si no estan, a items `function_call`;
+ * cada resultado `tool` pasa a `function_call_output`.
+ */
+export function toResponsesInput(messages: OpenAiMessage[], kept: ItemStore): { instructions: string; input: unknown[] } {
+  const system: string[] = [], input: unknown[] = [];
+  const text = (c: unknown) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((p: any) => (p?.type === 'text' ? p.text : '')).join('') : '');
+  for (const m of messages) {
+    if (m.role === 'system') { const t = text(m.content).trim(); if (t) system.push(t); continue; }
+    if (m.role === 'tool') { input.push({ type: 'function_call_output', call_id: m.tool_call_id, output: text(m.content) || '(sin resultado)' }); continue; }
+    if (m.role === 'assistant') {
+      const saved = m.tool_calls?.length ? kept.get(m.tool_calls[0].id) : undefined;
+      if (saved) { input.push(...saved); continue; }
+      const t = text(m.content).trim();
+      if (t) input.push({ role: 'assistant', content: t });
+      for (const c of m.tool_calls ?? []) input.push({ type: 'function_call', call_id: c.id, name: c.function.name, arguments: c.function.arguments || '{}' });
+      continue;
+    }
+    if (Array.isArray(m.content)) {
+      const parts = (m.content as any[]).map((p) => (p?.type === 'text' ? { type: 'input_text', text: String(p.text ?? '') } : p?.type === 'image_url' ? { type: 'input_image', image_url: String(p.image_url?.url ?? p.image_url ?? '') } : null)).filter(Boolean);
+      if (parts.length) input.push({ role: 'user', content: parts });
+    } else { const t = text(m.content).trim(); if (t) input.push({ role: 'user', content: t }); }
+  }
+  return { instructions: system.join('\n\n'), input };
 }

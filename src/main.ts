@@ -9,12 +9,15 @@ process.umask(0o077);
 
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { json } from 'express';
 import { WsAdapter } from '@nestjs/platform-ws';
 import { AppModule } from './app.module';
 import { ConfigService } from './config/config.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true }); // el cuerpo crudo se usa para validar la firma del webhook
+  // Respaldo del taller: Claude Code manda la conversacion entera en cada peticion (pasa de los 100 kB por defecto).
+  app.use('/taller-llm', json({ limit: '50mb' }));
   app.useWebSocketAdapter(new WsAdapter(app));
   app.enableShutdownHooks();
   const cfg = app.get(ConfigService);

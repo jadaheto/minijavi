@@ -66,6 +66,8 @@ export class ConfigService {
   readonly capableModel: string;
   readonly capableKey: string;
   readonly capableUrl: string;
+  /** '' = lo propio del proveedor; 'chat' o 'responses' fuerza la API de OpenAI que se usa. */
+  readonly capableApi: string;
   /** Campos extra para el cuerpo de la peticion (JSON), por ejemplo {"reasoning_effort":"low"}. */
   readonly capableExtra: Record<string, unknown>;
   /** Segundos que se espera a que el modelo capaz EMPIECE a responder; pasado ese tiempo el turno sigue con el modelo de siempre. */
@@ -125,6 +127,9 @@ export class ConfigService {
   readonly tallerReview: boolean;
   readonly tallerReviewSeconds: number;
   readonly tallerReviewModel: string;
+  /** Respaldo del taller con el modelo capaz cuando la suscripcion de Claude no puede trabajar (se cobra por uso). */
+  readonly tallerBackup: boolean;
+  readonly tallerBackupDaily: number;
   /** Modelo "auto": del nivel mas bajo al mas alto, que modelo usa cada uno. Y tope de la auditoria (tres lectores en paralelo). */
   readonly tallerAutoModels: string[];
   readonly tallerAuditSeconds: number;
@@ -242,6 +247,7 @@ export class ConfigService {
     this.capableModel = str('MODELO_CAPAZ');
     this.capableKey = str('MODELO_CAPAZ_KEY');
     this.capableUrl = str('MODELO_CAPAZ_URL').replace(/\/+$/, '');
+    this.capableApi = ['chat', 'responses'].includes(str('MODELO_CAPAZ_API').toLowerCase()) ? str('MODELO_CAPAZ_API').toLowerCase() : '';
     let extra: unknown = {};
     try { extra = JSON.parse(str('MODELO_CAPAZ_EXTRA') || '{}'); } catch { throw new Error('MODELO_CAPAZ_EXTRA debe ser un objeto JSON, por ejemplo {"reasoning_effort":"low"}'); }
     if (!extra || typeof extra !== 'object' || Array.isArray(extra)) throw new Error('MODELO_CAPAZ_EXTRA debe ser un objeto JSON');
@@ -277,6 +283,8 @@ export class ConfigService {
     this.tallerReview = process.env.TALLER_REVIEW !== '0';
     this.tallerReviewSeconds = int('TALLER_REVIEW_SECONDS', 240, 30);
     this.tallerReviewModel = str('TALLER_REVIEW_MODEL');
+    this.tallerBackup = str('TALLER_RESPALDO', '1') !== '0';
+    this.tallerBackupDaily = int('TALLER_RESPALDO_DIA', 0, 0);
     this.tallerAutoModels = str('TALLER_AUTO_MODELS', 'haiku,sonnet,opus').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean).slice(0, 3);
     this.tallerAuditSeconds = int('TALLER_AUDIT_SECONDS', 300, 30);
     this.tallerGit = process.env.TALLER_GIT !== '0';

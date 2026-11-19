@@ -89,6 +89,8 @@ ${CONTRACT}`;
 
 export interface ReviewRunner {
   claudeBin: string; token: string; user: string; model: string; seconds: number; nice: number;
+  /** Entorno del respaldo del taller: reemplaza a la credencial de la suscripcion (y el modelo lo pone ese entorno). */
+  env?: Record<string, string>;
   /** Avisa de cada proceso que arranca (alive) y termina, para poder cancelarlo. Puede haber varios a la vez (auditoria). */
   track?: (proc: ChildProcess, alive: boolean) => void;
   cancelled?: () => boolean;
@@ -98,10 +100,10 @@ export interface ReviewRunner {
 function runOnce(dir: string, prompt: string, r: ReviewRunner, seconds: number): Promise<{ text: string; error?: string; usd: number }> {
   return new Promise((done) => {
     const args = ['-p', prompt, '--output-format', 'json', '--max-turns', '25', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep', '--no-session-persistence'];
-    if (r.model) args.push('--model', r.model);
-    const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, LANG: 'C.UTF-8', CLAUDE_CODE_OAUTH_TOKEN: r.token, DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1' };
+    if (r.model && !r.env) args.push('--model', r.model);
+    const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, LANG: 'C.UTF-8', DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1', ...(r.env ?? { CLAUDE_CODE_OAUTH_TOKEN: r.token }) };
     let cmd = r.claudeBin, argv = args;
-    if (r.user) { argv = ['-n', '-H', '-u', r.user, '--preserve-env=PATH,LANG,CLAUDE_CODE_OAUTH_TOKEN,DISABLE_AUTOUPDATER,DISABLE_TELEMETRY,DISABLE_ERROR_REPORTING', r.claudeBin, ...args]; cmd = 'sudo'; }
+    if (r.user) { argv = ['-n', '-H', '-u', r.user, `--preserve-env=${Object.keys(env).join(',')}`, r.claudeBin, ...args]; cmd = 'sudo'; }
     else env.HOME = process.env.HOME;
     let out = '', err = '', settled = false, timedOut = false, proc: ChildProcess | undefined;
     const finish = (text: string, error: string | undefined, usd = 0) => { if (settled) return; settled = true; clearTimeout(timer); if (proc) r.track?.(proc, false); done({ text, error, usd }); };

@@ -480,7 +480,8 @@ function runBox(p) {
     ? el('details', {}, el('summary', { style: `color:${rv.verdict === 'aprobar' ? 'var(--ok)' : 'var(--warn)'}`, textContent: `Revisor independiente: recomienda ${rv.verdict} (opinión, no decide)` }),
       el('pre', { textContent: `${rv.summary}\n${rv.checks.map((c) => `${c.pass ? '✓' : '✗'} ${c.check}: ${c.reason}`).join('\n')}` }))
     : el('small', { textContent: `Revisor independiente: no hubo revisión (${rv.error})` });
-  return el('div', {}, head, ...gates, review);
+  const bkp = r.backup ? el('small', { style: 'color:var(--warn)', textContent: `Lo terminó el modelo de respaldo (${r.backup.model}) porque ${r.backup.reason}.` }) : null;
+  return el('div', {}, head, bkp, ...gates, review);
 }
 
 /** Publicar en GitHub: es un clic del dueño (con confirmación) y solo a un repositorio privado que ya exista. */
@@ -525,7 +526,11 @@ function showMetrics(m) {
 
 let projectTimer = null;
 async function loadProjects() {
-  const { enabled, busy, progress, projects, metrics, canPublish } = await json('projects');
+  const { enabled, busy, progress, projects, metrics, canPublish, backup } = await json('projects');
+  const bk = $('project-backup');
+  if (bk && backup) bk.textContent = backup.available
+    ? `Respaldo si la suscripción de Claude no puede: ${backup.model} (se cobra por uso; hoy ${backup.usedToday} de ${backup.dailyMax || 'sin tope'}).`
+    : `Sin modelo de respaldo para el taller: ${backup.problem}.`;
   showMetrics(metrics);
   $('project-count').textContent = `(${projects.length})`;
   $('project-progress').textContent = !enabled ? 'El taller no está configurado en el servidor.' : busy ? progress : 'Sin encargos en curso.';

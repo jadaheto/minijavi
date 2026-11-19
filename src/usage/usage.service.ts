@@ -10,7 +10,7 @@ export const USAGE_KEYS = [
   'eleven_calls', 'eleven_chars',
   'jev_calls', 'jev_in', 'capaz_calls', 'capaz_in', 'capaz_out', 'decisiones', 'decisiones_defecto',
   'nvidia_calls', 'youtube_searches', 'wa_in', 'wa_out', 'image_searches', 'image_generations',
-  'claude_jobs', 'claude_s', 'claude_turns', 'claude_usd',
+  'claude_jobs', 'claude_s', 'claude_turns', 'claude_usd', 'respaldo_jobs', 'respaldo_calls', 'respaldo_in', 'respaldo_out',
 ] as const;
 export type UsageKey = (typeof USAGE_KEYS)[number];
 export type UsageDay = { day: string } & Partial<Record<UsageKey, number>> & { estimado_usd?: number };
