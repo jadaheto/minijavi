@@ -121,6 +121,10 @@ export class ConfigService {
   readonly tallerGateSeconds: number;
   /** npm con el que el servidor ejecuta las comprobaciones (en Docker, la ruta exacta que permite sudo). */
   readonly npmBin: string;
+  /** Revisor independiente al cerrar un encargo (otro Claude Code, solo lectura). Informa, no bloquea. Modelo vacio = el del encargo. */
+  readonly tallerReview: boolean;
+  readonly tallerReviewSeconds: number;
+  readonly tallerReviewModel: string;
   /** Encargos por sesion de Claude Code antes de empezar una nueva (que arranca leyendo ESTADO.md). */
   readonly tallerSessionJobs: number;
   /** Fotos de Unsplash (vacia = sin busqueda) y generacion con Magnific (vacia = sin generacion). Topes por conversacion de visitante y por dia. */
@@ -260,6 +264,9 @@ export class ConfigService {
     this.tallerNoProgress = int('TALLER_NO_PROGRESS', 2, 2);
     this.tallerGateSeconds = int('TALLER_GATE_SECONDS', 300, 5);
     this.npmBin = str('NPM_BIN', this.tallerUser ? '/usr/local/bin/npm' : 'npm');
+    this.tallerReview = process.env.TALLER_REVIEW !== '0';
+    this.tallerReviewSeconds = int('TALLER_REVIEW_SECONDS', 240, 30);
+    this.tallerReviewModel = str('TALLER_REVIEW_MODEL');
     this.unsplashAccessKey = (process.env.UNSPLASH_ACCESS_KEY ?? '').trim();
     this.magnificApiKey = (process.env.MAGNIFIC_API_KEY ?? '').trim();
     this.imagesDailyGenerations = int('IMAGES_DAILY_GENERATIONS', 20, 0);

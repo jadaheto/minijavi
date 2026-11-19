@@ -667,7 +667,16 @@ const fs = require('fs'), path = require('path');
 const slug = path.basename(process.cwd()), here = __dirname;
 const plan = JSON.parse(fs.readFileSync(path.join(here, 'plan-' + slug + '.json'), 'utf8'));
 const nf = path.join(here, 'n-' + slug), n = fs.existsSync(nf) ? Number(fs.readFileSync(nf, 'utf8')) : 0; fs.writeFileSync(nf, String(n + 1));
-const step = plan[Math.min(n, plan.length - 1)], args = process.argv.slice(2);
+const args = process.argv.slice(2);
+if (args.includes('--no-session-persistence')) { // es el revisor: contexto fresco, solo lectura
+  const rf = path.join(here, 'review-' + slug + '.json'), outs = fs.existsSync(rf) ? JSON.parse(fs.readFileSync(rf, 'utf8')) : null;
+  const rn = path.join(here, 'rn-' + slug), k = fs.existsSync(rn) ? Number(fs.readFileSync(rn, 'utf8')) : 0; fs.writeFileSync(rn, String(k + 1));
+  fs.appendFileSync(path.join(here, 'review-args-' + slug + '.txt'), JSON.stringify(args) + '\\n');
+  const ok = 'Revisado.\\n\\n' + String.fromCharCode(96, 96, 96) + 'json\\n' + JSON.stringify({ verdict: 'aprobar', checks: ['correcto', 'seguro', 'completo'].map((check) => ({ check, pass: true, reason: 'sin hallazgos' })), summary: 'Todo en orden.' }) + '\\n' + String.fromCharCode(96, 96, 96);
+  console.log(JSON.stringify({ type: 'result', is_error: false, result: outs ? outs[Math.min(k, outs.length - 1)] : ok, total_cost_usd: 0.002 }));
+  process.exit(0);
+}
+const step = plan[Math.min(n, plan.length - 1)];
 fs.appendFileSync(path.join(here, 'prompts-' + slug + '.txt'), args[args.indexOf('-p') + 1] + '\\n=====\\n');
 for (const [f, c] of Object.entries(step.write || {})) { const t = path.join(process.cwd(), f); fs.mkdirSync(path.dirname(t), { recursive: true }); fs.writeFileSync(t, c); }
 console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-' + slug }));
@@ -680,8 +689,9 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
   let doneCalls = 0, onDone: ((d: any) => void) | undefined;
   ws.onDone((d) => { doneCalls++; onDone?.(d); });
   type Step = { write?: Record<string, string>; say?: string };
-  const job = async (slug: string, plan: Step[]) => {
+  const job = async (slug: string, plan: Step[], reviews?: string[]) => {
     writeFileSync(join(fakeDir, `plan-${slug}.json`), JSON.stringify(plan));
+    if (reviews) writeFileSync(join(fakeDir, `review-${slug}.json`), JSON.stringify(reviews));
     const before = doneCalls, finished = new Promise<any>((r) => { onDone = r; });
     const started = ws.start(slug, 'Encargo de prueba para la verificación', 'http://localhost/formulario', true);
     must(/Encargo iniciado/.test(started), `el encargo no arrancó: ${started}`);
@@ -725,6 +735,34 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     const leaked = keys.filter((k) => /KEY|TOKEN|SECRET|DATABASE_URL|PASSWORD/i.test(k) && !k.startsWith('npm_'));
     must(keys.includes('CI') && leaked.length === 0, `llegaron variables sensibles al comando: ${leaked.join(', ')}`);
     return `npm test recibió ${keys.filter((k) => !k.startsWith('npm_')).length} variables propias, ninguna clave`;
+  });
+
+  await check('Taller: el revisor independiente tiene contexto fresco, solo lee, cumple un contrato y no decide', async () => {
+    const { parseReview } = await import('../workshop/reviewer');
+    const { explainClaudeError } = await import('../workshop/errors');
+    const fence = '`'.repeat(3), json = (o: unknown) => `Mi revisión.\n${fence}json\n${JSON.stringify(o)}\n${fence}`;
+    const reject = { verdict: 'rechazar', checks: [{ check: 'correcto', pass: true, reason: 'hace lo pedido' }, { check: 'seguro', pass: true, reason: 'sin claves' }, { check: 'completo', pass: false, reason: 'la sección de contacto está vacía' }], summary: 'Falta la sección de contacto.' };
+    const SITE = { 'sitio/index.html': '<title>Prueba</title><p>Hola</p>' };
+    // Todas las comprobaciones pasan y el revisor rechaza: el encargo sigue verificado, la opinion queda aparte.
+    const a = await job('revisor-rechaza', [{ write: SITE }], [json(reject)]);
+    must(a.run.stop === 'verificado' && a.d.ok && a.run.passes === 1, `la opinión del revisor no debe cambiar el cierre: ${a.run.stop}`);
+    must(a.run.review?.verdict === 'rechazar' && /contacto/.test(a.run.review.summary) && a.run.review.checks.length === 3, `no quedó la revisión: ${JSON.stringify(a.run.review)}`);
+    const args: string[] = JSON.parse(readFileSync(join(fakeDir, 'review-args-revisor-rechaza.txt'), 'utf8').trim().split('\n')[0]);
+    must(!args.includes('--resume') && args[args.indexOf('--tools') + 1] === 'Read,Glob,Grep' && args[args.indexOf('--allowedTools') + 1] === 'Read,Glob,Grep', `el revisor debe ir sin sesión y solo con lectura: ${args.filter((x) => x.startsWith('--')).join(' ')}`);
+    must(/Encargo de prueba/.test(args[1]) && !/Hecho\./.test(args[1]), 'el revisor debe recibir el encargo y no el informe del autor');
+    // Salida que no cumple el contrato: se le pide una vez mas con el error; si sigue mal, no hay revision (y no se inventa).
+    const b = await job('revisor-reintenta', [{ write: SITE }], ['Me parece bien todo.', json({ ...reject, verdict: 'aprobar' })]);
+    must(b.run.review?.verdict === 'aprobar' && b.run.review.attempts === 2, `debía aceptar la segunda salida: ${JSON.stringify(b.run.review)}`);
+    const c = await job('revisor-mudo', [{ write: SITE }], ['Todo bien.', json({ verdict: 'quizás', checks: [], summary: '' })]);
+    must(c.run.stop === 'verificado' && !c.run.review?.verdict && /verdict/.test(c.run.review?.error ?? ''), `una revisión inválida no puede contar: ${JSON.stringify(c.run.review)}`);
+    must(!parseReview(json({ ...reject, checks: reject.checks.slice(0, 2) })).ok, 'aceptó una revisión sin las tres comprobaciones');
+    // Si Claude Code no termino su trabajo no se gasta una revision.
+    const d = await job('para-bloqueo', [{ say: 'BLOQUEADO: sigue faltando la clave' }]);
+    must(d.run.stop === 'bloqueado' && !d.run.review, 'no debía revisar un encargo bloqueado');
+    const m = await ws.metrics(30);
+    must(m.runs >= 10 && m.verified >= 5 && m.rate! > 0 && m.rate! < 1 && m.blocking[0]?.gate === 'pruebas' && m.reviews.rechazar === 1 && m.p90Passes! <= 3, `las cifras del taller no cuadran: ${JSON.stringify(m)}`);
+    must(/límite de uso/.test(explainClaudeError("You've hit your session limit · resets 3pm") ?? '') && /setup-token/.test(explainClaudeError('API Error: 401 authentication_error') ?? '') && explainClaudeError('algo raro') === undefined, 'los errores conocidos de Claude Code no se explican en español');
+    return `rechaza sin cambiar el cierre; reintenta una vez; ${m.verified} de ${m.runs} encargos de prueba verificados`;
   });
   rmSync(fakeDir, { recursive: true, force: true });
 

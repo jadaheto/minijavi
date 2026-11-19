@@ -253,8 +253,11 @@ export class SessionGateway implements OnGatewayConnection {
       : r.stop === 'sin_comprobar'
         ? 'El servidor no tenía ninguna comprobación que ejecutar en este proyecto (no hay sitio publicado ni pruebas): di que terminó, pero que nadie lo comprobó. '
         : `Comprobaciones del servidor: el ciclo se detuvo${passes} porque ${STOP_TEXT[r.stop]}.${bad.length ? ` SIGUEN fallando: ${bad.map((g) => g.label).join(', ')}.` : ''} No digas que quedó listo: dile a Javier en palabras simples qué pasó y qué sigue fallando, y pregúntale cómo quiere seguir.${bad.length ? ` Detalle: ${asData('las comprobaciones del servidor', bad.map((g) => `${g.label}: ${g.output.slice(0, 500)}`).join(' | '))}` : ''} `;
+    const rv = r?.review, opinion = !rv ? '' : rv.verdict
+      ? `Un revisor independiente (otro Claude Code que no vio el trabajo y solo leyó el resultado) recomienda ${rv.verdict === 'aprobar' ? 'APROBAR' : 'RECHAZAR'}. Es una opinión, no una prueba: cuéntasela a Javier en una frase${rv.verdict === 'rechazar' ? ' y pregúntale si mandas a corregir lo que señala' : ''}. Lo que dijo: ${asData('el revisor', `${rv.summary} ${(rv.checks ?? []).filter((c) => !c.pass).map((c) => `No pasa "${c.check}": ${c.reason}`).join(' ')}`)} `
+      : 'El revisor independiente no pudo revisar esta vez; no lo menciones salvo que Javier pregunte. ';
     const text = `(Aviso del taller, escrito por el sistema: Claude Code ${p.status === 'error' ? 'NO pudo terminar' : 'terminó'} el encargo del proyecto "${p.name}". ` +
-      `${card ? 'El sitio está publicado y su código QR se muestra en pantalla. ' : 'No hay sitio publicado para este proyecto. '}${review}Informe de Claude Code: ${asData('el informe de Claude Code', (p.lastSummary ?? 'sin informe').slice(0, 1500))})`;
+      `${card ? 'El sitio está publicado y su código QR se muestra en pantalla. ' : 'No hay sitio publicado para este proyecto. '}${review}${opinion}Informe de Claude Code: ${asData('el informe de Claude Code', (p.lastSummary ?? 'sin informe').slice(0, 1500))})`;
     // Si el encargo era de bocetos, van a la galeria (cada uno es una pagina en vivo) en vez de la tarjeta con el QR.
     const sk = (p.lastTask ?? '').startsWith('Encargo de BOCETOS') ? this.workshop.sketches(slug) : [];
     const site = this.workshop.siteUrl(slug, s.origin);

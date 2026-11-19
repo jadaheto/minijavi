@@ -89,7 +89,7 @@ const SCHEMA = [
   // Taller con gates: un ciclo por encargo (por que se detuvo) y cada comprobacion de cada pasada con su salida literal.
   // run_at es el inicio del encargo en texto ISO: une los gates con su ciclo.
   `CREATE TABLE IF NOT EXISTS job_runs (id {{ID}}, business TEXT NOT NULL, slug TEXT NOT NULL, at TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', passes INTEGER NOT NULL DEFAULT 1, stop TEXT NOT NULL,
-     verified INTEGER NOT NULL DEFAULT 0, seconds INTEGER NOT NULL DEFAULT 0, turns INTEGER NOT NULL DEFAULT 0, usd {{REAL}} NOT NULL DEFAULT 0, failing TEXT NOT NULL DEFAULT '', task TEXT NOT NULL DEFAULT '')`,
+     verified INTEGER NOT NULL DEFAULT 0, seconds INTEGER NOT NULL DEFAULT 0, turns INTEGER NOT NULL DEFAULT 0, usd {{REAL}} NOT NULL DEFAULT 0, failing TEXT NOT NULL DEFAULT '', task TEXT NOT NULL DEFAULT '', review TEXT NOT NULL DEFAULT '')`,
   `CREATE TABLE IF NOT EXISTS job_gates (id {{ID}}, business TEXT NOT NULL, slug TEXT NOT NULL, run_at TEXT NOT NULL, pass INTEGER NOT NULL, at TEXT NOT NULL, gate TEXT NOT NULL, kind TEXT NOT NULL,
      ok INTEGER NOT NULL, exit_code INTEGER, seconds INTEGER NOT NULL DEFAULT 0, output TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS job_gates_run ON job_gates (slug, run_at)`,

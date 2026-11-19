@@ -7,6 +7,8 @@ import * as QRCode from 'qrcode';
 import { ConfigService } from '../config/config.service';
 import { UsageService } from '../usage/usage.service';
 import { SiteCheck } from './site-check';
+import { runReview } from './reviewer';
+import { explainClaudeError } from './errors';
 import { blockedReason, detectGates, evaluateStop, GateResult, missingGate, repairPrompt, runGate, StopReason, treeHash, weakest } from './gates';
 
 export interface Project {
@@ -30,6 +32,8 @@ export interface Project {
 export interface RunInfo {
   at: string; stop: StopReason; passes: number; seconds: number;
   gates: { id: string; kind: string; label: string; ok: boolean; exit: number | null; seconds: number; output: string }[];
+  /** Opinion del revisor independiente (informa, no decide). `error` = no hubo revision y por que. */
+  review?: { verdict?: 'aprobar' | 'rechazar'; checks?: { check: string; pass: boolean; reason: string }[]; summary?: string; error?: string; seconds: number; attempts: number };
 }
 /** Estado del ciclo en curso. */
 interface Run {
@@ -357,7 +361,10 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     if (job.cancelled) { ok = false; summary = 'El encargo se canceló antes de terminar.' + (lastText ? ` Lo último que dijo: ${lastText}` : ''); }
     else if (job.timedOut) { ok = false; summary = `Se acabó el tiempo (${this.cfg.tallerMaxMinutes} min) y el encargo quedó a medias.` + (lastText ? ` Lo último que dijo: ${lastText}` : ''); }
     else if (result?.subtype === 'error_max_turns') { ok = false; summary = `Llegó al máximo de pasos y quedó a medias. ${lastText}`; }
-    else if (!ok) summary = `Claude Code falló${r.err ? `: ${r.err.message}` : ''}. ${summary || r.stderr.replace(/\s+/g, ' ').slice(-300) || `código ${r.code}`}`;
+    else if (!ok) {
+      const raw = `${summary} ${r.stderr}`, known = explainClaudeError(raw);
+      summary = known ? `Claude Code no pudo trabajar: ${known}.` : `Claude Code falló${r.err ? `: ${r.err.message}` : ''}. ${summary || r.stderr.replace(/\s+/g, ' ').slice(-300) || `código ${r.code}`}`;
+    }
     let stop: StopReason | undefined = job.cancelled ? 'cancelado' : job.timedOut ? 'tiempo' : !ok ? 'fallo' : undefined;
 
     // CHECK: lo ejecuta el servidor, diga lo que diga el informe. Si la pasada no termino bien solo se mira el sitio
@@ -402,23 +409,56 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
         stop = 'fallo'; summary = `${err} ${summary}`;
       }
     }
-    this.close(job, stop ?? 'fallo', results, summary);
+    stop ??= 'fallo';
+    // Revisor independiente: solo si Claude Code termino su trabajo. Informa; no cambia por que se detuvo el ciclo.
+    let review: RunInfo['review'];
+    if (this.cfg.tallerReview && ['verificado', 'sin_comprobar', 'pasadas', 'sin_progreso'].includes(stop)) {
+      job.checking = true; job.activity = 'revisor independiente: leyendo el resultado'; job.spoken = 'ya terminó, y un revisor independiente está leyendo el resultado'; this.emit(true);
+      const out = await runReview(dir, run.task, results, run.formUrl, { claudeBin: this.cfg.claudeBin, token: this.cfg.claudeToken, user: this.cfg.tallerUser, nice: this.cfg.tallerNice, seconds: this.cfg.tallerReviewSeconds,
+        model: this.cfg.tallerReviewModel ? this.model(this.cfg.tallerReviewModel).id : run.model.id, onProc: (p) => { job.proc = p; }, cancelled: () => !!job.cancelled || this.job !== job });
+      job.checking = false; job.proc = undefined;
+      if (this.job !== job) return;
+      const reviewUsd = out.ok ? out.review.usd : out.usd;
+      this.usage.add('claude_usd', reviewUsd); run.usd += reviewUsd;
+      if (!job.cancelled) review = out.ok ? { verdict: out.review.verdict, checks: out.review.checks, summary: out.review.summary, seconds: out.review.seconds, attempts: out.review.attempts } : { error: out.error.slice(0, 300), seconds: out.seconds, attempts: out.attempts };
+      if (review?.error) this.log.warn(`taller: no hubo revisión de "${project.slug}": ${review.error}`);
+    }
+    this.close(job, stop, results, summary, review);
+  }
+
+  /**
+   * Como le va al taller (ultimos dias): cuantos encargos cierran verificados, cuantas pasadas toman, cuanto cuestan
+   * (equivalente de API que informa Claude Code) y que comprobacion bloquea mas. Sale de `job_runs`, sin ningun modelo.
+   */
+  async metrics(days = 30) {
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+    const rows = await this.db.query<{ passes: number; stop: string; verified: number; usd: number; failing: string; review: string }>('SELECT passes, stop, verified, usd, failing, review FROM job_runs WHERE business = $1 AND at >= $2', [this.cfg.businessId, since]);
+    const closed = rows.filter((r) => r.stop !== 'cancelado'), verified = closed.filter((r) => Number(r.verified) === 1);
+    const passes = closed.map((r) => Number(r.passes)).sort((a, b) => a - b), usd = rows.reduce((a, r) => a + Number(r.usd), 0);
+    const count = (list: string[]) => { const m: Record<string, number> = {}; for (const k of list) if (k) m[k] = (m[k] ?? 0) + 1; return m; };
+    const blocking = Object.entries(count(closed.flatMap((r) => r.failing.split(',')))).sort((a, b) => b[1] - a[1]).map(([gate, n]) => ({ gate, n }));
+    return {
+      days, runs: closed.length, cancelled: rows.length - closed.length, verified: verified.length, unchecked: closed.filter((r) => r.stop === 'sin_comprobar').length,
+      rate: closed.length ? verified.length / closed.length : null,
+      avgPasses: passes.length ? passes.reduce((a, b) => a + b, 0) / passes.length : null, p90Passes: passes.length ? passes[Math.min(passes.length - 1, Math.ceil(passes.length * 0.9) - 1)] : null,
+      usd, usdPerVerified: verified.length ? usd / verified.length : null, stops: count(closed.map((r) => r.stop)), blocking, reviews: count(closed.map((r) => r.review)),
+    };
   }
 
   /** Cierra el encargo: guarda el resultado real del ciclo y avisa una sola vez. */
-  private close(job: Job, stop: StopReason, results: GateResult[], summary: string) {
+  private close(job: Job, stop: StopReason, results: GateResult[], summary: string, review?: RunInfo['review']) {
     const run = job.run, project = run.project;
     clearTimeout(job.timer); this.job = undefined; this.emit(true);
     const seconds = Math.round((Date.now() - run.t0) / 1000), site = results.find((x) => x.kind === 'sitio')?.site;
     project.status = stop === 'fallo' || stop === 'tiempo' ? 'error' : 'libre';
     project.check = site; project.repaired = run.pass > 1;
-    project.run = { at: new Date(run.t0).toISOString(), stop, passes: run.pass, seconds, gates: results.map((g) => ({ id: g.id, kind: g.kind, label: g.label, ok: g.ok, exit: g.exit, seconds: g.seconds, output: g.output.slice(0, 2500) })) };
+    project.run = { at: new Date(run.t0).toISOString(), stop, passes: run.pass, seconds, gates: results.map((g) => ({ id: g.id, kind: g.kind, label: g.label, ok: g.ok, exit: g.exit, seconds: g.seconds, output: g.output.slice(0, 2500) })), review };
     project.lastSummary = summary.slice(0, 4000); project.updatedAt = new Date().toISOString(); project.unseen = true;
     this.save(project);
-    void this.db.query('INSERT INTO job_runs (business, slug, at, model, passes, stop, verified, seconds, turns, usd, failing, task) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
-      [this.cfg.businessId, project.slug, project.run.at, run.model.label, run.pass, stop, stop === 'verificado' ? 1 : 0, seconds, run.turns, run.usd, results.filter((g) => !g.ok).map((g) => g.id).join(','), run.task.slice(0, 2000)])
+    void this.db.query('INSERT INTO job_runs (business, slug, at, model, passes, stop, verified, seconds, turns, usd, failing, task, review) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)',
+      [this.cfg.businessId, project.slug, project.run.at, run.model.label, run.pass, stop, stop === 'verificado' ? 1 : 0, seconds, run.turns, run.usd, results.filter((g) => !g.ok).map((g) => g.id).join(','), run.task.slice(0, 2000), review?.verdict ?? ''])
       .catch((e) => this.log.error(`No se pudo guardar el ciclo del encargo: ${(e as Error).message}`));
-    this.log.log(`taller: "${project.slug}" cerró en ${seconds} s, ${run.pass} ${run.pass === 1 ? 'pasada' : 'pasadas'}, ${job.steps} pasos: ${stop}${results.length ? ` (${results.map((g) => `${g.id} ${g.ok ? 'pasa' : 'FALLA'}`).join(', ')})` : ''}`);
+    this.log.log(`taller: "${project.slug}" cerró en ${seconds} s, ${run.pass} ${run.pass === 1 ? 'pasada' : 'pasadas'}, ${job.steps} pasos: ${stop}${results.length ? ` (${results.map((g) => `${g.id} ${g.ok ? 'pasa' : 'FALLA'}`).join(', ')})` : ''}${review?.verdict ? `; el revisor recomienda ${review.verdict}` : ''}`);
     const done: JobDone = { project, ok: stop === 'verificado' || stop === 'sin_comprobar', summary: project.lastSummary, seconds, site: this.hasSite(project.slug), check: site, stop };
     for (const fn of this.listeners) try { fn(done); } catch (e) { this.log.error(`aviso del taller: ${(e as Error).message}`); }
   }

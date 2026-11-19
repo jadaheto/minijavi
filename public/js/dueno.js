@@ -476,12 +476,35 @@ function runBox(p) {
   const head = el('div', { style: `color:${good ? 'var(--ok)' : 'var(--warn)'}`, textContent: `${good ? '✓' : '⚠'} ${STOPS[r.stop] || r.stop} · ${r.passes} ${r.passes === 1 ? 'pasada' : 'pasadas'} · ${Math.round(r.seconds / 60) || 1} min` });
   const gates = r.gates.map((g) => el('details', {}, el('summary', { style: `color:${g.ok ? 'var(--ok)' : 'var(--warn)'}`, textContent: `${g.ok ? '✓ pasa' : '✗ falla'} · ${g.label}${g.exit === null ? '' : ` · salida ${g.exit}`}${g.seconds ? ` · ${g.seconds} s` : ''}` }),
     el('pre', { textContent: g.output || '(sin salida)' })));
-  return el('div', {}, head, ...gates);
+  const rv = r.review, review = !rv ? null : rv.verdict
+    ? el('details', {}, el('summary', { style: `color:${rv.verdict === 'aprobar' ? 'var(--ok)' : 'var(--warn)'}`, textContent: `Revisor independiente: recomienda ${rv.verdict} (opinión, no decide)` }),
+      el('pre', { textContent: `${rv.summary}\n${rv.checks.map((c) => `${c.pass ? '✓' : '✗'} ${c.check}: ${c.reason}`).join('\n')}` }))
+    : el('small', { textContent: `Revisor independiente: no hubo revisión (${rv.error})` });
+  return el('div', {}, head, ...gates, review);
+}
+
+/** Cifras del taller en los últimos días: salen del registro de ciclos, sin ningún modelo. */
+function showMetrics(m) {
+  const box = $('project-metrics'), note = $('project-metrics-note').firstChild;
+  if (!m || !m.runs) { box.replaceChildren(); note.textContent = m ? `Aún no hay encargos cerrados en los últimos ${m.days} días para calcular cifras.` : ''; return; }
+  const tile = (value, label) => el('div', { className: 'tile' }, el('b', { textContent: value }), el('span', { textContent: label }));
+  const top = m.blocking[0], gateName = { sitio: 'la revisión del sitio', pruebas: 'npm test', lint: 'npm run lint' };
+  box.replaceChildren(
+    tile(`${Math.round(m.rate * 100)} %`, `Encargos verificados (${m.verified} de ${m.runs})`),
+    tile(m.avgPasses.toFixed(1).replace('.', ','), `Pasadas por encargo (9 de cada 10 en ${m.p90Passes} o menos)`),
+    tile(m.usdPerVerified === null ? '—' : `US$ ${m.usdPerVerified.toFixed(2).replace('.', ',')}`, 'Por encargo verificado (equivalente de API)'),
+    tile(top ? gateName[top.gate] || top.gate : 'Ninguna', top ? `Lo que más quedó fallando (${top.n} ${top.n === 1 ? 'vez' : 'veces'})` : 'Comprobación que quede fallando'));
+  const rv = m.reviews, parts = [`Últimos ${m.days} días`];
+  if (m.unchecked) parts.push(`${m.unchecked} sin nada que comprobar`);
+  if (rv.aprobar || rv.rechazar) parts.push(`revisor: ${rv.aprobar || 0} aprobar, ${rv.rechazar || 0} rechazar`);
+  if (m.cancelled) parts.push(`${m.cancelled} cancelados (no cuentan)`);
+  note.textContent = `${parts.join(' · ')}. El costo es el equivalente a precio de API que informa Claude Code; con la suscripción no se cobra aparte.`;
 }
 
 let projectTimer = null;
 async function loadProjects() {
-  const { enabled, busy, progress, projects } = await json('projects');
+  const { enabled, busy, progress, projects, metrics } = await json('projects');
+  showMetrics(metrics);
   $('project-count').textContent = `(${projects.length})`;
   $('project-progress').textContent = !enabled ? 'El taller no está configurado en el servidor.' : busy ? progress : 'Sin encargos en curso.';
   $('project-list').replaceChildren(...projects.map((p) => {

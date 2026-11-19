@@ -274,7 +274,7 @@ export class OwnerController {
         url, qr: url ? await QRCode.toDataURL(url, { margin: 1, width: 240 }) : '', files: this.workshop.files(p.slug, 60),
       };
     }));
-    return { enabled: this.workshop.enabled, busy: this.workshop.busy() ?? null, progress: this.workshop.progress(), projects };
+    return { enabled: this.workshop.enabled, busy: this.workshop.busy() ?? null, progress: this.workshop.progress(), projects, metrics: this.workshop.enabled ? await this.workshop.metrics(30) : null };
   }
 
   /** Borra el proyecto con su codigo y su sitio publicado. No se puede deshacer. */
