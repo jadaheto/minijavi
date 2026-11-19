@@ -541,7 +541,6 @@ async function loadProjects() {
       el('pre', { textContent: [...a.summaries.map((x) => `${x.focus}: ${x.text}`), '', ...a.findings.map((f) => `[${f.severity}] ${f.focus} · ${f.file || 'general'}\n  ${f.problem}${f.fix ? `\n  Arreglo: ${f.fix}` : ''}`)].join('\n') || 'Sin hallazgos.' }));
     const hist = !p.versions.length ? null : el('details', {}, el('summary', { textContent: `Versiones guardadas (${p.versions.length})` }), el('pre', { textContent: p.versions.map((v) => `${fecha(v.at)}  ${v.hash.slice(0, 7)}  ${v.message}`).join('\n') }));
     const pub = publishBox(p, canPublish, busy === p.slug);
-    const links = el('div', { className: 'row' }, p.url ? el('a', { href: p.url, target: '_blank', rel: 'noopener', textContent: 'Abrir sitio' }) : null, el('a', { href: `./owner/projects/${p.slug}/descargar`, textContent: 'Descargar código' }), del);
     const del = el('button', { type: 'button', className: 'small danger', textContent: 'Eliminar proyecto', disabled: busy === p.slug, title: busy === p.slug ? 'Tiene un encargo en curso' : '' });
     del.addEventListener('click', async () => {
       if (!del.dataset.sure) { del.dataset.sure = '1'; del.textContent = '¿Seguro? Se borran el código y el sitio. Toca otra vez'; return; }
@@ -550,6 +549,7 @@ async function loadProjects() {
       if (r && r.ok === false) { const e = (await r.json().catch(() => ({}))).error; del.textContent = e === 'ocupado' ? 'Tiene un encargo en curso' : 'No se pudo borrar'; return; }
       loadProjects();
     });
+    const links = el('div', { className: 'row' }, p.url ? el('a', { href: p.url, target: '_blank', rel: 'noopener', textContent: 'Abrir sitio' }) : null, el('a', { href: `./owner/projects/${p.slug}/descargar`, textContent: 'Descargar código' }), del);
     const files = el('details', {}, el('summary', { textContent: `Archivos (${p.files.length})` }), el('pre', { textContent: p.files.join('\n') }));
     return el('li', {}, el('div', { className: 'row' }, el('strong', { textContent: p.name }), el('span', { className: 'tag', textContent: p.status })),
       el('small', { textContent: `${fecha(p.updatedAt)} · ${p.jobs} ${p.jobs === 1 ? 'encargo' : 'encargos'} · último: ${p.lastTask || 'ninguno'}` }), sum, chk, audit, hist, pub, links,
