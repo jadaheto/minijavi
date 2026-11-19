@@ -17,7 +17,10 @@ import { ConfigService } from './config/config.service';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true }); // el cuerpo crudo se usa para validar la firma del webhook
   // Respaldo del taller: Claude Code manda la conversacion entera en cada peticion (pasa de los 100 kB por defecto).
-  app.use('/taller-llm', json({ limit: '50mb' }));
+  // OJO: no pasar `json(...)` directo a app.use: Nest busca un middleware llamado "jsonParser" y, si lo encuentra, NO
+  // registra su lector de JSON para el resto de las rutas (todas las peticiones POST llegarian sin cuerpo).
+  const bigJson = json({ limit: '50mb' });
+  app.use('/taller-llm', (req: any, res: any, next: any) => bigJson(req, res, next));
   app.useWebSocketAdapter(new WsAdapter(app));
   app.enableShutdownHooks();
   const cfg = app.get(ConfigService);

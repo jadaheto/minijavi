@@ -9,7 +9,7 @@ export const USAGE_KEYS = [
   'deepseek_calls', 'deepseek_in', 'deepseek_cache', 'deepseek_out', 'deepseek_sin_dato',
   'eleven_calls', 'eleven_chars',
   'jev_calls', 'jev_in', 'capaz_calls', 'capaz_in', 'capaz_out', 'decisiones', 'decisiones_defecto',
-  'nvidia_calls', 'youtube_searches', 'wa_in', 'wa_out', 'image_searches', 'image_generations',
+  'nvidia_calls', 'youtube_searches', 'wa_in', 'wa_out', 'image_searches', 'image_generations', 'image_openai', 'image_magnific',
   'claude_jobs', 'claude_s', 'claude_turns', 'claude_usd', 'respaldo_jobs', 'respaldo_calls', 'respaldo_in', 'respaldo_out',
 ] as const;
 export type UsageKey = (typeof USAGE_KEYS)[number];

@@ -30,9 +30,10 @@ async function main() {
   const realFetch = globalThis.fetch, sent: string[] = [];
   let capableFetch: ((url: string, body: any) => Response) | undefined; // respuesta simulada del modelo capaz (cada prueba pone la suya)
   const tg: { method: string; body: any }[] = []; let tgWebhook = '';
+  let imageFetch: ((url: string, init: any) => Response) | undefined; // OpenAI Images y Magnific simulados
   let githubFetch: ((url: string, init: any) => Response) | undefined; // GitHub simulado (cada prueba pone el suyo)
   globalThis.fetch = (async (url: any, init?: any) => { sent.push(String(url));
-    if (String(url).includes('api.telegram.org')) { const method = String(url).split('/').pop()!, body = JSON.parse(String(init?.body ?? '{}')); tg.push({ method, body }); return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: tgWebhook } : method === 'getUpdates' ? [] : { message_id: 9000 + tg.length } }), { status: 200 }); } if (githubFetch && String(url).includes('api.github.invalid')) return githubFetch(String(url), init); if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
+    if (String(url).includes('api.telegram.org')) { const method = String(url).split('/').pop()!, body = JSON.parse(String(init?.body ?? '{}')); tg.push({ method, body }); return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: tgWebhook } : method === 'getUpdates' ? [] : { message_id: 9000 + tg.length } }), { status: 200 }); } if (githubFetch && String(url).includes('api.github.invalid')) return githubFetch(String(url), init); if (imageFetch && /api\.openai\.com\/v1\/images|magnific/.test(String(url))) return imageFetch(String(url), init); if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
 
   const { ConfigService } = await import('../config/config.service');
   const { DbService } = await import('../db/db.service');
@@ -928,6 +929,54 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     return 'límite simulado → misma pasada con el respaldo, sin la clave de OpenAI en el taller, clave temporal revocada; saturación también lo activa; fallo de red no; tope diario si se configura';
   });
   rmSync(fakeDir, { recursive: true, force: true });
+
+  await check('El servidor sigue leyendo el cuerpo JSON de todas las rutas (el respaldo del taller no reemplaza al lector de Nest)', async () => {
+    // Fallo real del 2026-11-19: `app.use('/taller-llm', json(...))` hacia que Nest no registrara su lector de JSON y todo POST llegaba sin cuerpo.
+    const { NestFactory } = await import('@nestjs/core');
+    const { Body, Controller, Module, Post } = await import('@nestjs/common');
+    const { json } = await import('express');
+    class Eco { echo(body: any) { return { got: body?.x ?? null }; } }
+    Post('eco')(Eco.prototype, 'echo', Object.getOwnPropertyDescriptor(Eco.prototype, 'echo')!); Body()(Eco.prototype, 'echo', 0); Controller()(Eco);
+    class Mod {} Module({ controllers: [Eco] })(Mod);
+    const app = await NestFactory.create(Mod, { rawBody: true, logger: false });
+    const src = readFileSync(join(__dirname, '..', '..', 'src', 'main.ts'), 'utf8');
+    must(!/app\.use\([^,]+,\s*json\(/.test(src), 'main.ts vuelve a pasar json(...) directo a app.use');
+    const big = json({ limit: '50mb' }); app.use('/taller-llm', (req: any, res: any, next: any) => big(req, res, next)); // igual que main.ts
+    await app.listen(0, '127.0.0.1');
+    const port = (app.getHttpServer().address() as any).port;
+    const r = await realFetch(`http://127.0.0.1:${port}/eco`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"x":"llega"}' }).then((x) => x.json()).finally(() => app.close());
+    must(r.got === 'llega', `el cuerpo JSON no llegó a una ruta normal: ${JSON.stringify(r)}`);
+    return 'una ruta cualquiera recibe su cuerpo JSON con el lector grande montado solo en /taller-llm';
+  });
+
+  await check('Imágenes: genera primero OpenAI y, si falla, Magnific; un rechazo por contenido no se reintenta', async () => {
+    const { ImagesService } = await import('../images/images.service');
+    Object.assign(process.env, { OPENAI_API_KEY: 'clave-openai-imagenes', MAGNIFIC_API_KEY: 'clave-magnific' });
+    const icfg = new ConfigService(), images = new ImagesService(icfg, usage, P.db);
+    must(images.canGenerate && images.generators.join() === 'OpenAI (gpt-image-2.6-flare),Magnific', `orden de generadores: ${images.generators}`);
+    const calls: string[] = []; let openai: () => Response;
+    const JPG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(900, 1)]);
+    imageFetch = (url, init) => {
+      if (url.includes('api.openai.com')) { const b = JSON.parse(String(init.body)); calls.push(`openai:${b.model}:${b.size}:${b.quality}:${init.headers.Authorization}`); return openai(); }
+      if (url.endsWith('/v1/ai/mystic')) { calls.push(`magnific:${init.headers['x-magnific-api-key']}`); return new Response(JSON.stringify({ data: { task_id: 'tarea-123', generated: ['https://img.magnific.invalid/a.jpg'] } }), { status: 200 }); }
+      return new Response(JPG, { status: 200, headers: { 'content-type': 'image/jpeg' } });
+    };
+    openai = () => new Response(JSON.stringify({ data: [{ b64_json: JPG.toString('base64') }] }), { status: 200 });
+    const a = await images.generate('un gato', 'vertical');
+    must(a.provider === 'OpenAI' && !a.fallback && calls.join() === 'openai:gpt-image-2.6-flare:1024x1536:medium:Bearer clave-openai-imagenes' && images.file(a.name), `con OpenAI disponible debía generar OpenAI: ${calls}`);
+    calls.length = 0; openai = () => new Response(JSON.stringify({ error: { code: 'insufficient_quota', message: 'You exceeded your current quota' } }), { status: 429 });
+    const b = await images.generate('un gato', 'horizontal');
+    must(b.provider === 'Magnific' && /sin saldo|no tiene saldo/.test(b.fallback ?? '') && calls.length === 2 && calls[1] === 'magnific:clave-magnific' && images.file(b.name), `sin saldo en OpenAI debía pasar a Magnific: ${JSON.stringify(b)} ${calls}`);
+    calls.length = 0; openai = () => new Response(JSON.stringify({ error: { code: 'moderation_blocked', message: 'blocked' } }), { status: 400 });
+    const c = await images.generate('algo indebido', 'cuadrada').catch((e) => e as Error);
+    must(c instanceof Error && /filtro de contenido/.test(c.message) && calls.length === 1, 'un rechazo por contenido no debe reintentarse con Magnific');
+    const rows = await P.db.query<any>('SELECT name FROM generated_images');
+    must(rows.length === 2, `debían quedar anotadas 2 imágenes, hay ${rows.length}`);
+    process.env.OPENAI_API_KEY = '';
+    must(new ImagesService(new ConfigService(), usage, P.db).generators.join() === 'Magnific', 'sin clave de OpenAI debía quedar solo Magnific');
+    imageFetch = undefined; process.env.MAGNIFIC_API_KEY = '';
+    return 'OpenAI primero; sin saldo → Magnific y se avisa; rechazo por contenido → no se reintenta; sin clave de OpenAI → solo Magnific';
+  });
 
   rmSync(dir, { recursive: true, force: true });
   const icon = { ok: '✓', FALLA: '✗', omitida: '–' };

@@ -146,6 +146,10 @@ export class ConfigService {
   readonly unsplashAccessKey: string;
   readonly magnificApiKey: string;
   readonly imagesDailyGenerations: number;
+  /** Generacion con OpenAI (va PRIMERO; Magnific queda de respaldo). Clave: OPENAI_API_KEY o la del modelo capaz si es de OpenAI. */
+  readonly imageOpenAiKey: string;
+  readonly imageOpenAiModel: string;
+  readonly imageOpenAiQuality: string;
   readonly imagesPerSession: number;
   readonly imagesDailySearches: number;
   /** Precio en dolares por unidad de cada medida de consumo (opcional): USAGE_PRICES='{"deepgram_s":0.0001}'. */
@@ -296,6 +300,9 @@ export class ConfigService {
     this.unsplashAccessKey = (process.env.UNSPLASH_ACCESS_KEY ?? '').trim();
     this.magnificApiKey = (process.env.MAGNIFIC_API_KEY ?? '').trim();
     this.imagesDailyGenerations = int('IMAGES_DAILY_GENERATIONS', 20, 0);
+    this.imageOpenAiKey = str('IMAGEN_OPENAI', '1') === '0' ? '' : str('OPENAI_API_KEY') || (this.capableProvider === 'openai' ? this.capableKey : '');
+    this.imageOpenAiModel = str('IMAGEN_OPENAI_MODELO', 'gpt-image-2.6-flare');
+    this.imageOpenAiQuality = ['low', 'medium', 'high'].includes(str('IMAGEN_OPENAI_CALIDAD').toLowerCase()) ? str('IMAGEN_OPENAI_CALIDAD').toLowerCase() : 'medium';
     this.imagesPerSession = int('IMAGES_PER_SESSION', 4, 0);
     this.imagesDailySearches = int('IMAGES_DAILY_SEARCHES', 150, 1);
     this.databaseUrl = (process.env.DATABASE_URL ?? '').trim();

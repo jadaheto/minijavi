@@ -285,8 +285,8 @@ export class ToolsService {
         if (no) return `No se generó: ${no}.`;
         const notify = ctx.notify;
         void images.generate(prompt, String(args.formato ?? 'horizontal'))
-          .then((name) => notify({ text: '(Aviso del sistema: la imagen que pidió Javier ya se generó y está en pantalla, en grande. Quedó guardada: la encuentra en su panel, pestaña Imágenes. Díselo en una frase y pregúntale si le gusta o quiere otra versión.)',
-            image: { thumb: `/imagenes/${name}`, full: `/imagenes/${name}`, label: prompt.slice(0, 120), credit: 'Generada con IA (Magnific)' } }))
+          .then(({ name, provider, fallback }) => notify({ text: `(Aviso del sistema: la imagen que pidió Javier ya se generó y está en pantalla, en grande. Quedó guardada: la encuentra en su panel, pestaña Imágenes.${fallback ? ` OJO: OpenAI no pudo (${fallback}) y la hizo el respaldo, ${provider}; menciónalo.` : ''} Díselo en una frase y pregúntale si le gusta o quiere otra versión.)`,
+            image: { thumb: `/imagenes/${name}`, full: `/imagenes/${name}`, label: prompt.slice(0, 120), credit: `Generada con IA (${provider})` } }))
           .catch((e) => notify({ text: `(Aviso del sistema: no se pudo generar la imagen que pidió Javier: ${(e as Error).message}. Díselo en una frase.)` }));
         return 'La imagen se está generando en segundo plano; tarda cerca de un minuto. Dile que ya la estás creando y que se la muestras apenas esté; puede seguir hablando contigo.';
       },
