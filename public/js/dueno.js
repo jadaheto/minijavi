@@ -510,6 +510,8 @@ async function loadProjects() {
   $('project-list').replaceChildren(...projects.map((p) => {
     const sum = el('pre', { textContent: p.lastSummary || 'Sin resultado todavía.' });
     const chk = runBox(p);
+    const a = p.audit, audit = !a ? null : el('details', {}, el('summary', { textContent: `Auditoría del ${fecha(a.at)} (${a.model}): ${a.findings.length} ${a.findings.length === 1 ? 'hallazgo' : 'hallazgos'}${a.failed.length ? ` · sin resultado de: ${a.failed.join(', ')}` : ''}` }),
+      el('pre', { textContent: [...a.summaries.map((x) => `${x.focus}: ${x.text}`), '', ...a.findings.map((f) => `[${f.severity}] ${f.focus} · ${f.file || 'general'}\n  ${f.problem}${f.fix ? `\n  Arreglo: ${f.fix}` : ''}`)].join('\n') || 'Sin hallazgos.' }));
     const links = el('div', { className: 'row' }, p.url ? el('a', { href: p.url, target: '_blank', rel: 'noopener', textContent: 'Abrir sitio' }) : null, el('a', { href: `./owner/projects/${p.slug}/descargar`, textContent: 'Descargar código' }), del);
     const del = el('button', { type: 'button', className: 'small danger', textContent: 'Eliminar proyecto', disabled: busy === p.slug, title: busy === p.slug ? 'Tiene un encargo en curso' : '' });
     del.addEventListener('click', async () => {
@@ -521,7 +523,7 @@ async function loadProjects() {
     });
     const files = el('details', {}, el('summary', { textContent: `Archivos (${p.files.length})` }), el('pre', { textContent: p.files.join('\n') }));
     return el('li', {}, el('div', { className: 'row' }, el('strong', { textContent: p.name }), el('span', { className: 'tag', textContent: p.status })),
-      el('small', { textContent: `${fecha(p.updatedAt)} · ${p.jobs} ${p.jobs === 1 ? 'encargo' : 'encargos'} · último: ${p.lastTask || 'ninguno'}` }), sum, chk, links,
+      el('small', { textContent: `${fecha(p.updatedAt)} · ${p.jobs} ${p.jobs === 1 ? 'encargo' : 'encargos'} · último: ${p.lastTask || 'ninguno'}` }), sum, chk, audit, links,
       p.qr ? el('img', { src: p.qr, alt: `Código QR de ${p.name}`, width: 160, height: 160 }) : null, files);
   }));
   const { jobs } = await json('jobs');

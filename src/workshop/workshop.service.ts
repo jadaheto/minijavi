@@ -1,4 +1,7 @@
-import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
+import { DecisionsService } from '../decisions/decisions.service';
+import { QUESTIONS } from '../decisions/questions';
+import { Audit, runAudit } from './audit';
 import { DbService } from '../db/db.service';
 import { ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -27,6 +30,7 @@ export interface Project {
   repaired?: boolean;        // el ultimo encargo necesito una correccion automatica
   sessionJobs?: number;      // encargos hechos en la sesion actual de Claude Code (al llegar al tope se empieza una nueva)
   run?: RunInfo;             // como cerro el ciclo del ultimo encargo: por que se detuvo y que dijo cada gate
+  audit?: Audit;             // ultima auditoria pedida por Javier (tres lectores de solo lectura)
 }
 /** Resultado del ciclo de un encargo (pasadas + comprobaciones del servidor). */
 export interface RunInfo {
@@ -42,10 +46,12 @@ interface Run {
   stale: number; weak?: string; hash?: string; // comprobaciones seguidas con el mismo gate en rojo y los archivos iguales
   seen: Set<string>;                            // gates que ya existieron en este encargo (si desaparecen, fallan)
   usd: number; turns: number;
+  decision?: number | null;                     // decision del modelo "auto": al cerrar se anota como le fue
 }
 interface Job {
   slug: string; proc?: ChildProcess; t0: number; activity: string; spoken: string; steps: number; timer?: NodeJS.Timeout; cancelled?: boolean; timedOut?: boolean;
   model: string; agents: Set<string>; agentsTotal: number; code: string[]; run: Run; checking?: boolean;
+  readers?: Set<ChildProcess>; // lectores en curso (revisor o auditoria), para poder cancelarlos
 }
 const GATE_ORDER = ['sitio', 'pruebas', 'lint'];
 /** Modelos de Claude Code que Javier puede elegir por voz (verificados con su suscripcion el 2026-11-17). */
@@ -103,7 +109,9 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
   private lastEmit = 0; private emitTimer?: NodeJS.Timeout;
   private listeners: ((d: JobDone) => void)[] = [];
 
-  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService, private readonly db: DbService) {
+  private auditListeners: ((p: Project) => void)[] = [];
+
+  constructor(private readonly cfg: ConfigService, private readonly usage: UsageService, private readonly db: DbService, @Optional() private readonly decisions?: DecisionsService) {
     this.root = resolve(cfg.dataDir, 'proyectos');
     if (!this.enabled) return;
     mkdirSync(this.root, { recursive: true });
@@ -131,7 +139,10 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
   }
 
   get enabled() { return !!this.cfg.claudeToken; }
-  onModuleDestroy() { const j = this.job; this.job = undefined; j?.proc?.kill('SIGTERM'); }
+  onModuleDestroy() { const j = this.job; this.job = undefined; j?.proc?.kill('SIGTERM'); for (const p of j?.readers ?? []) p.kill('SIGTERM'); }
+  onAudit(fn: (p: Project) => void) { this.auditListeners.push(fn); }
+  pendingAudits(): Project[] { return this.projects.filter((p) => p.audit?.unseen); }
+  markAuditSeen(slug: string) { const p = this.projects.find((x) => x.slug === slug); if (p?.audit?.unseen) { p.audit.unseen = false; this.save(p); } }
   onDone(fn: (d: JobDone) => void) { this.listeners.push(fn); }
   onProgress(fn: (w: WorkState) => void) { this.progressListeners.push(fn); }
 
@@ -217,8 +228,8 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     if (!this.job) return 'No hay ningún encargo en curso.';
     const job = this.job;
     job.cancelled = true;
-    job.proc?.kill('SIGTERM');
-    setTimeout(() => job.proc?.kill('SIGKILL'), 5000).unref();
+    job.proc?.kill('SIGTERM'); for (const p of job.readers ?? []) p.kill('SIGTERM');
+    setTimeout(() => { job.proc?.kill('SIGKILL'); for (const p of job.readers ?? []) p.kill('SIGKILL'); }, 5000).unref();
     return 'Encargo cancelado. Lo que alcanzó a hacer queda en el proyecto.';
   }
 
@@ -230,7 +241,7 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
    * pasada en la misma sesion con la salida literal del gate mas debil. Se detiene cuando todo pasa o por un limite
    * (pasadas, sin progreso, tiempo). A Javier se le avisa UNA vez, al cerrar el ciclo, con el resultado real.
    */
-  start(projectName: string, task: string, formUrl: string, createIfMissing: boolean, modelName?: string): string {
+  start(projectName: string, task: string, formUrl: string, createIfMissing: boolean, modelName?: string, decision?: number | null): string {
     if (!this.enabled) return 'El taller no está configurado (falta CLAUDE_CODE_OAUTH_TOKEN).';
     task = task.trim();
     if (task.length < 8) return 'Falta describir el encargo con más detalle.';
@@ -260,7 +271,7 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     try { mkdirSync(cwd, { recursive: true, mode: 0o777 }); if (this.cfg.tallerUser) chmodSync(cwd, 0o777); } catch (e) { return `No se pudo crear la carpeta del proyecto: ${(e as Error).message}`; }
 
     const t0 = Date.now();
-    const run: Run = { project, task, formUrl, model, t0, deadline: t0 + this.cfg.tallerMaxMinutes * 60_000, pass: 0, maxPasses: this.cfg.tallerAutoFix ? this.cfg.tallerMaxPasses : 1, stale: 0, seen: new Set(), usd: 0, turns: 0 };
+    const run: Run = { project, task, formUrl, model, t0, deadline: t0 + this.cfg.tallerMaxMinutes * 60_000, pass: 0, maxPasses: this.cfg.tallerAutoFix ? this.cfg.tallerMaxPasses : 1, stale: 0, seen: new Set(), usd: 0, turns: 0, decision };
     const job: Job = { slug: project.slug, t0, activity: 'empezando', spoken: 'está empezando', steps: 0, model: model.id, agents: new Set(), agentsTotal: 0, code: [], run };
     this.job = job;
     const err = this.pass(job, prompt);
@@ -415,8 +426,8 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     if (this.cfg.tallerReview && ['verificado', 'sin_comprobar', 'pasadas', 'sin_progreso'].includes(stop)) {
       job.checking = true; job.activity = 'revisor independiente: leyendo el resultado'; job.spoken = 'ya terminó, y un revisor independiente está leyendo el resultado'; this.emit(true);
       const out = await runReview(dir, run.task, results, run.formUrl, { claudeBin: this.cfg.claudeBin, token: this.cfg.claudeToken, user: this.cfg.tallerUser, nice: this.cfg.tallerNice, seconds: this.cfg.tallerReviewSeconds,
-        model: this.cfg.tallerReviewModel ? this.model(this.cfg.tallerReviewModel).id : run.model.id, onProc: (p) => { job.proc = p; }, cancelled: () => !!job.cancelled || this.job !== job });
-      job.checking = false; job.proc = undefined;
+        model: this.cfg.tallerReviewModel ? this.model(this.cfg.tallerReviewModel).id : run.model.id, track: this.tracker(job), cancelled: () => !!job.cancelled || this.job !== job });
+      job.checking = false;
       if (this.job !== job) return;
       const reviewUsd = out.ok ? out.review.usd : out.usd;
       this.usage.add('claude_usd', reviewUsd); run.usd += reviewUsd;
@@ -424,6 +435,56 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
       if (review?.error) this.log.warn(`taller: no hubo revisión de "${project.slug}": ${review.error}`);
     }
     this.close(job, stop, results, summary, review);
+  }
+
+  private tracker(job: Job) { return (p: ChildProcess, alive: boolean) => { job.readers ??= new Set(); if (alive) job.readers.add(p); else job.readers.delete(p); }; }
+
+  /**
+   * Modelo "auto": la capa de decisiones juzga que tan exigente es el encargo y el CODIGO lo traduce a un modelo
+   * (TALLER_AUTO_MODELS). Si nadie decide, si la respuesta fue por defecto o si el tipo esta en modo sombra, se usa el
+   * modelo por defecto. Devuelve el modelo y la decision, para anotar despues como le fue.
+   */
+  async pickModel(task: string, subject = ''): Promise<{ model: string; decision: number | null; auto: boolean }> {
+    const fallback = { model: this.defaultModel.key || this.defaultModel.id, decision: null, auto: false };
+    if (!this.decisions) return fallback;
+    try {
+      const d = await this.decisions.decide('modelo_taller', { encargo: task.slice(0, 2000), proyecto_ya_existe: !!this.find(subject) }, QUESTIONS.modelo_taller, { subject });
+      const a = d.answers.nivel, id = await d.id;
+      if (a.by === 'defecto') return { ...fallback, decision: id };
+      const levels = this.cfg.tallerAutoModels, key = levels[Math.max(0, Math.min(levels.length - 1, Math.round(a.value)))];
+      return MODELS.some((m) => m.key === key) ? { model: key, decision: id, auto: true } : { ...fallback, decision: id };
+    } catch (e) { this.log.warn(`taller: no se pudo elegir el modelo: ${(e as Error).message}`); return fallback; }
+  }
+
+  /**
+   * Auditoria pedida por Javier: tres lectores de solo lectura en paralelo (`audit.ts`). Ocupa el taller mientras corre
+   * (un trabajo a la vez) pero no cambia nada del proyecto ni su estado. El resultado llega por `onAudit`.
+   */
+  audit(projectName: string, formUrl: string): string {
+    if (!this.enabled) return 'El taller no está configurado (falta CLAUDE_CODE_OAUTH_TOKEN).';
+    if (this.job) return `Ya hay un trabajo en curso en el proyecto "${this.job.slug}". Hay que esperar a que termine o cancelarlo.`;
+    const project = this.find(projectName);
+    if (!project) return `No existe un proyecto parecido a "${projectName}". Proyectos: ${this.projects.map((x) => x.name).join(', ') || 'ninguno'}.`;
+    const dir = this.dir(project.slug);
+    if (!this.files(project.slug, 1).length) return `El proyecto "${project.name}" no tiene archivos que auditar.`;
+    const model = this.cfg.tallerReviewModel ? this.model(this.cfg.tallerReviewModel) : this.defaultModel, t0 = Date.now();
+    const run: Run = { project, task: 'Auditoría del proyecto', formUrl, model, t0, deadline: t0 + this.cfg.tallerAuditSeconds * 1000, pass: 1, maxPasses: 1, stale: 0, seen: new Set(), usd: 0, turns: 0 };
+    const job: Job = { slug: project.slug, t0, activity: 'auditoría: tres revisores leyendo el proyecto', spoken: 'tiene tres revisores leyendo el proyecto', steps: 0, model: model.id, agents: new Set(), agentsTotal: 3, code: [], run, checking: true };
+    this.job = job; this.emit(true);
+    this.log.log(`taller: auditoría de "${project.slug}" con ${model.label}`);
+    void runAudit(dir, formUrl, { claudeBin: this.cfg.claudeBin, token: this.cfg.claudeToken, user: this.cfg.tallerUser, nice: this.cfg.tallerNice, seconds: this.cfg.tallerAuditSeconds, model: model.id, track: this.tracker(job), cancelled: () => !!job.cancelled || this.job !== job })
+      .then(({ audit, usd }) => {
+        if (this.job !== job) return;
+        this.job = undefined; this.emit(true);
+        this.usage.add('claude_usd', usd);
+        if (job.cancelled) { this.log.log(`taller: auditoría de "${project.slug}" cancelada`); return; }
+        project.audit = { at: new Date(t0).toISOString(), model: model.label, ...audit, unseen: true };
+        this.save(project);
+        this.log.log(`taller: auditoría de "${project.slug}" en ${audit.seconds} s: ${audit.findings.length} hallazgos${audit.failed.length ? `, sin resultado de: ${audit.failed.join(', ')}` : ''}`);
+        for (const fn of this.auditListeners) try { fn(project); } catch (e) { this.log.error(`aviso de la auditoría: ${(e as Error).message}`); }
+      })
+      .catch((e) => { if (this.job === job) { this.job = undefined; this.emit(true); } this.log.error(`taller: la auditoría de "${project.slug}" falló: ${(e as Error).message}`); });
+    return `Auditoría iniciada en el proyecto "${project.name}": tres revisores independientes lo están leyendo (no cambian nada) y tarda unos minutos. Dile a Javier que le avisas cuando termine.`;
   }
 
   /**
@@ -458,6 +519,7 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     void this.db.query('INSERT INTO job_runs (business, slug, at, model, passes, stop, verified, seconds, turns, usd, failing, task, review) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)',
       [this.cfg.businessId, project.slug, project.run.at, run.model.label, run.pass, stop, stop === 'verificado' ? 1 : 0, seconds, run.turns, run.usd, results.filter((g) => !g.ok).map((g) => g.id).join(','), run.task.slice(0, 2000), review?.verdict ?? ''])
       .catch((e) => this.log.error(`No se pudo guardar el ciclo del encargo: ${(e as Error).message}`));
+    if (run.decision) void this.decisions?.outcome(run.decision, `${run.model.label}: ${stop} en ${run.pass} ${run.pass === 1 ? 'pasada' : 'pasadas'}`);
     this.log.log(`taller: "${project.slug}" cerró en ${seconds} s, ${run.pass} ${run.pass === 1 ? 'pasada' : 'pasadas'}, ${job.steps} pasos: ${stop}${results.length ? ` (${results.map((g) => `${g.id} ${g.ok ? 'pasa' : 'FALLA'}`).join(', ')})` : ''}${review?.verdict ? `; el revisor recomienda ${review.verdict}` : ''}`);
     const done: JobDone = { project, ok: stop === 'verificado' || stop === 'sin_comprobar', summary: project.lastSummary, seconds, site: this.hasSite(project.slug), check: site, stop };
     for (const fn of this.listeners) try { fn(done); } catch (e) { this.log.error(`aviso del taller: ${(e as Error).message}`); }

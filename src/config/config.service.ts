@@ -125,6 +125,9 @@ export class ConfigService {
   readonly tallerReview: boolean;
   readonly tallerReviewSeconds: number;
   readonly tallerReviewModel: string;
+  /** Modelo "auto": del nivel mas bajo al mas alto, que modelo usa cada uno. Y tope de la auditoria (tres lectores en paralelo). */
+  readonly tallerAutoModels: string[];
+  readonly tallerAuditSeconds: number;
   /** Encargos por sesion de Claude Code antes de empezar una nueva (que arranca leyendo ESTADO.md). */
   readonly tallerSessionJobs: number;
   /** Fotos de Unsplash (vacia = sin busqueda) y generacion con Magnific (vacia = sin generacion). Topes por conversacion de visitante y por dia. */
@@ -267,6 +270,8 @@ export class ConfigService {
     this.tallerReview = process.env.TALLER_REVIEW !== '0';
     this.tallerReviewSeconds = int('TALLER_REVIEW_SECONDS', 240, 30);
     this.tallerReviewModel = str('TALLER_REVIEW_MODEL');
+    this.tallerAutoModels = str('TALLER_AUTO_MODELS', 'haiku,sonnet,opus').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean).slice(0, 3);
+    this.tallerAuditSeconds = int('TALLER_AUDIT_SECONDS', 300, 30);
     this.unsplashAccessKey = (process.env.UNSPLASH_ACCESS_KEY ?? '').trim();
     this.magnificApiKey = (process.env.MAGNIFIC_API_KEY ?? '').trim();
     this.imagesDailyGenerations = int('IMAGES_DAILY_GENERATIONS', 20, 0);

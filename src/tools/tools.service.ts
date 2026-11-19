@@ -463,14 +463,23 @@ export class ToolsService {
             proyecto: { type: 'string', description: 'Nombre corto del proyecto, por ejemplo "landing café". Si es uno existente, el mismo nombre.' },
             encargo: { type: 'string', description: 'Qué debe hacer, con TODOS los detalles que dio Javier (producto, público, textos, colores, qué acción debe hacer el visitante). Claude Code no oye la conversación: solo lee esto.' },
             nuevo: { type: 'boolean', description: 'true si es un proyecto nuevo; false u omitido si continúa uno existente.' },
-            modelo: { type: 'string', enum: MODELS.map((m) => m.key), description: `Modelo de Claude Code que eligió Javier: ${MODELS.map((m) => `${m.key} = ${m.label}`).join(', ')}. Omítelo para usar el de por defecto (${workshop.defaultModel.label}).` },
+            modelo: { type: 'string', enum: [...MODELS.map((m) => m.key), 'auto'], description: `Modelo de Claude Code que eligió Javier: ${MODELS.map((m) => `${m.key} = ${m.label}`).join(', ')}. "auto" = que el sistema elija según el encargo (si Javier dice "elige tú" o "el que convenga"). Omítelo para usar el de por defecto (${workshop.defaultModel.label}).` },
           },
           required: ['proyecto', 'encargo'],
         },
-        run: (args: Record<string, unknown>, ctx: ToolContext) => {
+        run: async (args: Record<string, unknown>, ctx: ToolContext) => {
           const existing = workshop.find(String(args.proyecto ?? ''));
-          return workshop.start(String(args.proyecto ?? ''), String(args.encargo ?? ''), `${cfg.publicUrl || ctx.origin}/formulario`, args.nuevo === true || !existing && workshop.list().length === 0, args.modelo ? String(args.modelo) : undefined);
+          if (workshop.busy()) return workshop.start(String(args.proyecto ?? ''), String(args.encargo ?? ''), '', false); // ocupado: lo dice sin gastar una decision
+          // "auto": la capa de decisiones juzga el encargo y el codigo lo traduce a un modelo; si no decide, va el de por defecto.
+          const pick = args.modelo === 'auto' ? await workshop.pickModel(String(args.encargo ?? ''), String(args.proyecto ?? '')) : undefined;
+          return workshop.start(String(args.proyecto ?? ''), String(args.encargo ?? ''), `${cfg.publicUrl || ctx.origin}/formulario`, args.nuevo === true || !existing && workshop.list().length === 0, pick ? pick.model : args.modelo ? String(args.modelo) : undefined, pick?.decision)
+            + (pick && !pick.auto ? ' (No hubo una elección automática esta vez; se usó el modelo de por defecto.)' : '');
         },
+      },
+      auditar_proyecto: {
+        description: 'Lanza una auditoría de un proyecto del taller: tres revisores independientes lo leen (no cambian nada) y entregan hallazgos por gravedad. Tarda unos minutos; el resultado llega con un aviso del taller. Úsala cuando Javier pida auditar, revisar a fondo o "ver qué le falta" a un proyecto que ya existe.',
+        parameters: { type: 'object', properties: { proyecto: { type: 'string', description: 'Nombre del proyecto a auditar.' } }, required: ['proyecto'] },
+        run: (args: Record<string, unknown>, ctx: ToolContext) => workshop.audit(String(args.proyecto ?? ''), `${cfg.publicUrl || ctx.origin}/formulario`),
       },
       bocetos: {
         description:

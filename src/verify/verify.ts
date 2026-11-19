@@ -232,7 +232,7 @@ async function main() {
       const llm = { chat: async function* () { if (round++ === 0) yield { type: 'tool_calls', calls: [{ id: 't1', name: 'registrar_interesado', arguments: '{}' }, { id: 't2', name: 'clima', arguments: '{}' }] }; else yield { type: 'text', delta: 'Listo.' }; }, complete: async () => '{}' } as any;
       const tools = { definitions: async () => [], run: async (name: string) => { ran.push(name); return { text: 'hecho' }; } } as any;
       const gw = new (SessionGateway as any)(b.cfg, {}, { open: () => ({ send: noop, close: noop }) }, llm, tools, { verify: () => null }, { get: noop, ids: () => [] }, { get: async () => null, valid: () => false, save: async () => undefined },
-        { enabled: false }, { enabled: false, onDone: noop, onProgress: noop, busy: () => undefined, unseen: () => [], defaultModel: { label: '' } }, { enabled: false }, usage, { get: async () => undefined, logConversation: noop }, { enabled: false, canGenerate: false, newState: () => ({ title: '', kind: '', items: [], index: 0 }) },
+        { enabled: false }, { enabled: false, onDone: noop, onAudit: noop, onProgress: noop, busy: () => undefined, unseen: () => [], pendingAudits: () => [], defaultModel: { label: '' } }, { enabled: false }, usage, { get: async () => undefined, logConversation: noop }, { enabled: false, canGenerate: false, newState: () => ({ title: '', kind: '', items: [], index: 0 }) },
         alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard, (b as any).capableStub ?? b.capable, b.catalog);
       const client = { readyState: 1, OPEN: 1, send: (raw: string) => { const m = JSON.parse(raw); if (m.type === 'say') said += m.text; }, on: noop, close: noop };
       const sess: any = { n: 1, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [], notes: [], startedAt: Date.now(), lastTurnEnd: 0, lastStatus: 0, imageSearches: 0, leadIds: [], demos: 0, cases: 0, demo: { on: false, business: '', kind: '', turns: 0 }, suspended: false, suspendedAt: 0, waking: false, canSuspend: true, browserTts: true, lastSpoken: '', lastPlayEnd: 0, origin: '' };
@@ -261,7 +261,7 @@ async function main() {
       const llm = { chat: async function* (_m: unknown, tools: any[]) { seen.push({ tools: tools.map((t) => t.function.name) }); if (round++ === 0 && o.calls) yield { type: 'tool_calls', calls: o.calls.map((name, i) => ({ id: 't' + i, name, arguments: '{}' })) }; else yield { type: 'text', delta: 'Listo.' }; }, complete: async () => '{}' } as any;
       const tools = { definitions: async () => ALL, run: async () => ({ text: 'hecho' }) } as any;
       const gw = new (SessionGateway as any)(b.cfg, {}, { open: () => ({ send: noop, close: noop }) }, llm, tools, { verify: () => null }, { get: noop, ids: () => [] }, { get: async () => null, valid: () => false, save: async () => undefined },
-        { enabled: false }, { enabled: false, onDone: noop, onProgress: noop, busy: () => undefined, unseen: () => [], defaultModel: { label: '' } }, { enabled: false }, usage, { get: async () => undefined, logConversation: noop }, { enabled: false, canGenerate: false, newState: () => ({ title: '', kind: '', items: [], index: 0 }) },
+        { enabled: false }, { enabled: false, onDone: noop, onAudit: noop, onProgress: noop, busy: () => undefined, unseen: () => [], pendingAudits: () => [], defaultModel: { label: '' } }, { enabled: false }, usage, { get: async () => undefined, logConversation: noop }, { enabled: false, canGenerate: false, newState: () => ({ title: '', kind: '', items: [], index: 0 }) },
         alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard, (b as any).capableStub ?? b.capable, b.catalog);
       const client = { readyState: 1, OPEN: 1, send: noop, on: noop, close: noop };
       const sess: any = { n: 1, ready: false, owner: !!o.owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [], notes: [], startedAt: Date.now(), lastTurnEnd: 0, lastStatus: 0, imageSearches: 0, leadIds: [], demos: 0, cases: 0, demo: { on: false, business: '', kind: '', turns: 0 }, suspended: false, suspendedAt: 0, waking: false, canSuspend: true, browserTts: true, lastSpoken: '', lastPlayEnd: 0, origin: '' };
@@ -668,6 +668,14 @@ const slug = path.basename(process.cwd()), here = __dirname;
 const plan = JSON.parse(fs.readFileSync(path.join(here, 'plan-' + slug + '.json'), 'utf8'));
 const nf = path.join(here, 'n-' + slug), n = fs.existsSync(nf) ? Number(fs.readFileSync(nf, 'utf8')) : 0; fs.writeFileSync(nf, String(n + 1));
 const args = process.argv.slice(2);
+const asked = args[args.indexOf('-p') + 1];
+if (asked.startsWith('AUDITORÍA')) { // un lector de la auditoria: responde segun su enfoque
+  const focus = asked.match(/Enfoque: (\\w+)/)[1], outs = JSON.parse(fs.readFileSync(path.join(here, 'audit-' + slug + '.json'), 'utf8'))[focus];
+  const an = path.join(here, 'an-' + slug + '-' + focus), k = fs.existsSync(an) ? Number(fs.readFileSync(an, 'utf8')) : 0; fs.writeFileSync(an, String(k + 1));
+  fs.appendFileSync(path.join(here, 'audit-args-' + slug + '.txt'), JSON.stringify(args) + '\\n');
+  setTimeout(() => { console.log(JSON.stringify({ type: 'result', is_error: false, result: outs[Math.min(k, outs.length - 1)], total_cost_usd: 0.003 })); process.exit(0); }, 400);
+  return;
+}
 if (args.includes('--no-session-persistence')) { // es el revisor: contexto fresco, solo lectura
   const rf = path.join(here, 'review-' + slug + '.json'), outs = fs.existsSync(rf) ? JSON.parse(fs.readFileSync(rf, 'utf8')) : null;
   const rn = path.join(here, 'rn-' + slug), k = fs.existsSync(rn) ? Number(fs.readFileSync(rn, 'utf8')) : 0; fs.writeFileSync(rn, String(k + 1));
@@ -763,6 +771,59 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     must(m.runs >= 10 && m.verified >= 5 && m.rate! > 0 && m.rate! < 1 && m.blocking[0]?.gate === 'pruebas' && m.reviews.rechazar === 1 && m.p90Passes! <= 3, `las cifras del taller no cuadran: ${JSON.stringify(m)}`);
     must(/límite de uso/.test(explainClaudeError("You've hit your session limit · resets 3pm") ?? '') && /setup-token/.test(explainClaudeError('API Error: 401 authentication_error') ?? '') && explainClaudeError('algo raro') === undefined, 'los errores conocidos de Claude Code no se explican en español');
     return `rechaza sin cambiar el cierre; reintenta una vez; ${m.verified} de ${m.runs} encargos de prueba verificados`;
+  });
+
+  await check('Taller: el modelo "auto" lo decide la capa de decisiones y, si no decide o está en sombra, va el de por defecto', async () => {
+    const mk = (d: any) => new WorkshopService(wcfg, usage, P.db, d);
+    const level = (value: number) => ({ answers: { nivel: { value, confidence: null } } });
+    P.decisions.useProviders(fake('deepseek', level(0)));
+    const small = await mk(P.decisions).pickModel('Cámbiale el color del botón a verde', 'ciclo-sitio');
+    P.decisions.useProviders(fake('deepseek', level(2)));
+    const hard = await mk(P.decisions).pickModel('Una aplicación de inventario con varias pantallas y sincronización', 'x');
+    must(small.auto && small.model === 'haiku' && hard.auto && hard.model === 'opus' && !!hard.decision, `no tradujo el nivel al modelo: ${small.model}, ${hard.model}`);
+    P.decisions.useProviders(fake('deepseek', { fail: true }));
+    const down = await mk(P.decisions).pickModel('Cualquier encargo de prueba', 'x');
+    must(!down.auto && down.model === 'opus' && (await mk(undefined).pickModel('otro', 'x')).auto === false, `con el proveedor caído debía ir el modelo por defecto: ${JSON.stringify(down)}`);
+    // Con Jev el tipo nace en modo sombra: Jev responde y queda registrado, pero el encargo usa el modelo por defecto.
+    withJev.decisions.useProviders(fake('jev', { answers: { nivel: { value: 0, confidence: 0.9 } } }), fake('deepseek', level(0)));
+    const shadow = await mk(withJev.decisions).pickModel('Cámbiale el color del botón', 'x');
+    must(!shadow.auto && shadow.model === 'opus' && withJev.decisions.inShadow('modelo_taller'), `en modo sombra no debe elegir: ${JSON.stringify(shadow)}`);
+    // La decision queda con lo que de verdad paso, para poder juzgarla despues.
+    P.decisions.useProviders(fake('deepseek', level(0)));
+    const wsD = mk(P.decisions), pick = await wsD.pickModel('Página de prueba sencilla', 'auto-modelo');
+    writeFileSync(join(fakeDir, 'plan-auto-modelo.json'), JSON.stringify([{ write: { 'sitio/index.html': '<title>x</title>' } }]));
+    const fin = new Promise<any>((r) => wsD.onDone(r));
+    must(/modelo Haiku/.test(wsD.start('auto-modelo', 'Página de prueba sencilla', 'http://localhost/formulario', true, pick.model, pick.decision)), 'el encargo no arrancó con el modelo elegido');
+    await Promise.race([fin, wait(60_000).then(() => { throw new Error('el encargo no terminó'); })]); await wait(150);
+    const row = (await P.db.query<any>('SELECT outcome FROM decisions WHERE id = $1', [pick.decision]))[0];
+    must(/Haiku.*verificado en 1 pasada/.test(row?.outcome ?? ''), `la decisión no quedó con su resultado: ${row?.outcome}`);
+    return 'pequeño → Haiku, exigente → Opus; caído o en sombra → el de por defecto; el resultado queda anotado en la decisión';
+  });
+
+  await check('Taller: la auditoría usa tres lectores de solo lectura en paralelo y no cambia nada', async () => {
+    const { parseAudit } = await import('../workshop/audit');
+    const { treeHash } = await import('../workshop/gates');
+    const fence = '`'.repeat(3), json = (o: unknown) => `Listo.\n${fence}json\n${JSON.stringify(o)}\n${fence}`;
+    const slug = 'revisor-rechaza', before = treeHash(ws.dir(slug)), status = ws.list().find((x) => x.slug === slug)!.status;
+    writeFileSync(join(fakeDir, `audit-${slug}.json`), JSON.stringify({
+      funciona: [json({ findings: [{ severity: 'baja', file: 'sitio/index.html', problem: 'Falta el idioma en la etiqueta html', fix: 'Agregar lang="es"' }], summary: 'Funciona, con un detalle menor.' })],
+      seguridad: [json({ findings: [{ severity: 'alta', file: 'sitio/index.html', problem: 'Hay una clave escrita en el código', fix: 'Quitarla' }], summary: 'Hay una clave expuesta.' })],
+      contenido: ['Todo me parece bien.', 'Sigo sin formato.'], // nunca cumple el contrato: no cuenta y se dice
+    }));
+    const done = new Promise<any>((r) => ws.onAudit(r)), t0 = Date.now();
+    must(/Auditoría iniciada/.test(ws.audit(slug, 'http://localhost/formulario')), 'la auditoría no arrancó');
+    must(/Ya hay un encargo en curso/.test(ws.start('otro-proyecto', 'Encargo que no debe empezar', 'http://localhost/formulario', true)) && /Ya hay un trabajo/.test(ws.audit(slug, '')), 'durante la auditoría el taller debe quedar ocupado');
+    must((await ws.remove(slug)) === 'ocupado', 'se pudo borrar un proyecto mientras se auditaba');
+    const p = await Promise.race([done, wait(60_000).then(() => { throw new Error('la auditoría no terminó'); })]), a = p.audit, ms = Date.now() - t0;
+    must(a.findings.length === 2 && a.findings[0].severity === 'alta' && a.findings[1].severity === 'baja' && a.summaries.length === 2 && a.unseen === true, `los hallazgos no quedaron juntos y ordenados: ${JSON.stringify(a)}`);
+    must(a.failed.length === 1 && /contenido/.test(a.failed[0]), `el lector que no cumplió el formato debía quedar como sin resultado: ${a.failed}`);
+    const calls = readFileSync(join(fakeDir, `audit-args-${slug}.txt`), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as string[]);
+    must(calls.length === 4 && calls.every((c) => !c.includes('--resume') && c.includes('--no-session-persistence') && c[c.indexOf('--tools') + 1] === 'Read,Glob,Grep'), `los lectores deben ir sin sesión y solo con lectura (${calls.length} llamadas)`);
+    must(ms < 2400, `los tres lectores no corrieron en paralelo: ${ms} ms`);
+    must(treeHash(ws.dir(slug)) === before && ws.list().find((x) => x.slug === slug)!.status === status && !ws.busy(), 'la auditoría cambió el proyecto o dejó el taller ocupado');
+    ws.markAuditSeen(slug); must(ws.pendingAudits().length === 0, 'el aviso de la auditoría no se marcó como contado');
+    must(!parseAudit(json({ findings: [{ severity: 'gravísima', problem: 'x' }], summary: 'y' })).ok && parseAudit(json({ findings: [], summary: 'Sin hallazgos.' })).ok, 'el contrato de la auditoría no valida bien');
+    return `2 hallazgos de 2 lectores (grave primero), 1 lector sin resultado válido, ${ms} ms en paralelo`;
   });
   rmSync(fakeDir, { recursive: true, force: true });
 

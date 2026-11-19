@@ -89,31 +89,33 @@ ${CONTRACT}`;
 
 export interface ReviewRunner {
   claudeBin: string; token: string; user: string; model: string; seconds: number; nice: number;
-  onProc?: (proc: ChildProcess | undefined) => void;
+  /** Avisa de cada proceso que arranca (alive) y termina, para poder cancelarlo. Puede haber varios a la vez (auditoria). */
+  track?: (proc: ChildProcess, alive: boolean) => void;
   cancelled?: () => boolean;
 }
 
+/** Un Claude Code de SOLO LECTURA y con contexto fresco: sin --resume, sin guardar sesion, solo Read, Glob y Grep. */
 function runOnce(dir: string, prompt: string, r: ReviewRunner, seconds: number): Promise<{ text: string; error?: string; usd: number }> {
   return new Promise((done) => {
-    // Contexto fresco: sin --resume y sin guardar sesion. Solo herramientas de lectura.
     const args = ['-p', prompt, '--output-format', 'json', '--max-turns', '25', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep', '--no-session-persistence'];
     if (r.model) args.push('--model', r.model);
     const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, LANG: 'C.UTF-8', CLAUDE_CODE_OAUTH_TOKEN: r.token, DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1' };
     let cmd = r.claudeBin, argv = args;
     if (r.user) { argv = ['-n', '-H', '-u', r.user, '--preserve-env=PATH,LANG,CLAUDE_CODE_OAUTH_TOKEN,DISABLE_AUTOUPDATER,DISABLE_TELEMETRY,DISABLE_ERROR_REPORTING', r.claudeBin, ...args]; cmd = 'sudo'; }
     else env.HOME = process.env.HOME;
-    let out = '', err = '', settled = false, timedOut = false;
-    const finish = (text: string, error: string | undefined, usd = 0) => { if (settled) return; settled = true; clearTimeout(timer); r.onProc?.(undefined); done({ text, error, usd }); };
-    let proc: ChildProcess;
+    let out = '', err = '', settled = false, timedOut = false, proc: ChildProcess | undefined;
+    const finish = (text: string, error: string | undefined, usd = 0) => { if (settled) return; settled = true; clearTimeout(timer); if (proc) r.track?.(proc, false); done({ text, error, usd }); };
+    let timer: NodeJS.Timeout | undefined;
     try { proc = spawn(cmd, argv, { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch (e) { finish('', `no se pudo iniciar el revisor: ${(e as Error).message}`); return; }
-    r.onProc?.(proc);
-    try { if (proc.pid && r.nice) require('node:os').setPriority(proc.pid, r.nice); } catch { /* sin permiso para cambiar la prioridad */ }
-    const timer = setTimeout(() => { timedOut = true; proc.kill('SIGTERM'); setTimeout(() => proc.kill('SIGKILL'), 5000).unref(); }, seconds * 1000);
-    proc.stdout!.on('data', (d: Buffer) => { out = (out + d.toString('utf8')).slice(-400_000); });
-    proc.stderr!.on('data', (d: Buffer) => { err = (err + d.toString('utf8')).slice(-600); });
-    proc.on('error', (e) => finish('', `no se pudo iniciar el revisor: ${e.message}`));
-    proc.on('close', (code) => {
+    const p = proc;
+    r.track?.(p, true);
+    try { if (p.pid && r.nice) require('node:os').setPriority(p.pid, r.nice); } catch { /* sin permiso para cambiar la prioridad */ }
+    timer = setTimeout(() => { timedOut = true; p.kill('SIGTERM'); setTimeout(() => p.kill('SIGKILL'), 5000).unref(); }, seconds * 1000);
+    p.stdout!.on('data', (d: Buffer) => { out = (out + d.toString('utf8')).slice(-400_000); });
+    p.stderr!.on('data', (d: Buffer) => { err = (err + d.toString('utf8')).slice(-600); });
+    p.on('error', (e) => finish('', `no se pudo iniciar el revisor: ${e.message}`));
+    p.on('close', (code) => {
       if (timedOut) return finish('', `el revisor no terminó en ${seconds} s`);
       let parsed: any; try { parsed = JSON.parse(out); } catch { return finish('', err.replace(/\s+/g, ' ').trim().slice(-300) || `el revisor terminó con código ${code} y sin respuesta`); }
       const usd = Number(parsed?.total_cost_usd) || 0, text = String(parsed?.result ?? '');
@@ -123,8 +125,14 @@ function runOnce(dir: string, prompt: string, r: ReviewRunner, seconds: number):
   });
 }
 
-/** Ejecuta la revision. Nunca lanza: si el revisor falla o no cumple el contrato, se informa que no hubo revision. */
-export async function runReview(dir: string, task: string, gates: GateResult[], formUrl: string, r: ReviewRunner): Promise<ReviewOutcome> {
+export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
+export type ReaderOutcome<T> = { ok: true; value: T; seconds: number; attempts: number; usd: number } | { ok: false; error: string; seconds: number; attempts: number; usd: number };
+
+/**
+ * Pregunta a un lector y valida su salida contra un contrato. Si no cumple, se le pide UNA vez mas con el error.
+ * Nunca lanza: si falla o no cumple, se informa que no hubo respuesta (no se inventa una).
+ */
+export async function askReader<T>(dir: string, prompt: (previousError?: string) => string, parse: (text: string) => Parsed<T>, r: ReviewRunner): Promise<ReaderOutcome<T>> {
   const t0 = Date.now(), deadline = t0 + r.seconds * 1000;
   let usd = 0, error = '', attempts = 0;
   const secs = () => Math.round((Date.now() - t0) / 1000);
@@ -132,12 +140,18 @@ export async function runReview(dir: string, task: string, gates: GateResult[], 
     const left = Math.round((deadline - Date.now()) / 1000);
     if (r.cancelled?.() || left < 20) break;
     attempts++;
-    const res = await runOnce(dir, reviewPrompt(task, gates, formUrl, error || undefined), r, left);
+    const res = await runOnce(dir, prompt(error || undefined), r, left);
     usd += res.usd;
     if (res.error && !res.text) { error = res.error; break; } // no arranco, se corto o fallo el servicio: repetir no ayuda
-    const parsed = parseReview(res.text);
-    if (parsed.ok) return { ok: true, review: { ...parsed.value, seconds: secs(), attempts, usd } };
+    const parsed = parse(res.text);
+    if (parsed.ok) return { ok: true, value: parsed.value, seconds: secs(), attempts, usd };
     error = parsed.error;
   }
   return { ok: false, error: r.cancelled?.() ? 'se canceló' : error || 'no quedó tiempo para revisar', seconds: secs(), attempts, usd };
+}
+
+/** Revision al cerrar un encargo. */
+export async function runReview(dir: string, task: string, gates: GateResult[], formUrl: string, r: ReviewRunner): Promise<ReviewOutcome> {
+  const out = await askReader(dir, (e) => reviewPrompt(task, gates, formUrl, e), parseReview, r);
+  return out.ok ? { ok: true, review: { ...out.value, seconds: out.seconds, attempts: out.attempts, usd: out.usd } } : out;
 }

@@ -270,7 +270,7 @@ export class OwnerController {
     const projects = await Promise.all(this.workshop.list().map(async (p) => {
       const url = this.workshop.siteUrl(p.slug, origin);
       return {
-        slug: p.slug, name: p.name, status: p.status, updatedAt: p.updatedAt, jobs: p.jobs, lastTask: p.lastTask ?? '', lastSummary: p.lastSummary ?? '', check: p.check ?? null, repaired: !!p.repaired, run: p.run ?? null,
+        slug: p.slug, name: p.name, status: p.status, updatedAt: p.updatedAt, jobs: p.jobs, lastTask: p.lastTask ?? '', lastSummary: p.lastSummary ?? '', check: p.check ?? null, repaired: !!p.repaired, run: p.run ?? null, audit: p.audit ?? null,
         url, qr: url ? await QRCode.toDataURL(url, { margin: 1, width: 240 }) : '', files: this.workshop.files(p.slug, 60),
       };
     }));
