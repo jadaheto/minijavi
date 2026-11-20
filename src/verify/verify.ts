@@ -1162,6 +1162,26 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     return 'permisos de solo lectura; dormido → último dato con su hora, sin despertar; en línea → en vivo; caché; token rotado guardado; tope diario';
   });
 
+  await check('Taller: un proyecto nuevo empieza por tres propuestas (también juegos); programar directo solo si Javier lo pide', async () => {
+    const { sketchTask } = await import('../tools/tools.service');
+    const started: { name: string; task: string; fresh: boolean }[] = [], projects = new Set<string>(['landing café']);
+    const workshop = { enabled: true, defaultModel: { label: 'Opus' }, busy: () => undefined, list: () => [...projects], find: (n: string) => (projects.has(n) ? { name: n } : undefined), pickModel: async () => undefined,
+      start: (name: string, task: string, _f: string, fresh: boolean) => { started.push({ name, task, fresh }); projects.add(name); return 'Encargo iniciado.'; } } as any;
+    const tools = new ToolsService(P.cfg, { definitions: async () => [] } as any, P.leads, workshop, { enabled: false } as any, usage, { enabled: false, canGenerate: false } as any, { visible: () => [], list: () => [] } as any, {} as any, P.actions, P.approvals);
+    const run = async (name: string, args: unknown) => (await tools.run(name, JSON.stringify(args), true)).text;
+    const game = { proyecto: 'el burro en el olimpo', encargo: 'Crear un videojuego web tipo runner con un burro alado', nuevo: true };
+    const refused = await run('programar', game);
+    must(/NO se inició/.test(refused) && /bocetos/.test(refused) && started.length === 0, `un proyecto nuevo no debía construirse de una vez: ${refused}`);
+    must(/iniciado/.test(await run('bocetos', { proyecto: game.proyecto, tipo: 'juego', idea: 'un runner con un burro alado en el Olimpo' })) && started.length === 1, 'los bocetos del juego no arrancaron');
+    must(started[0].task.startsWith('Encargo de BOCETOS') && /videojuego/.test(started[0].task) && /NO es jugable/.test(started[0].task) && /sitio\/bocetos\/3\/index\.html/.test(started[0].task) && /burro alado/.test(started[0].task), `encargo de bocetos de juego: ${started[0].task.slice(0, 200)}`);
+    must(/iniciado/.test(await run('programar', { ...game, encargo: 'Construye el juego completo a partir del boceto 2' })) && started.length === 2, 'elegido el boceto, el proyecto ya existe y debía construirse');
+    must(/iniciado/.test(await run('programar', { proyecto: 'landing café', encargo: 'ponle otro color al botón' })) && started.length === 3, 'un cambio a un proyecto que ya existe va directo');
+    must(/iniciado/.test(await run('programar', { proyecto: 'script de facturas', encargo: 'un script que sume un CSV', nuevo: true, directo: true })) && started.length === 4, 'con directo debía construirse sin propuestas');
+    for (const k of ['sitio', 'juego', 'aplicacion'] as const) must(sketchTask(k).startsWith('Encargo de BOCETOS') && /exactamente 3/.test(sketchTask(k)) && /bocetos\.json/.test(sketchTask(k)), `encargo de bocetos (${k}) mal armado`);
+    must(!(await tools.run('programar', JSON.stringify(game), false)).text.includes('iniciado'), 'un visitante no puede programar');
+    return 'nuevo sin "directo" → pide bocetos; bocetos de juego, sitio y aplicación; elegido o existente → construye; "directo" → construye';
+  });
+
   rmSync(dir, { recursive: true, force: true });
   const icon = { ok: '✓', FALLA: '✗', omitida: '–' };
   console.log('\nVERIFICACIÓN DE MINIJAVI (simulación: no se envió nada a nadie)\n');

@@ -32,14 +32,32 @@ export const asData = (source: string, text: string) => `<<<DATOS de ${source}: 
 export interface DemoState { on: boolean; business: string; kind: string; turns: number; }
 export const DEMO_TURNS = 6;
 
-/** Encargo de bocetos: tres portadas distintas y rapidas, cada una en su carpeta, para elegir antes de construir. */
-export const SKETCH_TASK = `Encargo de BOCETOS (todavía no es el sitio final).
-Crea exactamente 3 bocetos de la PORTADA, claramente distintos entre sí en paleta, tipografía y disposición (por ejemplo: uno sobrio, uno alegre, uno atrevido).
-- Cada boceto va en su carpeta: sitio/bocetos/1/index.html, sitio/bocetos/2/index.html y sitio/bocetos/3/index.html. Cada uno autocontenido (estilos dentro del archivo o en su misma carpeta), con rutas relativas.
-- Solo la portada: encabezado, mensaje principal, dos o tres secciones y pie. Textos creíbles en español; lo que no sepas, márcalo como texto de ejemplo. Debe verse bien en una pantalla ancha.
+/**
+ * Encargo de bocetos: tres propuestas distintas y rapidas, cada una en su carpeta, para elegir ANTES de construir.
+ * La primera linea no cambia: por ella se reconoce el encargo al terminar (se muestran en la galeria, no con el QR).
+ */
+export type SketchKind = 'sitio' | 'juego' | 'aplicacion';
+const SKETCH_WHAT: Record<SketchKind, { intro: string; scope: string }> = {
+  sitio: {
+    intro: 'Crea exactamente 3 bocetos de la PORTADA, claramente distintos entre sí en paleta, tipografía y disposición (por ejemplo: uno sobrio, uno alegre, uno atrevido).',
+    scope: 'Solo la portada: encabezado, mensaje principal, dos o tres secciones y pie. Textos creíbles en español; lo que no sepas, márcalo como texto de ejemplo.',
+  },
+  juego: {
+    intro: 'Crea exactamente 3 propuestas VISUALES del videojuego, claramente distintas entre sí en estilo de dibujo, paleta y ambiente (por ejemplo: una tierna y colorida, una estilo pixel art, una épica y dramática).',
+    scope: 'Cada propuesta es UNA pantalla del juego en plena partida, dibujada con código (canvas, SVG o CSS): el personaje, el escenario, un obstáculo, algo para recoger y el marcador. Puede tener una animación sencilla que se repita (el personaje moviéndose, el fondo desplazándose), pero NO es jugable todavía: no programes reglas, controles ni niveles. Debajo, una frase con cómo se jugaría.',
+  },
+  aplicacion: {
+    intro: 'Crea exactamente 3 propuestas de la PANTALLA PRINCIPAL de la aplicación, claramente distintas entre sí en disposición, paleta y tipografía (por ejemplo: una minimalista, una tipo tablero con tarjetas, una oscura y compacta).',
+    scope: 'Solo la pantalla principal con datos de ejemplo creíbles en español y los controles a la vista, sin que funcionen todavía: no programes la lógica ni otras pantallas.',
+  },
+};
+export const sketchTask = (kind: SketchKind) => `Encargo de BOCETOS (todavía no es el trabajo final).
+${SKETCH_WHAT[kind].intro}
+- Cada boceto va en su carpeta: sitio/bocetos/1/index.html, sitio/bocetos/2/index.html y sitio/bocetos/3/index.html. Cada uno autocontenido (estilos y scripts dentro del archivo o en su misma carpeta), con rutas relativas.
+- ${SKETCH_WHAT[kind].scope} Debe verse bien en una pantalla ancha.
 - Escribe sitio/bocetos/bocetos.json con [{"n": 1, "nombre": "dos o tres palabras", "descripcion": "una frase con el estilo"}, ...].
 - Deja también sitio/index.html como índice sencillo con un enlace a cada boceto.
-- Trabaja rápido: son propuestas para elegir, no el sitio terminado. No hagas más páginas.`;
+- Trabaja rápido: son propuestas para elegir, no el trabajo terminado. No hagas nada más.`;
 /** Herramientas cuyo resultado completo es contenido de terceros. */
 const UNTRUSTED: Record<string, string> = { que_hiciste: 'la bitácora (nombres y textos de interesados)', ver_interesados: 'el formulario y las conversaciones públicas', estado_taller: 'los informes de Claude Code', mostrar_proyecto: 'los informes de Claude Code' };
 /** Datos de la sesion que algunas herramientas necesitan (la direccion publica, para enlaces y QR). */
@@ -485,6 +503,7 @@ export class ToolsService {
             proyecto: { type: 'string', description: 'Nombre corto del proyecto, por ejemplo "landing café". Si es uno existente, el mismo nombre.' },
             encargo: { type: 'string', description: 'Qué debe hacer, con TODOS los detalles que dio Javier (producto, público, textos, colores, qué acción debe hacer el visitante). Claude Code no oye la conversación: solo lee esto.' },
             nuevo: { type: 'boolean', description: 'true si es un proyecto nuevo; false u omitido si continúa uno existente.' },
+            directo: { type: 'boolean', description: 'Solo para un proyecto NUEVO: true si Javier pidió expresamente hacerlo de una vez, sin ver propuestas antes, o si el encargo no tiene nada que se vea (un script, un cálculo, una automatización). Si no, omítelo: primero van los bocetos.' },
             modelo: { type: 'string', enum: [...MODELS.map((m) => m.key), 'auto'], description: `Modelo de Claude Code que eligió Javier: ${MODELS.map((m) => `${m.key} = ${m.label}`).join(', ')}. "auto" = que el sistema elija según el encargo (si Javier dice "elige tú" o "el que convenga"). Omítelo para usar el de por defecto (${workshop.defaultModel.label}).` },
           },
           required: ['proyecto', 'encargo'],
@@ -492,6 +511,11 @@ export class ToolsService {
         run: async (args: Record<string, unknown>, ctx: ToolContext) => {
           const existing = workshop.find(String(args.proyecto ?? ''));
           if (workshop.busy()) return workshop.start(String(args.proyecto ?? ''), String(args.encargo ?? ''), '', false); // ocupado: lo dice sin gastar una decision
+          // Proyecto nuevo: antes de construir, Javier elige entre tres propuestas (asi lo pidio el 2026-11-19, tras un
+          // juego que se construyo de una vez). Se impone aqui y no solo en el prompt; `directo` es la salida cuando el lo pide.
+          if (!existing && args.directo !== true)
+            return 'NO se inició el encargo. Es un proyecto nuevo y antes de construirlo Javier debe ver 3 propuestas y elegir una: llama AHORA a bocetos con el mismo nombre de proyecto, todas sus ideas y el tipo (sitio, juego o aplicacion), y dile que en unos minutos le muestras tres opciones. ' +
+              'Solo si Javier dijo que lo hagas directo, sin opciones, o si el encargo no tiene nada visual (un script, un cálculo), repite programar con directo: true.';
           // "auto": la capa de decisiones juzga el encargo y el codigo lo traduce a un modelo; si no decide, va el de por defecto.
           const pick = args.modelo === 'auto' ? await workshop.pickModel(String(args.encargo ?? ''), String(args.proyecto ?? '')) : undefined;
           return workshop.start(String(args.proyecto ?? ''), String(args.encargo ?? ''), `${cfg.publicUrl || ctx.origin}/formulario`, args.nuevo === true || !existing && workshop.list().length === 0, pick ? pick.model : args.modelo ? String(args.modelo) : undefined, pick?.decision)
@@ -505,13 +529,14 @@ export class ToolsService {
       },
       bocetos: {
         description:
-          'Pide a Claude Code 3 bocetos distintos de la portada de un sitio para que Javier vea cómo podría quedar ANTES de construirlo. Tarda unos minutos; al terminar aparecen en pantalla. ' +
-          'Úsala cuando Javier pida diseñar un sitio, ver propuestas o "cómo podría quedar". Para construir o cambiar el sitio definitivo usa programar.',
+          'Pide a Claude Code 3 propuestas distintas (bocetos) de algo NUEVO para que Javier vea cómo podría quedar y elija ANTES de construirlo: la portada de un sitio o landing, el estilo visual de un videojuego o la pantalla principal de una aplicación. Tarda unos minutos; al terminar aparecen en pantalla. ' +
+          'Es el PRIMER paso de todo proyecto nuevo con algo que se ve, aunque Javier diga "hazme" o "créame". Para construir lo elegido o cambiar algo que ya existe usa programar.',
         parameters: {
           type: 'object',
           properties: {
             proyecto: { type: 'string', description: 'Nombre corto del proyecto, por ejemplo "sitio de gatitos".' },
-            idea: { type: 'string', description: 'Todo lo que Javier dijo sobre el sitio: de qué es, para quién, qué ideas, colores o secciones mencionó.' },
+            tipo: { type: 'string', enum: ['sitio', 'juego', 'aplicacion'], description: 'Qué es: sitio (página, landing, tarjeta), juego (videojuego) o aplicacion (herramienta, panel, calculadora).' },
+            idea: { type: 'string', description: 'Todo lo que Javier dijo: de qué es, para quién, qué ideas, personajes, colores o secciones mencionó.' },
             fotos: { type: 'string', description: 'Tema para buscar fotos que los bocetos puedan usar (por ejemplo "gatitos"). Omítelo si no hacen falta fotos.' },
             modelo: { type: 'string', enum: MODELS.map((m) => m.key), description: 'Modelo de Claude Code, si Javier eligió uno.' },
           },
@@ -519,14 +544,15 @@ export class ToolsService {
         },
         run: async (args: Record<string, unknown>, ctx: ToolContext) => {
           const idea = String(args.idea ?? '').trim(), tema = String(args.fotos ?? '').trim();
-          if (idea.length < 8) return 'Falta la idea del sitio. Pregúntale de qué es y para quién.';
+          if (idea.length < 8) return 'Falta la idea. Pregúntale de qué es y para quién.';
+          const kind: SketchKind = args.tipo === 'juego' || args.tipo === 'aplicacion' ? args.tipo : 'sitio';
           let fotos = '';
           if (tema && images.enabled) try {
             const items = await images.search(tema, 8);
             if (items.length) fotos = `\nFotos que puedes usar (de Unsplash; enlázalas directo con estas direcciones exactas, no las descargues, y pon en el pie de la página el crédito de cada una con enlace a su página):\n` +
               items.map((i) => `- ${i.full} | crédito: ${i.credit} | página: ${i.link} | muestra: ${i.label}`).join('\n');
           } catch { /* sin fotos: los bocetos van con formas y colores */ }
-          return workshop.start(String(args.proyecto ?? ''), `${SKETCH_TASK}\nIdea de Javier: ${idea}${fotos}`, `${cfg.publicUrl || ctx.origin}/formulario`, true, args.modelo ? String(args.modelo) : undefined);
+          return workshop.start(String(args.proyecto ?? ''), `${sketchTask(kind)}\nIdea de Javier: ${idea}${fotos}`, `${cfg.publicUrl || ctx.origin}/formulario`, true, args.modelo ? String(args.modelo) : undefined);
         },
       },
       estado_taller: {
