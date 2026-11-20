@@ -8,27 +8,20 @@
 const DUCK = 4; // volumen mientras alguien habla
 const SPOTIFY_START_MS = 12000; // tiempo para que Spotify empiece a sonar antes de darlo por fallido
 
-/** Color medio de la caratula (para el fondo). `null` si el navegador no deja leer la imagen. */
-export function coverColor(url) {
-  return new Promise((resolve) => {
-    const img = new Image(); img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      try {
-        const c = document.createElement('canvas'); c.width = c.height = 16;
-        const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(img, 0, 0, 16, 16);
-        const d = g.getImageData(0, 0, 16, 16).data; let r = 0, gr = 0, b = 0;
-        for (let i = 0; i < d.length; i += 4) { r += d[i]; gr += d[i + 1]; b += d[i + 2]; }
-        const n = d.length / 4; resolve([r / n, gr / n, b / n].map(Math.round));
-      } catch { resolve(null); }
-    };
-    img.onerror = () => resolve(null);
-    img.src = url;
-  });
+/** Color medio de una imagen ya cargada (para el fondo). `null` si el navegador no deja leerla. */
+export function imageColor(img) {
+  try {
+    const c = document.createElement('canvas'); c.width = c.height = 16;
+    const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(img, 0, 0, 16, 16);
+    const d = g.getImageData(0, 0, 16, 16).data; let r = 0, gr = 0, b = 0;
+    for (let i = 0; i < d.length; i += 4) { r += d[i]; gr += d[i + 1]; b += d[i + 2]; }
+    const n = d.length / 4; return [r / n, gr / n, b / n].map(Math.round);
+  } catch { return null; }
 }
 
 export function createMusic(box, onChange, { getToken, onCover } = {}) {
   const $ = (s) => box.querySelector(s);
-  const label = $('.music-title'), vol = $('.music-vol'), cover = $('.music-cover'), coverImg = $('.music-cover img'), open = $('.music-open'), toggleBtn = $('[data-act="toggle"]');
+  const label = $('.music-title'), artist = $('.music-artist'), vol = $('.music-vol'), cover = $('.music-cover'), coverImg = $('.music-cover img'), open = $('.music-open'), toggleBtn = $('[data-act="toggle"]');
   let source = '', queue = [], index = 0, volume = 15, ducked = false, playing = false;
   const level = () => (ducked ? Math.min(volume, DUCK) : volume);
   const setPlaying = (on) => { playing = on; if (toggleBtn) { toggleBtn.textContent = on ? '⏸' : '▶'; toggleBtn.setAttribute('aria-label', on ? 'Pausar' : 'Continuar'); } };
@@ -36,7 +29,9 @@ export function createMusic(box, onChange, { getToken, onCover } = {}) {
   function show() {
     const t = queue[index], sp = source === 'spotify';
     box.dataset.source = source;
-    label.textContent = t ? `♪ ${t.title} — ${t.channel}` : ''; label.title = label.textContent;
+    // Spotify: titulo y artistas en dos renglones, tal como los entrega; YouTube: un renglon.
+    label.textContent = !t ? '' : sp ? t.title : `♪ ${t.title} — ${t.channel}`; label.title = label.textContent;
+    artist.textContent = sp && t ? t.channel : '';
     cover.hidden = open.hidden = !(sp && t);
     if (sp && t) { // metadatos y caratula tal como los entrega Spotify, enlazados a Spotify
       if (t.image) { if (coverImg.src !== t.image) coverImg.src = t.image; coverImg.alt = `Carátula de ${t.album || t.title}`; } else coverImg.removeAttribute('src');
@@ -82,7 +77,7 @@ export function createMusic(box, onChange, { getToken, onCover } = {}) {
     if (source !== 'spotify') return;
     spRun++; clearTimeout(spTimer); source = ''; queue = []; setPlaying(false);
     try { sp?.pause().catch(() => undefined); } catch { /* sin reproductor */ }
-    show(); label.textContent = 'Spotify no pudo reproducir; probando con YouTube…';
+    show(); label.textContent = 'Spotify no pudo; probando YouTube…';
     onChange({ failed: String(reason || 'sin detalle').slice(0, 120) });
   }
   function loadSpotify() {

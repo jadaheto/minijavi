@@ -4,7 +4,7 @@ import { LipSync, VISEMES } from './lipsync.js';
 import { startMic } from './mic.js';
 import { connect } from './socket.js';
 import { createBackdrop, emojiBurst, floatEmoji } from './fx.js';
-import { createMusic, coverColor } from './music.js';
+import { createMusic, imageColor } from './music.js';
 import { BrowserVoice } from './browser-voice.js';
 import { createGate } from './mic-gate.js';
 
@@ -38,16 +38,21 @@ const spotifyToken = () => new Promise((resolve, reject) => {
   tokenWaiters.push({ resolve, reject }); socket.send({ type: 'spotify_token' });
   setTimeout(() => reject(new Error('el servidor no entregó el token')), 8000);
 });
-// El fondo toma el color de la caratula que suena (la caratula entera se ve en el mini reproductor).
+// Con Spotify la caratula de lo que suena se ve grande y entera al lado del avatar (que se corre para no taparla), y el
+// fondo toma su color. Sus reglas no permiten recortarla, difuminarla ni poner nada encima.
+// El color se lee de la misma imagen ya cargada (las dos caratulas se piden con CORS: si una se pidiera sin el, el
+// navegador reutilizaria esa copia y no dejaria leer el color).
 let coverFor = '';
-async function setCover(track) {
-  const bg = $('cover-bg'), url = track?.image || '';
+function setCover(track) {
+  const bg = $('cover-bg'), art = $('cover-art'), img = art.querySelector('img'), url = track?.image || '';
+  art.hidden = !url; document.body.classList.toggle('cover', !!url);
+  if (!url) { coverFor = ''; bg.classList.remove('on'); return; }
+  img.alt = `Carátula de ${track.album || track.title}`; art.href = track.url || 'https://open.spotify.com/'; art.title = 'Abrir en Spotify';
+  if (coverFor === url) return;
   coverFor = url;
-  if (!url) { bg.classList.remove('on'); return; }
-  const c = await coverColor(url);
-  if (coverFor !== url) return;
-  bg.style.backgroundColor = c ? `rgb(${c.join(',')})` : '#191414'; // sin poder leer la imagen: el color de Spotify
-  bg.classList.add('on');
+  const paint = (ok) => { if (coverFor !== url) return; const c = ok ? imageColor(img) : null; bg.style.backgroundColor = c ? `rgb(${c.join(',')})` : '#191414'; bg.classList.add('on'); }; // sin poder leerla: el color de Spotify
+  img.onload = () => paint(true); img.onerror = () => paint(false);
+  img.src = url;
 }
 const music = createMusic($('music'), (st) => socket?.send({ type: 'music', ...st }), { getToken: spotifyToken, onCover: setCover });
 let duckUntil = 0;
