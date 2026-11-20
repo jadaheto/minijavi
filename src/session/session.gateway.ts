@@ -81,7 +81,7 @@ interface Session {
   suspendedAt: number;
   waking: boolean;       // acaba de despertar: la frase en curso empieza por la palabra para despertar
   canSuspend: boolean;   // las llamadas de WhatsApp no se suspenden
-  news?: { index: number }; // noticia que se esta viendo (0 = la lista)
+  news?: { index: number; part?: number }; // noticia que se esta viendo (0 = la lista) y parte de la lectura completa
   car?: boolean;         // modo carro: solo atiende las frases que traen su nombre (o las que siguen a una respuesta)
   carHeard?: boolean;    // la frase en curso ya fue aceptada (para no soltarla a la mitad cuando se cierra la ventana)
   starting?: boolean;    // ya llego el saludo del navegador y se esta abriendo la sesion

@@ -43,6 +43,33 @@ export function parseNews(html: string): { intro: string; items: Omit<NewsItem, 
   return { intro, items };
 }
 
+/** Parrafos del cuerpo de una nota (pagina del medio): sin menus, pies, scripts ni lineas cortas de relleno. */
+export function articleParagraphs(html: string): string[] {
+  const body = html.slice(0, 3_000_000).replace(/<(script|style|noscript|svg|nav|header|footer|aside|form|figure|button)[\s\S]*?<\/\1>/gi, ' ');
+  const art = body.match(/<article[\s\S]*?<\/article>/i)?.[0] ?? body;
+  const out: string[] = []; let total = 0;
+  for (const m of art.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)) {
+    const t = plain(m[1], 1500);
+    if (t.length < 60 || out.includes(t)) continue;
+    out.push(t); total += t.length;
+    if (total > 14_000) break; // tope: una nota muy larga se lee hasta aqui
+  }
+  return out;
+}
+/** Tramos de lectura parejos de ~1 minuto y medio, cortados entre parrafos (una nota tipica queda en 3 a 6 tramos). */
+export function readingParts(paragraphs: string[], size = 1500): string[] {
+  const total = paragraphs.reduce((n, p) => n + p.length, 0), count = Math.max(1, Math.round(total / size)), target = total / count;
+  const parts: string[] = []; let cur = '', read = 0;
+  for (const p of paragraphs) {
+    // Se corta donde el total leido queda mas cerca del limite de ese tramo (se mide sobre el acumulado, para que el
+    // sobrante no se junte todo en un ultimo tramo diminuto).
+    if (cur && parts.length < count - 1 && read + p.length / 2 > target * (parts.length + 1)) { parts.push(cur); cur = ''; }
+    cur += (cur ? '\n' : '') + p; read += p.length;
+  }
+  if (cur) parts.push(cur);
+  return parts;
+}
+
 @Injectable()
 export class NewsService implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger(NewsService.name);
@@ -107,6 +134,32 @@ export class NewsService implements OnModuleInit, OnModuleDestroy {
       finally { this.fetching = undefined; }
     })();
     return this.fetching;
+  }
+
+  private readonly articles = new Map<string, { at: number; parts: string[] }>();
+  /**
+   * Texto completo de una noticia, en tramos, leido de la pagina del medio (pedido por Javier el 2026-11-20: leerla
+   * entera, por partes, solo en modo dueño). El enlace viene de un tercero: solo se abre si es https y de un medio de la
+   * lista `NOTICIAS_DOMINIOS`, tambien despues de las redirecciones. Lanza con el motivo si no se pudo leer.
+   */
+  async article(n: number): Promise<string[]> {
+    const it = this.items[n - 1];
+    if (!it?.link) throw new Error('esa noticia no trae enlace');
+    const allowed = (u: string) => { try { const x = new URL(u); return x.protocol === 'https:' && this.cfg.newsDomains.some((d) => x.hostname === d || x.hostname.endsWith(`.${d}`)); } catch { return false; } };
+    if (!allowed(it.link)) throw new Error('el medio de esa noticia no está en la lista de los que se pueden abrir');
+    const hit = this.articles.get(it.link);
+    if (hit && Date.now() - hit.at < 24 * 3600_000) return hit.parts;
+    this.usage.add('news_articles');
+    let res: Response;
+    try { res = await fetch(it.link, { signal: AbortSignal.timeout(12_000), headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36', 'Accept-Language': 'en,es', Accept: 'text/html' } }); }
+    catch (e) { throw new Error(`no se pudo abrir la nota (${(e as Error).name})`); }
+    if (!res.ok) throw new Error(`el medio respondió ${res.status}`);
+    if (!allowed(res.url || it.link)) throw new Error('la nota redirige a otro sitio');
+    const parts = readingParts(articleParagraphs(await res.text()));
+    if (parts.join(' ').length < 500) throw new Error('el medio no dejó leer el texto de la nota');
+    this.articles.set(it.link, { at: Date.now(), parts });
+    if (this.articles.size > 40) this.articles.delete(this.articles.keys().next().value!);
+    return parts;
   }
 
   /** Lo que el navegador dibuja: la lista numerada o, con `open`, esa noticia en grande con su codigo QR. */

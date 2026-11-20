@@ -1263,6 +1263,29 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     must((readTitle.news as any).index === 1 && ctx.news.index === 1 && /solo llegó el titular/.test(readTitle.text) && !/Texto:/.test(readTitle.text), `leer una sin texto: ${readTitle.text.slice(0, 200)}`);
     ctx.news.index = 0; must(/ninguna noticia abierta/.test((await run({ accion: 'leer' })).text), 'leer sin noticia abierta debe preguntar cuál');
     must(/entre 1 y 3/.test((await run({ accion: 'abrir', numero: 9 })).text) && ((await run({ accion: 'quitar' })).news as any).action === 'hide' && ctx.news.index === 0, 'fuera de rango o quitar');
+    // Lectura completa (solo dueño): abre la pagina del medio, la parte en tramos y avanza con "seguir".
+    const { articleParagraphs, readingParts } = await import('../news/news.service');
+    const para = (i: number) => `Párrafo número ${i} de la nota, con suficiente texto para contar como un párrafo de verdad y no como una línea suelta del menú.`;
+    const artHtml = `<html><head><script>var x = "<p>esto no es la nota, es código que no debe leerse nunca jamás en voz alta</p>"</script></head><body><nav><p>Menú de navegación del sitio que tampoco es parte de la nota de hoy</p></nav><article><h1>Título</h1>${Array.from({ length: 22 }, (_, i) => `<p>${para(i + 1)}</p>`).join('')}<p>corto</p></article><footer><p>Pie de página con avisos legales del medio que no deben leerse</p></footer></body></html>`;
+    const ps = articleParagraphs(artHtml), tramos = readingParts(ps);
+    must(ps.length === 22 && ps[0] === para(1) && tramos.length >= 2 && tramos.every((t) => t.length <= 2100 && t.length >= 600) && tramos.join('\n').split('\n').length === 22, `párrafos ${ps.length}, tramos ${tramos.length}`);
+    process.env.NOTICIAS_DOMINIOS = 'news.google.com';
+    const acfg = new ConfigService(), news2 = new NewsService(acfg, P.db, usage); await news2.onModuleInit(); news2.onModuleDestroy();
+    const tools2 = new ToolsService(acfg, { definitions: async () => [] } as any, P.leads, { enabled: false, defaultModel: { label: '' } } as any, { enabled: false } as any, usage, { enabled: false, canGenerate: false } as any, { visible: () => [], list: () => [] } as any, {} as any, P.actions, P.approvals, undefined, news2);
+    const ctx2: any = { origin: '', news: { index: 0 } }, run2 = (args: unknown, owner = true) => tools2.run('noticias', JSON.stringify(args), owner, ctx2);
+    let artHits = 0; const realNews = newsFetch; newsFetch = undefined;
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: any, init?: any) => { if (String(url).startsWith('https://news.google.com/rss/articles/')) { artHits++; return new Response(artHtml, { status: 200, headers: { 'content-type': 'text/html' } }); } return prevFetch(url, init); }) as any;
+    must(/no está disponible/.test((await run2({ accion: 'leer_completa', numero: 1 }, false)).text) && artHits === 0, 'un visitante no puede pedir la lectura completa');
+    const p1 = await run2({ accion: 'leer_completa', numero: 1 });
+    must(artHits === 1 && /parte 1 de/.test(p1.text) && /Párrafo número 1 /.test(p1.text) && !/Párrafo número 22 /.test(p1.text) && /¿Sigo\?/.test(p1.text) && /EN ESPAÑOL/.test(p1.text) && /sin resumir/.test(p1.text) && (p1.news as any).index === 1 && p1.untrusted === true && !/código que no debe leerse|Menú de navegación|Pie de página/.test(p1.text), `parte 1: ${p1.text.slice(0, 260)}`);
+    let last = p1, guard = 0; while (!/última parte/.test(last.text) && guard++ < 10) last = await run2({ accion: 'seguir' });
+    must(/Párrafo número 22 /.test(last.text) && /ahí acaba la nota/.test(last.text) && artHits === 1 && /Ya se leyó toda/.test((await run2({ accion: 'seguir' })).text), `la lectura debía llegar al final sin volver a abrir la página (aperturas: ${artHits})`);
+    await run2({ accion: 'abrir', numero: 2 }); must(/parte 1 de/.test((await run2({ accion: 'leer_completa' })).text), 'al abrir otra noticia la lectura empieza de nuevo');
+    // Un enlace de un dominio fuera de la lista no se abre: se lee lo que hay y se dice.
+    process.env.NOTICIAS_DOMINIOS = 'theguardian.com'; const strict = new NewsService(new ConfigService(), P.db, usage); await strict.onModuleInit(); strict.onModuleDestroy();
+    must(await strict.article(1).then(() => false, (e) => /no está en la lista/.test(e.message)) && await strict.article(3).then(() => false, (e) => /no trae enlace/.test(e.message)), 'solo se abren notas de los medios de la lista');
+    globalThis.fetch = prevFetch; newsFetch = realNews; delete process.env.NOTICIAS_DOMINIOS;
     const h0 = hits; must(/una vez al día/.test((await run({ accion: 'actualizar' })).text) && hits === h0, 'un visitante no puede forzar la actualización');
     must(/trayendo de nuevo/.test((await run({ accion: 'actualizar' }, true)).text), 'el dueño sí puede actualizar'); await wait(300); must(hits === h0 + 1, 'actualizar debía llamar una vez al webhook');
     // Una vez al dia: tras un reinicio salen de la base, sin volver a llamar al webhook.
