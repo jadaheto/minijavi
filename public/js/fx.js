@@ -38,29 +38,53 @@ export function floatEmoji(layer, set) {
   layer.appendChild(el);
 }
 
-/** Fondo animado detras del avatar. show('matrix' | 'estrellas' | 'atardecer' | 'soleado' | 'nublado' | 'lluvia' | 'tormenta' | 'codigo' | null). */
+/** Fondo animado detras del avatar. show('neuronal' | 'estrellas' | 'atardecer' | 'soleado' | 'nublado' | 'lluvia' | 'tormenta' | 'codigo' | null). */
 export function createBackdrop(canvas) {
   const ctx = canvas.getContext('2d');
-  const GLYPHS = 'アイウエオカキクケコサシスセソ01{}<>/=;λπ∑01'.split('');
-  let current = null, timer = null, W = 0, H = 0, size = 18, cols = [], stars = [], t = 0, drops = [], clouds = [], flash = 0;
+  let current = null, timer = null, W = 0, H = 0, size = 18, stars = [], t = 0, drops = [], clouds = [], flash = 0, nodes = [], pulses = [];
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = canvas.width = Math.floor(window.innerWidth * dpr); H = canvas.height = Math.floor(window.innerHeight * dpr);
     size = Math.round(18 * dpr);
-    cols = Array.from({ length: Math.ceil(W / size) }, () => Math.random() * -40);
+    nodes = Array.from({ length: Math.round(Math.min(120, Math.max(48, (window.innerWidth * window.innerHeight) / 11000))) }, () => ({ x: Math.random(), y: Math.random(), vx: (Math.random() - 0.5) * 0.0016, vy: (Math.random() - 0.5) * 0.0016, s: Math.random(), p: Math.random() * 6.28, hue: Math.random() < 0.35, glow: 0 }));
+    pulses = [];
     drops = Array.from({ length: 220 }, () => ({ x: Math.random() * 1.3, y: Math.random(), v: 0.035 + Math.random() * 0.03, l: 0.02 + Math.random() * 0.03 }));
     clouds = Array.from({ length: 9 }, (_, i) => ({ x: Math.random(), y: 0.08 + (i % 4) * 0.2 + Math.random() * 0.08, r: 0.14 + Math.random() * 0.12, v: 0.0006 + Math.random() * 0.0008 }));
     stars = Array.from({ length: 160 }, () => ({ x: (Math.random() - 0.5) * 2, y: (Math.random() - 0.5) * 2, z: Math.random() }));
   }
   const draw = {
-    matrix() {
-      ctx.fillStyle = 'rgba(6, 10, 8, 0.16)'; ctx.fillRect(0, 0, W, H);
-      ctx.font = `${size}px ui-monospace, Menlo, monospace`;
-      for (let i = 0; i < cols.length; i++) {
-        const y = cols[i] * size;
-        ctx.fillStyle = Math.random() < 0.08 ? '#d6ffe0' : '#27d06a';
-        ctx.fillText(GLYPHS[(Math.random() * GLYPHS.length) | 0], i * size, y);
-        cols[i] = y > H && Math.random() > 0.975 ? 0 : cols[i] + 1;
+    // Red neuronal (reemplaza a la lluvia de Matrix, pedido por Javier el 2026-11-20): nodos que derivan despacio, hilos
+    // entre los cercanos y pulsos de luz que viajan de un nodo a otro.
+    neuronal() {
+      ctx.fillStyle = 'rgba(7, 9, 20, 0.30)'; ctx.fillRect(0, 0, W, H);
+      const reach = Math.min(W, H) * 0.23, R2 = reach * reach;
+      for (const n of nodes) {
+        n.x += n.vx; n.y += n.vy; n.p += 0.05;
+        if (n.x < -0.05 || n.x > 1.05) n.vx = -n.vx;
+        if (n.y < -0.05 || n.y > 1.05) n.vy = -n.vy;
+      }
+      ctx.lineWidth = Math.max(1, size / 18);
+      for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j], dx = (a.x - b.x) * W, dy = (a.y - b.y) * H, d2 = dx * dx + dy * dy;
+        if (d2 > R2) continue;
+        const k = 1 - d2 / R2;
+        ctx.strokeStyle = `rgba(${a.hue ? '150, 120, 255' : '90, 170, 255'}, ${0.5 * k})`;
+        ctx.beginPath(); ctx.moveTo(a.x * W, a.y * H); ctx.lineTo(b.x * W, b.y * H); ctx.stroke();
+        // De vez en cuando sale un pulso por un hilo vivo.
+        if (pulses.length < 26 && Math.random() < 0.0016 * k) pulses.push({ a: i, b: j, t: 0, v: 0.02 + Math.random() * 0.025 });
+      }
+      for (let i = pulses.length - 1; i >= 0; i--) {
+        const p = pulses[i], a = nodes[p.a], b = nodes[p.b]; p.t += p.v;
+        if (p.t >= 1) { b.glow = 1; pulses.splice(i, 1); continue; }
+        const x = (a.x + (b.x - a.x) * p.t) * W, y = (a.y + (b.y - a.y) * p.t) * H, r = size * 0.5;
+        const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, 'rgba(220, 240, 255, 0.95)'); g.addColorStop(1, 'rgba(120, 180, 255, 0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.fill();
+      }
+      for (const n of nodes) {
+        n.glow *= 0.93;
+        const r = size * (0.12 + n.s * 0.1) * (1 + 0.18 * Math.sin(n.p)) + n.glow * size * 0.22;
+        ctx.fillStyle = `rgba(${n.hue ? '185, 160, 255' : '140, 200, 255'}, ${0.55 + n.glow * 0.45})`;
+        ctx.beginPath(); ctx.arc(n.x * W, n.y * H, r, 0, 6.283); ctx.fill();
       }
     },
     estrellas() { // campo de estrellas que se acercan
@@ -202,6 +226,7 @@ export function createBackdrop(canvas) {
   window.addEventListener('resize', () => { if (current) resize(); });
   return {
     show(name) {
+      if (name === 'matrix') name = 'neuronal'; // nombre anterior del fondo de tecnologia
       if (!draw[name]) name = null;
       if (name === current) return;
       current = name; canvas.classList.toggle('on', !!name);

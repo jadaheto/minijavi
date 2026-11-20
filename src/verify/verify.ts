@@ -1255,10 +1255,19 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     const open = await run({ accion: 'abrir', numero: 2 });
     must((open.news as any)?.action === 'open' && (open.news as any).index === 2 && ctx.news.index === 2 && /código QR/.test(open.text) && /JudgeGPT/.test(open.text) && /borradores/.test(open.text) && /no tienes el texto completo/.test(open.text), `abrir: ${open.text.slice(0, 200)}`);
     must(((await run({ accion: 'siguiente' })).news as any).index === 3 && ((await run({ accion: 'siguiente' })).news as any).index === 1 && ((await run({ accion: 'anterior' })).news as any).index === 3, 'siguiente y anterior deben dar la vuelta');
+    // Leer: la abierta o la del numero; deja el QR en pantalla; en español y sin inventar. Sin texto, solo el titular.
+    await run({ accion: 'abrir', numero: 2 });
+    const read = await run({ accion: 'leer' });
+    must((read.news as any)?.action === 'open' && (read.news as any).index === 2 && /Texto: Los jueces prueban/.test(read.text) && /EN ESPAÑOL/.test(read.text) && /código QR/.test(read.text) && read.untrusted === true, `leer la abierta: ${read.text.slice(0, 220)}`);
+    const readTitle = await run({ accion: 'leer', numero: 1 });
+    must((readTitle.news as any).index === 1 && ctx.news.index === 1 && /solo llegó el titular/.test(readTitle.text) && !/Texto:/.test(readTitle.text), `leer una sin texto: ${readTitle.text.slice(0, 200)}`);
+    ctx.news.index = 0; must(/ninguna noticia abierta/.test((await run({ accion: 'leer' })).text), 'leer sin noticia abierta debe preguntar cuál');
     must(/entre 1 y 3/.test((await run({ accion: 'abrir', numero: 9 })).text) && ((await run({ accion: 'quitar' })).news as any).action === 'hide' && ctx.news.index === 0, 'fuera de rango o quitar');
+    const h0 = hits; must(/una vez al día/.test((await run({ accion: 'actualizar' })).text) && hits === h0, 'un visitante no puede forzar la actualización');
+    must(/trayendo de nuevo/.test((await run({ accion: 'actualizar' }, true)).text), 'el dueño sí puede actualizar'); await wait(300); must(hits === h0 + 1, 'actualizar debía llamar una vez al webhook');
     // Una vez al dia: tras un reinicio salen de la base, sin volver a llamar al webhook.
     const again = new NewsService(ncfg, P.db, usage); await again.onModuleInit(); await wait(200); again.onModuleDestroy();
-    must(again.items.length === 3 && hits === 2, `tras reiniciar debían salir de la base sin llamar al webhook (llamadas: ${hits})`);
+    must(again.items.length === 3 && hits === h0 + 1, `tras reiniciar debían salir de la base sin llamar al webhook (llamadas: ${hits})`);
     news.onModuleDestroy(); newsFetch = undefined; process.env.NOTICIAS_URL = ''; delete process.env.NOTICIAS_HORA;
     must(!new NewsService(new ConfigService(), P.db, usage).enabled, 'sin NOTICIAS_URL debe quedar apagado');
     return 'lee el boletín (sin etiquetas ni enlaces raros); una llamada al día y se guarda; lista y noticia abierta con QR; texto marcado como dato';

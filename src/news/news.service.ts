@@ -34,7 +34,7 @@ export function parseNews(html: string): { intro: string; items: Omit<NewsItem, 
     const title = plain(chunk.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i)?.[1] ?? '', 220);
     if (title.length < 8) continue;
     const meta = plain(chunk.match(/class="meta"[^>]*>([\s\S]*?)<\/div>/i)?.[1] ?? '', 140), cut = meta.indexOf(' - ');
-    let summary = plain(chunk.match(/<p[^>]*>([\s\S]*?)<\/p>/i)?.[1] ?? '', 500);
+    let summary = plain(chunk.match(/<p[^>]*>([\s\S]*?)<\/p>/i)?.[1] ?? '', 1800); // el flujo v2 de n8n trae aqui un resumen de 5 a 7 frases
     if (summary.replace(/[.\s]+$/, '').toLowerCase() === title.replace(/[.\s]+$/, '').toLowerCase()) summary = ''; // el webhook suele repetir el titulo
     let link = '';
     try { const u = new URL(plain(chunk.match(/<a[^>]*href="([^"]+)"/i)?.[1] ?? '', 2000).replace(/ /g, '')); if (u.protocol === 'https:') link = u.toString(); } catch { /* sin enlace valido */ }

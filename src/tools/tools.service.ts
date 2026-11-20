@@ -288,18 +288,33 @@ export class ToolsService {
     };
     // Noticias de inteligencia artificial: titulares que el servidor trae una vez al dia de un webhook de Javier. Publica.
     if (news?.enabled) this.tools.noticias = {
-      description: 'Noticias recientes de inteligencia artificial (titulares de medios; se actualizan una vez al día). "ver" muestra en pantalla la lista numerada; "abrir" con un número muestra esa noticia en grande con un código QR para leerla completa; "siguiente" y "anterior" pasan de una a otra; "quitar" las saca de la pantalla. ' +
-        'Úsala cuando pidan las noticias de inteligencia artificial o de IA, o digan "ve al artículo 3", "abre la dos", "la siguiente", "vuelve a la lista", "quita las noticias".',
-      parameters: { type: 'object', properties: { accion: { type: 'string', enum: ['ver', 'abrir', 'siguiente', 'anterior', 'quitar'] }, numero: { type: 'number', description: 'Número de la noticia, para "abrir".' } }, required: ['accion'] },
+      description: 'Noticias recientes de inteligencia artificial (de medios; se actualizan una vez al día). "ver" muestra en pantalla la lista numerada; "abrir" con un número muestra esa noticia en grande con un código QR para leerla completa; "leer" la lee en voz alta (la que está abierta, o la del número que digan) dejando el QR en pantalla; "siguiente" y "anterior" pasan de una a otra; "quitar" las saca de la pantalla. ' +
+        'Úsala cuando pidan las noticias de inteligencia artificial o de IA, o digan "ve al artículo 3", "abre la dos", "léeme la noticia", "léeme la cuatro", "la siguiente", "vuelve a la lista", "quita las noticias".',
+      parameters: { type: 'object', properties: { accion: { type: 'string', enum: ['ver', 'abrir', 'leer', 'siguiente', 'anterior', 'quitar', 'actualizar'], description: '"actualizar" vuelve a traer las noticias del día (solo Javier; tarda cerca de un minuto).' }, numero: { type: 'number', description: 'Número de la noticia, para "abrir" o "leer". En "leer" se puede omitir: se lee la que está abierta.' } }, required: ['accion'] },
       run: (args, ctx) => {
         const st = ctx.news ?? { index: 0 }, items = news.items, action = String(args.accion);
         if (action === 'quitar') { st.index = 0; return { text: 'Noticias quitadas de la pantalla.', news: { action: 'hide' } }; }
+        if (action === 'actualizar') { // solo el dueño: cada actualizacion llama al flujo de n8n (y a su modelo)
+          if (!ctx.owner) return 'Las noticias se actualizan solas una vez al día.';
+          if (!news.loading) void news.refresh();
+          return 'Se están trayendo de nuevo las noticias; tarda cerca de un minuto. Dile que te las pida en un momento.';
+        }
         if (!items.length) { if (!news.loading) void news.refresh(); return 'Las noticias de hoy todavía se están trayendo; tarda cerca de un minuto. Dile que te las pida otra vez en un momento.'; }
         const source = 'las noticias (titulares de medios, texto de terceros)';
         if (action === 'ver') {
           st.index = 0;
           return { untrusted: true, news: news.panel(), text: `En pantalla está la lista numerada de ${items.length} noticias de inteligencia artificial (del ${news.day}).\n${asData(source, items.map((i) => `${i.n}. ${i.title}${i.source ? ` (${i.source}${i.date ? `, ${i.date}` : ''})` : ''}`).join('\n'))}\n` +
             'Dile cuántas hay, menciona dos o tres titulares en pocas palabras (sin leer la lista entera) y pregúntale cuál quiere abrir. No inventes detalles que no estén en los titulares.' };
+        }
+        if (action === 'leer') {
+          const n = args.numero === undefined || args.numero === null || args.numero === '' ? st.index : Math.round(Number(args.numero));
+          if (!n) return 'No hay ninguna noticia abierta. Pregúntale cuál quiere que le leas (por su número).';
+          if (!(n >= 1 && n <= items.length)) return `Hay ${items.length} noticias; pídele un número entre 1 y ${items.length}.`;
+          const it = items[n - 1]; st.index = n;
+          const body = it.summary ? `Titular: ${it.title}\nMedio: ${it.source || 'sin dato'}\nFecha: ${it.date || 'sin dato'}\nTexto: ${it.summary}` : `Titular: ${it.title}\nMedio: ${it.source || 'sin dato'}\nFecha: ${it.date || 'sin dato'}`;
+          return { untrusted: true, news: news.panel(n), text: `En pantalla queda la noticia ${n} de ${items.length}${it.qr ? ' con su código QR' : ''}.\n${asData(source, body)}\n` +
+            (it.summary ? 'Léesela en voz alta EN ESPAÑOL (si algo viene en otro idioma, tradúcelo): di de qué medio es y luego el texto completo, con naturalidad y sin saltarte nada ni agregar datos que no estén ahí. No leas la dirección del enlace. Al terminar, recuérdale que con el código QR puede abrir la nota original.'
+              : 'De esta noticia solo llegó el titular: díselo en español, acláraselo, y recuérdale que con el código QR puede leerla completa. No inventes el contenido.') };
         }
         const k = action === 'abrir' ? Math.round(Number(args.numero)) : st.index ? ((st.index - 1 + (action === 'siguiente' ? 1 : items.length - 1)) % items.length) + 1 : action === 'siguiente' ? 1 : items.length;
         if (!(k >= 1 && k <= items.length)) return `Hay ${items.length} noticias; pídele un número entre 1 y ${items.length}.`;

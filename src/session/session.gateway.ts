@@ -139,7 +139,7 @@ const FILLERS: Record<string, string> = {
 
 /** Reacciones y fondos que el navegador sabe mostrar. El modelo los pide con etiquetas al inicio de su respuesta. */
 const REACTIONS = new Set(['sorpresa', 'alegria', 'risa', 'pena', 'pensativo', 'celebracion', 'despedida']);
-const SCENES = new Set(['matrix', 'estrellas', 'atardecer']);   // los que puede pedir el modelo; los del clima los pone la herramienta
+const SCENES = new Set(['neuronal', 'matrix', 'estrellas', 'atardecer']); // 'matrix' es el nombre anterior de 'neuronal': el navegador lo dibuja igual   // los que puede pedir el modelo; los del clima los pone la herramienta
 const TAG_HEAD = /^\s*\[(r|f|c):([a-zñ_]+)\]\s*/i;
 const TAG_ANY = /\[(r|f|c):[^\]]*\]/gi;
 const norm = (t: string) => t.toLowerCase().normalize('NFD').replace(/[^a-z0-9ñ]+/g, '');
@@ -161,7 +161,7 @@ Reacciones (obligatorio): empieza SIEMPRE tu respuesta con una etiqueta entre co
 [r:despedida] si se está despidiendo.
 [r:neutral] en cualquier otro caso.
 Además, según el tema de TU respuesta, puedes agregar después UNA etiqueta de fondo:
-[f:matrix] si hablas de programación, software, tecnología o inteligencia artificial.
+[f:neuronal] si hablas de programación, software, tecnología o inteligencia artificial.
 [f:estrellas] si hablas del espacio, la ciencia, el futuro o los sueños.
 [f:atardecer] si hablas de Sucre, la costa, Colombia, viajes, familia o temas personales y tranquilos.
 Idioma: responde siempre en el idioma en que la persona te habló en su último mensaje (español si no está claro). Las etiquetas van siempre igual, en español.

@@ -255,7 +255,7 @@ body.news .cover-art, body.showing .nws { display: none; }
 .nws-open { display: grid; gap: 10px; justify-items: start; padding: 6px 4px 2px; animation: tsl-row .5s ease; }
 .nws-n.big { width: 46px; height: 46px; font-size: 22px; border-radius: 14px; }
 .nws-h.big { margin: 0; font-size: clamp(20px, 2.1vw, 27px); line-height: 1.22; display: block; overflow: visible; }
-.nws-sum { margin: 0; font-size: 15.5px; line-height: 1.5; color: #cfd6e2; }
+.nws-sum { margin: 0; font-size: 14.5px; line-height: 1.45; color: #cfd6e2; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; } /* el resumen completo lo lee el avatar; aqui un adelanto, para que el QR siga a la vista */
 .nws-qr { justify-self: center; display: grid; justify-items: center; gap: 7px; margin-top: 4px; }
 .nws-qr img { width: min(190px, 42vw); height: auto; border-radius: 12px; padding: 8px; background: #fff; }
 .nws-qr small { font-size: 12px; color: #9aa6b8; }
