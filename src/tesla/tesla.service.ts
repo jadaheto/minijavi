@@ -232,3 +232,20 @@ export function describeTesla(r: TeslaReport, timezone: string): string {
   if (out.length === 1) out.push('Tesla respondió, pero sin los datos esperados (batería, seguros, clima).');
   return out.join('\n');
 }
+
+export type TeslaFocus = 'bateria' | 'carga' | 'seguridad' | 'clima' | 'todo';
+/** Los mismos datos, en cifras, para el panel animado del navegador. Solo lleva lo que vino; nada de identificadores del carro. */
+export function teslaCard(r: TeslaReport, focus: TeslaFocus = 'todo'): Record<string, unknown> {
+  const d = r.data ?? {}, c = d.charge_state ?? {}, v = d.vehicle_state ?? {}, k = d.climate_state ?? {};
+  const range = num(c.battery_range), odo = num(v.odometer), left = num(c.time_to_full_charge);
+  const open = (keys: string[]) => (keys.some((x) => num(v[x]) !== undefined) ? keys.map((x) => !!num(v[x])) : undefined);
+  return {
+    focus, name: r.vehicle.name || 'Tesla', live: r.live, ageMin: !r.live && r.at ? Math.max(0, Math.round((Date.now() - r.at) / 60_000)) : undefined,
+    level: num(c.battery_level), rangeKm: range === undefined ? undefined : Math.round(range * MI_KM), limit: num(c.charge_limit_soc),
+    charging: typeof c.charging_state === 'string' ? c.charging_state : undefined, minutesLeft: left ? Math.round(left * 60) : undefined, kw: num(c.charger_power) || undefined,
+    locked: typeof v.locked === 'boolean' ? v.locked : undefined, doors: open(['df', 'pf', 'dr', 'pr']), trunks: open(['ft', 'rt']), windows: open(['fd_window', 'fp_window', 'rd_window', 'rp_window']),
+    sentry: typeof v.sentry_mode === 'boolean' ? v.sentry_mode : undefined,
+    inside: num(k.inside_temp), outside: num(k.outside_temp), climateOn: typeof k.is_climate_on === 'boolean' ? k.is_climate_on : undefined,
+    odoKm: odo === undefined ? undefined : Math.round(odo * MI_KM), version: typeof v.car_version === 'string' ? v.car_version.split(' ')[0].slice(0, 20) : undefined,
+  };
+}

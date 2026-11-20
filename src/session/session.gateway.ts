@@ -745,6 +745,7 @@ export class SessionGateway implements OnGatewayConnection {
             if (out.reaction && !turn.ctrl.signal.aborted) this.send(client, { type: 'reaction', name: out.reaction });
             if (out.card && !turn.ctrl.signal.aborted) this.send(client, { type: 'card', ...out.card });
             if (out.music) this.send(client, { type: 'music', ...out.music });
+            if (out.tesla && !turn.ctrl.signal.aborted) this.send(client, { type: 'tesla', ...out.tesla });
           }
           this.log.log(`sesion #${s.n}: herramienta ${c.name} -> ${result.slice(0, 80)}`);
           s.history.push({ role: 'tool', tool_call_id: c.id, content: result });

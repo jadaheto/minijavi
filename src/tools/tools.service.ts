@@ -4,7 +4,7 @@ import { INTERESTS, LeadsService } from '../leads/leads.service';
 import { PLANE_PREFIX, PlaneMcpService } from '../mcp/plane-mcp.service';
 import { MODELS, WorkshopService } from '../workshop/workshop.service';
 import { MusicService, MusicState } from '../music/music.service';
-import { describeTesla, TeslaService } from '../tesla/tesla.service';
+import { describeTesla, teslaCard, TeslaFocus, TeslaService } from '../tesla/tesla.service';
 import { UsageService } from '../usage/usage.service';
 import { GalleryItem, GalleryState, ImagesService } from '../images/images.service';
 import { PortfolioService } from '../portfolio/portfolio.service';
@@ -14,6 +14,8 @@ import { ApprovalsService } from '../policy/approvals.service';
 
 /** Resultado de una herramienta: el texto para el modelo y, si aplica, un efecto visual para el navegador. */
 export interface ToolResult { text: string; scene?: string; reaction?: string; card?: { title: string; lines: string[]; qr?: string; caption?: string }; music?: Record<string, unknown>;
+  /** Panel animado con el estado del Tesla (bateria, carga, seguros, clima). */
+  tesla?: Record<string, unknown>;
   /** La galeria de la sesion cambio: 'show' (contenido nuevo), 'select' (otra seleccionada) o 'hide'. */
   gallery?: 'show' | 'select' | 'hide';
   /** Empezo o termino una demostracion: el navegador muestra u oculta el letrero. */
@@ -458,11 +460,16 @@ export class ToolsService {
     if (tesla?.configured) this.ownerTools.tesla = {
       description:
         'Consulta el estado del Tesla de Javier: batería y autonomía, si está cargando y cuánto falta, seguros, puertas y ventanas, modo centinela, temperatura, kilometraje y versión de software. ' +
-        'Solo lee: no puede abrir, cerrar, encender ni mover nada del carro, ni decir dónde está. Úsala cuando pregunte por su carro o su Tesla.',
-      parameters: { type: 'object', properties: { vehiculo: { type: 'string', description: 'Nombre del carro, solo si Javier tiene varios y dijo cuál.' } } },
-      run: async (args: Record<string, unknown>) => {
-        try { return `${describeTesla(await tesla.report(String(args.vehiculo ?? '')), cfg.timezone)}\nCuéntale solo lo que preguntó, en una o dos frases. No inventes datos que no estén aquí.`; }
-        catch (e) { return `No se pudo consultar el Tesla: ${(e as Error).message}. Díselo tal cual, sin inventar datos.`; }
+        'Solo lee: no puede abrir, cerrar, encender ni mover nada del carro, ni decir dónde está (decisión de Javier, por seguridad: si pide una orden para el carro, dile que no la puedes hacer). Distancias siempre en kilómetros. Úsala cuando pregunte por su carro o su Tesla.',
+      parameters: { type: 'object', properties: {
+        tema: { type: 'string', enum: ['bateria', 'carga', 'seguridad', 'clima', 'todo'], description: 'De qué preguntó: bateria (nivel y autonomía), carga (si carga y cuánto falta), seguridad (seguros, puertas, ventanas, centinela), clima (temperaturas y aire) o todo (resumen general, kilometraje, versión). La pantalla resalta esa parte.' },
+        vehiculo: { type: 'string', description: 'Nombre del carro, solo si Javier tiene varios y dijo cuál.' },
+      } },
+      run: async (args: Record<string, unknown>): Promise<ToolResult | string> => {
+        try {
+          const r = await tesla.report(String(args.vehiculo ?? '')), focus = (['bateria', 'carga', 'seguridad', 'clima'].includes(String(args.tema)) ? String(args.tema) : 'todo') as TeslaFocus;
+          return { text: `${describeTesla(r, cfg.timezone)}\nEn la pantalla ya se ve el panel del carro con estos datos. Todas las distancias van en kilómetros: nunca las digas en millas. Cuéntale solo lo que preguntó, en una o dos frases. No inventes datos que no estén aquí.`, tesla: teslaCard(r, focus) };
+        } catch (e) { return `No se pudo consultar el Tesla: ${(e as Error).message}. Díselo tal cual, sin inventar datos.`; }
       },
     };
     // Taller de programacion: Claude Code con la suscripcion de Javier. Solo existe en modo dueño y si hay token.

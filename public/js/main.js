@@ -5,6 +5,7 @@ import { startMic } from './mic.js';
 import { connect } from './socket.js';
 import { createBackdrop, emojiBurst, floatEmoji } from './fx.js';
 import { createMusic, imageColor } from './music.js';
+import { createTeslaPanel } from './tesla.js';
 import { BrowserVoice } from './browser-voice.js';
 import { createGate } from './mic-gate.js';
 
@@ -31,6 +32,18 @@ const browserVoice = new BrowserVoice(
 );
 let serverPlayer = null; // reproductor del audio que manda el servidor (ElevenLabs)
 // Musica de fondo (modo dueño): el servidor manda la cola; aqui suena en el mini reproductor y baja cuando alguien habla.
+// Panel animado del Tesla (modo dueño): aparece cuando el avatar consulta el carro.
+const tesla = createTeslaPanel($('tesla'));
+// Vista previa del panel con datos de EJEMPLO (no consulta el carro): abrir con ?demo=tesla. Se repite para ver la animacion.
+if (new URLSearchParams(location.search).get('demo') === 'tesla') {
+  const demo = [
+    { focus: 'bateria', name: 'Ejemplo', live: true, level: 64, rangeKm: 322, limit: 80, charging: 'Charging', minutesLeft: 90, kw: 11, locked: true, doors: [false, false, false, false], trunks: [false, false], windows: [false, false, false, false], sentry: true, inside: 27, outside: 31, climateOn: false, odoKm: 16093, version: '2026.32.1' },
+    { focus: 'seguridad', name: 'Ejemplo', live: false, ageMin: 190, level: 17, rangeKm: 80, limit: 80, charging: 'Disconnected', locked: false, doors: [true, false, false, true], trunks: [false, true], windows: [true, false, false, false], sentry: false, inside: 34, outside: 31, climateOn: true, odoKm: 16093, version: '2026.32.1' },
+    { focus: 'todo', name: 'Ejemplo', live: true, level: 41, rangeKm: 205, limit: 90, charging: 'Stopped', locked: true, doors: [false, false, false, false], trunks: [false, false], windows: [false, false, false, false], sentry: false, inside: 22, outside: 24, climateOn: true, odoKm: 16093, version: '2026.32.1' },
+  ];
+  let i = 0; const next = () => tesla.show(demo[i++ % demo.length]);
+  setTimeout(() => { $('gate').hidden = true; next(); setInterval(next, 9000); }, 1500);
+}
 // Spotify: el reproductor web pide su token al servidor por el mismo socket (solo lo entrega en sesiones del dueño).
 let tokenWaiters = [];
 const spotifyToken = () => new Promise((resolve, reject) => {
@@ -255,6 +268,8 @@ function onMessage(msg) {
       showGallery(msg); break;
     case 'music': // musica de fondo
       onMusic(msg); break;
+    case 'tesla': // estado del carro
+      hideCard(); if (gallery) hideGallery(); tesla.show(msg); break;
     case 'spotify_token': { // respuesta al token pedido por el reproductor de Spotify
       const w = tokenWaiters; tokenWaiters = [];
       for (const x of w) msg.token ? x.resolve(msg.token) : x.reject(new Error(msg.error || 'sin token'));
@@ -273,7 +288,7 @@ function shutdown(message) {
   live = false; connecting = false; prebuffer.length = 0; loud = 0;
   retryAt = Math.max(retryAt, performance.now() + 2500);
   suspended = false; awayNotice = ''; $('away').hidden = true;
-  setWork(null); music.stop(); stopSpeech(); hideCard(); hideGallery(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
+  setWork(null); music.stop(); tesla.hide(); stopSpeech(); hideCard(); hideGallery(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
   $('sub-user').textContent = ''; $('sub-avatar').textContent = '';
   $('mic').hidden = true; $('owner').hidden = true; $('demo').hidden = true; $('gate').hidden = false;
   $('gate').classList.toggle('standby', armed);
@@ -351,7 +366,7 @@ window.addEventListener('pointerdown', () => { if (live && suspended) socket?.se
 // Con imagenes en pantalla el avatar esta pequeño en la esquina: tocarlo las quita y lo devuelve a su tamaño.
 $('stage').addEventListener('click', () => { if (gallery) { hideGallery(); socket?.send({ type: 'gallery', hide: true }); } });
 window.__avatarDebug = {
-  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, gallery: showGallery, work: setWork, music: onMusic, message: onMessage,
+  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, gallery: showGallery, work: setWork, music: onMusic, tesla: (d) => tesla.show(d), message: onMessage,
   standby: () => { armed = true; shutdown(''); }, suspend: setSuspended, activity: (n) => { setActivity(n); actUntil = performance.now() + 600000; },
   get weights() { return { ...lips.weights }; }, get state() { return state; }, get time() { return player ? player.time() : -1; }, morphNames: avatar.morphNames, missing,
 };
