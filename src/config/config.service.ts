@@ -99,11 +99,20 @@ export class ConfigService {
   readonly spotifyClientSecret: string;
   readonly spotifyRedirectUri: string;
   readonly spotifyMarket: string;
+  /** Tesla (solo lectura, modo dueño). La cuenta se conecta desde el panel. Faltando alguna = sin Tesla. */
+  readonly teslaClientId: string;
+  readonly teslaClientSecret: string;
+  readonly teslaRedirectUri: string;
+  readonly teslaApiUrl: string;
+  readonly teslaDailyCalls: number;
   readonly musicDefaultQuery: string;
   readonly musicVolume: number;
   readonly musicDailySearches: number;
   readonly musicMaxMinutes: number;
   readonly suspendMaxMinutes: number;
+  /** Modo carro (?carro=1): segundos tras cada respuesta en que se puede seguir sin decir el nombre, y tope de la sesion. */
+  readonly carFollowSeconds: number;
+  readonly carMaxMinutes: number;
   /** Umbral de volumen (0..1) de la compuerta del microfono en esperas largas; 0 = sin compuerta. */
   readonly micGateRms: number;
   /** PostgreSQL (postgres://usuario:clave@host:5432/base). Vacio = SQLite en DATA_DIR. */
@@ -281,12 +290,21 @@ export class ConfigService {
     this.spotifyClientId = spotifyOn ? str('SPOTIFY_CLIENT_ID') : '';
     this.spotifyClientSecret = spotifyOn ? str('SPOTIFY_CLIENT_SECRET') : '';
     this.spotifyRedirectUri = spotifyOn ? str('SPOTIFY_REDIRECT_URI') : '';
+    const teslaOn = str('TESLA', '1') !== '0';
+    this.teslaClientId = teslaOn ? str('TESLA_CLIENT_ID') : '';
+    this.teslaClientSecret = teslaOn ? str('TESLA_CLIENT_SECRET') : '';
+    this.teslaRedirectUri = teslaOn ? str('TESLA_REDIRECT_URI') : '';
+    // Region inicial (Norteamerica y Asia-Pacifico); al conectar, Tesla dice la region real de la cuenta.
+    this.teslaApiUrl = /^https:\/\/fleet-api\.prd\.[a-z]{2}\.vn\.cloud\.tesla\.(com|cn)$/.test(str('TESLA_API_URL')) ? str('TESLA_API_URL') : 'https://fleet-api.prd.na.vn.cloud.tesla.com';
+    this.teslaDailyCalls = int('TESLA_CONSULTAS_DIA', 60, 1);
     this.spotifyMarket = /^[A-Za-z]{2}$/.test(str('SPOTIFY_MARKET')) ? str('SPOTIFY_MARKET').toUpperCase() : 'CO';
     this.musicDefaultQuery = str('MUSIC_DEFAULT_QUERY', 'lofi para programar');
     this.musicVolume = Math.min(100, int('MUSIC_VOLUME', 15, 0));
     this.musicDailySearches = int('MUSIC_DAILY_SEARCHES', 80, 1);
     this.musicMaxMinutes = int('MUSIC_MAX_MINUTES', 90, 1);
     this.suspendMaxMinutes = int('SUSPEND_MAX_MINUTES', 120, 1);
+    this.carFollowSeconds = Math.min(60, int('CARRO_SEGUIR_SEGUNDOS', 8, 0));
+    this.carMaxMinutes = int('CARRO_MAX_MINUTOS', 180, 1);
     this.micGateRms = process.env.MIC_GATE === '0' ? 0 : Math.min(0.2, Math.max(0.002, Number(process.env.MIC_GATE_RMS) || 0.012));
     this.tallerAutoFix = process.env.TALLER_AUTO_FIX !== '0';
     this.tallerSessionJobs = int('TALLER_SESSION_JOBS', 4, 1);

@@ -126,11 +126,17 @@ const prebuffer = [];
 // Compuerta del microfono: suspendido, o con musica o un encargo en curso y 20 s sin que nadie hable, el audio solo se
 // envia cuando hay voz. El servidor decide si se usa y con que umbral (`ready.gate`).
 let gate = null, lastTalk = 0;
-const ecoMode = (now) => !!gate && (suspended || ((!!work || music.active) && state === 'listening' && now - lastTalk > 20000));
+const ecoMode = (now) => !!gate && (suspended || ((!!work || music.active || car) && state === 'listening' && now - lastTalk > 20000));
 
 // Identificador al azar de este navegador, para que el avatar reconozca a quien vuelve. En un kiosco compartido se
 // desactiva con ?kiosco=1 (todas las personas usarian el mismo navegador).
 const KIOSK = new URLSearchParams(location.search).get('kiosco') === '1';
+// Modo carro (?carro=1, pensado para el navegador del Tesla): el avatar solo atiende las frases que traen su nombre,
+// como un asistente de voz; lo demas que se oiga en el carro se descarta en el servidor. Se recuerda en este navegador.
+const carParam = new URLSearchParams(location.search).get('carro');
+try { if (carParam === '1') localStorage.setItem('carro', '1'); else if (carParam === '0') localStorage.removeItem('carro'); } catch { /* sin almacenamiento */ }
+const CAR = carParam === '1' || (carParam !== '0' && (() => { try { return localStorage.getItem('carro') === '1'; } catch { return false; } })());
+let car = false;
 function visitorId() {
   if (KIOSK) return undefined;
   try {
@@ -193,7 +199,7 @@ function hideGallery() { gallery = null; document.body.classList.remove('showing
 function setState(s) {
   if (s === state) return;
   state = s; avatar.setState(s);
-  $('status').dataset.state = s; $('status-text').textContent = STATE_TEXT[s];
+  $('status').dataset.state = s; $('status-text').textContent = car && live && s === 'listening' ? `Di «${wakeWord}…»` : STATE_TEXT[s];
 }
 function stopSpeech() { player?.stop(); lips.reset(); speechId = -1; subChars = []; }
 
@@ -203,6 +209,7 @@ function onMessage(msg) {
       live = true; connecting = false; $('gate').hidden = true; $('mic').hidden = false; setState('listening');
       gate = msg.gate > 0 ? createGate({ rms: msg.gate }) : null; lastTalk = performance.now();
       if (msg.wake) wakeWord = msg.wake[0].toUpperCase() + msg.wake.slice(1);
+      car = !!msg.car; if (car) setState('listening'); // modo carro: el letrero dice como llamarlo
       $('owner').hidden = !msg.owner; // aviso visible de que esta sesion tiene las herramientas privadas
       if (msg.tts === 'browser') { browserVoice.configure(msg.voice, msg.rate); player = browserVoice; } else player = serverPlayer;
       for (const b of prebuffer.splice(0)) socket.sendAudio(b);
@@ -279,7 +286,7 @@ function startSession() {
   if (live || connecting) return;
   connecting = true; closeReason = '';
   socket?.close();
-  socket = connect($('code').value, visitorId(), { onMessage, onClose: ({ wasReady }) => shutdown(closeReason || (wasReady ? '' : 'No pude conectar. Intenta de nuevo.')) });
+  socket = connect($('code').value, visitorId(), { onMessage, onClose: ({ wasReady }) => shutdown(closeReason || (wasReady ? '' : 'No pude conectar. Intenta de nuevo.')) }, CAR ? { car: true } : {});
 }
 
 function onMicChunk(buffer) {

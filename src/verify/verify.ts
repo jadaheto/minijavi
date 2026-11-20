@@ -32,9 +32,10 @@ async function main() {
   const tg: { method: string; body: any }[] = []; let tgWebhook = '';
   let imageFetch: ((url: string, init: any) => Response) | undefined; // OpenAI Images y Magnific simulados
   let musicFetch: ((url: string, init: any) => Response) | undefined; // Spotify y YouTube simulados
+  let teslaFetch: ((url: string, init: any) => Response) | undefined; // Tesla simulado
   let githubFetch: ((url: string, init: any) => Response) | undefined; // GitHub simulado (cada prueba pone el suyo)
   globalThis.fetch = (async (url: any, init?: any) => { sent.push(String(url));
-    if (String(url).includes('api.telegram.org')) { const method = String(url).split('/').pop()!, body = JSON.parse(String(init?.body ?? '{}')); tg.push({ method, body }); return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: tgWebhook } : method === 'getUpdates' ? [] : { message_id: 9000 + tg.length } }), { status: 200 }); } if (githubFetch && String(url).includes('api.github.invalid')) return githubFetch(String(url), init); if (musicFetch && /spotify\.com|googleapis\.com\/youtube/.test(String(url))) return musicFetch(String(url), init); if (imageFetch && /api\.openai\.com\/v1\/images|magnific/.test(String(url))) return imageFetch(String(url), init); if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
+    if (String(url).includes('api.telegram.org')) { const method = String(url).split('/').pop()!, body = JSON.parse(String(init?.body ?? '{}')); tg.push({ method, body }); return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: tgWebhook } : method === 'getUpdates' ? [] : { message_id: 9000 + tg.length } }), { status: 200 }); } if (githubFetch && String(url).includes('api.github.invalid')) return githubFetch(String(url), init); if (teslaFetch && /tesla\.com/.test(String(url))) return teslaFetch(String(url), init); if (musicFetch && /spotify\.com|googleapis\.com\/youtube/.test(String(url))) return musicFetch(String(url), init); if (imageFetch && /api\.openai\.com\/v1\/images|magnific/.test(String(url))) return imageFetch(String(url), init); if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
 
   const { ConfigService } = await import('../config/config.service');
   const { DbService } = await import('../db/db.service');
@@ -1043,6 +1044,122 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     await spotify.disconnect();
     musicFetch = undefined; Object.assign(process.env, { SPOTIFY_CLIENT_ID: '', SPOTIFY_CLIENT_SECRET: '', SPOTIFY_REDIRECT_URI: '', YOUTUBE_API_KEY: '' });
     return 'sin conectar → YouTube; conectado → Spotify; error, vacío, límite, conexión vencida o reproductor fallido → YouTube; state de un solo uso; token solo para el dueño';
+  });
+
+  await check('Modo carro: solo atiende las frases con su nombre (o las que siguen a una respuesta) y no saluda', async () => {
+    const noop = () => undefined, b = noJev;
+    const asked: string[] = []; let said = '', interrupts = 0, ready: any;
+    const llm = { chat: async function* (messages: any[]) { asked.push(String(messages.filter((m) => m.role === 'user').at(-1)?.content ?? '').split('\n')[0]); yield { type: 'text', delta: 'Tienes ochenta por ciento, Javier.' }; }, complete: async () => '{}' } as any;
+    const tools = { definitions: async () => [], run: async () => ({ text: 'hecho' }) } as any;
+    const mk = (car: boolean) => {
+      const gw = new (SessionGateway as any)(b.cfg, {}, { open: () => ({ send: noop, close: noop }) }, llm, tools, { verify: () => null }, { get: noop, ids: () => [] }, { get: async () => null, valid: () => false, save: async () => undefined },
+        { enabled: false }, { enabled: false, onDone: noop, onAudit: noop, onProgress: noop, busy: () => undefined, unseen: () => [], pendingAudits: () => [], defaultModel: { label: '' } }, { enabled: false }, usage, { get: async () => undefined, logConversation: noop }, { enabled: false, canGenerate: false, newState: () => ({ title: '', kind: '', items: [], index: 0 }) },
+        alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard, b.capable, b.catalog);
+      const client = { readyState: 1, OPEN: 1, send: (raw: string) => { const m = JSON.parse(raw); if (m.type === 'say') said += m.text; if (m.type === 'interrupt') interrupts++; if (m.type === 'ready') ready = m; }, on: noop, close: noop };
+      const sess: any = { n: 1, ready: false, owner: true, car, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [], notes: [], startedAt: Date.now(), lastTurnEnd: 0, lastStatus: 0, imageSearches: 0, leadIds: [], demos: 0, cases: 0, demo: { on: false, business: '', kind: '', turns: 0 }, suspended: false, suspendedAt: 0, waking: false, canSuspend: true, browserTts: true, lastSpoken: '', lastPlayEnd: 0, origin: '' };
+      gw.start(client, sess, null);
+      const hear = async (text: string, ms = 250) => { gw.onTranscript(client, sess, text, true, true, 'es'); await wait(ms); };
+      const stop = () => { for (const t of sess.timers) { clearInterval(t); clearTimeout(t); } sess.ready = false; };
+      return { gw, sess, client, hear, stop };
+    };
+    const c = mk(true); await wait(150);
+    must(ready?.car === true && said === '', `en modo carro no debe saludar al abrir: «${said}»`);
+    must(/MODO CARRO/.test(String(c.sess.history[0]?.content)), 'falta la regla del modo carro en el prompt');
+    await c.hear('oye y entonces qué vamos a almorzar hoy'); await c.hear('pues no sé, lo que tú quieras');
+    must(asked.length === 0 && said === '' && c.sess.finals.length === 0, `la charla del carro no debía llegar al modelo: ${asked}`);
+    await c.hear('Javi, ¿cuánta batería tengo?');
+    must(asked.length === 1 && /bater/.test(asked[0]) && /ochenta/.test(said), `con el nombre debía responder: ${JSON.stringify(asked)} «${said}»`);
+    // Ventana para seguir la conversacion sin repetir el nombre; cerrada, vuelve a exigirlo.
+    c.sess.clientPlaying = false; c.sess.lastSpoken = ''; c.sess.lastTurnEnd = Date.now(); c.sess.lastPlayEnd = Date.now();
+    await c.hear('¿y cuánto me falta para llegar?');
+    must(asked.length === 2, 'justo después de una respuesta debía poder seguir sin decir el nombre');
+    c.sess.clientPlaying = false; c.sess.lastTurnEnd = c.sess.lastPlayEnd = Date.now() - (b.cfg.carFollowSeconds + 2) * 1000;
+    await c.hear('mira ese carro tan bonito');
+    must(asked.length === 2, 'pasada la ventana, una frase sin el nombre no debía llegar al modelo');
+    // Con musica sonando no hay ventana: la letra de la cancion no es una orden.
+    c.sess.music = { playing: true, queue: [], index: 0, volume: 15, since: Date.now() }; c.sess.lastTurnEnd = c.sess.lastPlayEnd = Date.now();
+    await c.hear('en la ciudad de la furia me verás caer');
+    must(asked.length === 2, 'con música sonando no debe haber ventana de seguimiento');
+    c.sess.music = undefined;
+    // El nombre a mitad de la frase tambien cuenta; el nombre solo, contesta que esta atento.
+    c.sess.lastTurnEnd = c.sess.lastPlayEnd = Date.now() - 60_000; c.sess.lastSpoken = '';
+    c.gw.onTranscript(c.client, c.sess, 'oye una cosa', true, false, 'es'); await c.hear('Javi dime qué hora es');
+    must(asked.length === 3 && /oye una cosa.*hora/i.test(asked[2]), `el nombre a mitad de frase: ${asked[2]}`);
+    c.sess.clientPlaying = false; c.sess.lastTurnEnd = c.sess.lastPlayEnd = Date.now() - 60_000; c.sess.lastSpoken = ''; said = '';
+    await c.hear('Javi');
+    must(asked.length === 3 && /Aquí estoy/.test(said), `solo el nombre debía contestar "Aquí estoy": «${said}»`);
+    // Su propia voz por los parlantes (dice "Javier") no lo llama ni lo interrumpe.
+    c.sess.clientPlaying = true; c.sess.lastSpoken = 'Tienes ochenta por ciento, Javier.'; interrupts = 0;
+    await c.hear('tienes ochenta por ciento Javier');
+    must(interrupts === 0 && asked.length === 3, 'su propio eco no debía contar como llamado');
+    await c.hear('Javi para la música ya');
+    must(interrupts === 1, 'con el nombre debía poder interrumpir lo que está diciendo');
+    c.stop();
+    // Sin modo carro todo sigue igual: saluda y responde sin nombre.
+    said = ''; const n = mk(false); await wait(150);
+    must(said !== '' && ready?.car === false, 'fuera del modo carro debía saludar como siempre');
+    const before = asked.length; n.sess.clientPlaying = false; n.sess.turn = undefined; await n.hear('¿qué hora es?');
+    must(asked.length === before + 1, 'fuera del modo carro una frase sin nombre debía responderse');
+    n.stop();
+    return 'charla ignorada; "Javi, …" responde; ventana de seguimiento; sin ventana con música; nombre a mitad de frase; eco propio ignorado; sin saludo';
+  });
+
+  await check('Tesla: solo lectura, sin despertar el carro, con el token rotado guardado y tope diario', async () => {
+    const { TeslaService, describeTesla } = await import('../tesla/tesla.service');
+    Object.assign(process.env, { TESLA_CLIENT_ID: 'id-tesla', TESLA_CLIENT_SECRET: 'secreto-tesla', TESLA_REDIRECT_URI: 'https://avatar.invalid/api/tesla/callback', TESLA_CONSULTAS_DIA: '14' });
+    const tcfg = new ConfigService(), tesla = new TeslaService(tcfg, P.db, usage); await tesla.onModuleInit();
+    const J = (o: unknown, status = 200) => new Response(JSON.stringify(o), { status });
+    const VIN = '5YJ3E1EA7KF000001', calls: string[] = []; let state = 'asleep', refreshN = 0, live = 200;
+    const DATA = (level: number) => ({ charge_state: { battery_level: level, battery_range: 200, charge_limit_soc: 80, charging_state: 'Charging', time_to_full_charge: 1.5, charger_power: 11, timestamp: Date.now() - 3 * 3600_000 },
+      vehicle_state: { locked: true, df: 0, dr: 0, pf: 1, pr: 0, ft: 0, rt: 0, sentry_mode: true, odometer: 10000, car_version: '2026.32.1 abc', timestamp: Date.now() - 3 * 3600_000 }, climate_state: { inside_temp: 27.4, outside_temp: 31, is_climate_on: false, timestamp: Date.now() - 3 * 3600_000 } });
+    teslaFetch = (url, init) => {
+      const method = String(init?.method ?? 'GET'); calls.push(`${method} ${new URL(url).pathname}`);
+      if (url.includes('/oauth2/v3/token')) {
+        const b = new URLSearchParams(String(init.body));
+        if (b.get('grant_type') === 'authorization_code') return b.get('code') === 'codigo-bueno' && b.get('audience') === tcfg.teslaApiUrl && b.get('client_secret') === 'secreto-tesla' ? J({ access_token: 'acceso-1', refresh_token: 'refresco-1', expires_in: 28800 }) : J({ error: 'invalid_auth_code' }, 400);
+        refreshN++; return b.get('refresh_token') === `refresco-${refreshN}` ? J({ access_token: `acceso-${refreshN + 1}`, refresh_token: `refresco-${refreshN + 1}`, expires_in: 28800 }) : J({ error: 'login_required' }, 401);
+      }
+      if (method !== 'GET') return J({ error: 'no debía enviarse' }, 500);
+      if (url.endsWith('/api/1/users/region')) return J({ response: { region: 'eu', fleet_api_base_url: 'https://fleet-api.prd.eu.vn.cloud.tesla.com' } });
+      if (!url.startsWith('https://fleet-api.prd.eu.vn.cloud.tesla.com')) return J({ error: 'región equivocada' }, 421);
+      if (url.endsWith('/api/1/vehicles')) return J({ response: [{ vin: VIN, display_name: 'Rayo', state }] });
+      if (url.endsWith('/vehicle_data_cached')) return J({ response: DATA(64) });
+      if (url.endsWith('/vehicle_data')) return live === 200 ? J({ response: DATA(71) }) : J({ error: 'vehicle unavailable' }, live);
+      return J({}, 404);
+    };
+    must(tesla.configured && !tesla.connected && await tesla.report().then(() => false, (e) => /no está conectado/.test(e.message)), 'sin conectar debía decirlo');
+    const url = new URL(tesla.authUrl()), scope = url.searchParams.get('scope') ?? '';
+    must(url.origin + url.pathname === 'https://auth.tesla.com/oauth2/v3/authorize' && scope === 'openid offline_access vehicle_device_data' && !/cmds|location/.test(scope) && !url.toString().includes('secreto-tesla'), `permisos pedidos: ${scope}`);
+    must(await tesla.finish('codigo-bueno', 'inventado').then(() => false, () => true), 'un state inventado debe rechazarse');
+    await tesla.finish('codigo-bueno', url.searchParams.get('state')!);
+    must(tesla.connected && !JSON.stringify(tesla.status).includes('refresco'), 'debía quedar conectado sin exponer el token');
+    // Dormido: lo ultimo que reporto, sin despertarlo, y se dice que no es de ahora.
+    calls.length = 0;
+    const a = await tesla.report(), ta = describeTesla(a, 'America/Bogota');
+    must(!a.live && calls.join() === `GET /api/1/vehicles,GET /api/1/vehicles/${VIN}/vehicle_data_cached` && !calls.some((c) => /wake_up|command/.test(c)), `dormido: ${calls}`);
+    must(/dormido/.test(ta) && /hace 3 horas/.test(ta) && /64 %/.test(ta) && /322 km/.test(ta) && /cargando, faltan 1 h 30 min a 11 kW/.test(ta) && /puestos; 1 puerta/.test(ta) && /centinela encendido/.test(ta) && /adentro 27 °C/.test(ta) && /16\.093 km/.test(ta) && /2026\.32\.1\./.test(ta), `informe: ${ta}`);
+    calls.length = 0; await tesla.report();
+    must(calls.length === 0, 'una segunda consulta enseguida debía salir de la caché (Tesla cobra cada llamada)');
+    // En linea: datos en vivo. Si el carro no contesta (408), se usa lo guardado.
+    (tesla as any).reports.clear(); (tesla as any).vehiclesAt = 0; state = 'online';
+    must((await tesla.report()).live && /71 %/.test(describeTesla(await tesla.report(), 'America/Bogota')), 'en línea debía dar los datos en vivo');
+    (tesla as any).reports.clear(); live = 408;
+    must(!(await tesla.report()).live, 'si el carro no contesta debía usar lo guardado');
+    must(Object.keys(tesla.fields()).includes('charge_state') && !JSON.stringify(tesla.fields()).includes('64'), 'los nombres de los campos deben poder verse sin valores');
+    // El token de refresco es de un solo uso: el nuevo queda guardado y sirve tras un reinicio.
+    (tesla as any).access = undefined; (tesla as any).reports.clear(); (tesla as any).vehiclesAt = 0; live = 200;
+    await tesla.report();
+    const again = new TeslaService(tcfg, P.db, usage); await again.onModuleInit(); await again.report();
+    must(refreshN === 2 && again.connected, `el token rotado debía quedar guardado y servir al reiniciar (refrescos: ${refreshN})`);
+    // Tope diario propio.
+    const limited = await (async () => { for (let i = 0; i < 16; i++) { (again as any).reports.clear(); (again as any).vehiclesAt = 0; try { await again.report(); } catch (e) { return (e as Error).message; } } return ''; })();
+    must(/tope de consultas/.test(limited), 'debía cortar al llegar al tope diario');
+    // Solo lectura: la clase no tiene como enviar nada y la herramienta lo dice.
+    const src = (await import('node:fs')).readFileSync(join(__dirname, '..', '..', 'src', 'tesla', 'tesla.service.ts'), 'utf8');
+    must(!/method: 'POST'[^\n]*\/api\/1\//.test(src) && !/wake_up'|\/command\//.test(src.replace(/\/\*[\s\S]*?\*\//g, '')), 'el servicio de Tesla no debe tener llamadas de escritura');
+    await again.disconnect();
+    teslaFetch = undefined; Object.assign(process.env, { TESLA_CLIENT_ID: '', TESLA_CLIENT_SECRET: '', TESLA_REDIRECT_URI: '', TESLA_CONSULTAS_DIA: '' });
+    return 'permisos de solo lectura; dormido → último dato con su hora, sin despertar; en línea → en vivo; caché; token rotado guardado; tope diario';
   });
 
   rmSync(dir, { recursive: true, force: true });

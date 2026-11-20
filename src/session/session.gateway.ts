@@ -81,6 +81,8 @@ interface Session {
   suspendedAt: number;
   waking: boolean;       // acaba de despertar: la frase en curso empieza por la palabra para despertar
   canSuspend: boolean;   // las llamadas de WhatsApp no se suspenden
+  car?: boolean;         // modo carro: solo atiende las frases que traen su nombre (o las que siguen a una respuesta)
+  carHeard?: boolean;    // la frase en curso ya fue aceptada (para no soltarla a la mitad cuando se cierra la ventana)
   starting?: boolean;    // ya llego el saludo del navegador y se esta abriendo la sesion
   gallery?: GalleryState; // fotos o bocetos que se ven al lado del avatar (no en llamadas)
   demo: DemoState;        // demostracion en vivo: el avatar hace de asistente del negocio del visitante
@@ -202,6 +204,11 @@ IMÁGENES: en la pantalla puedes mostrar imágenes: la seleccionada se ve en gra
 - Fotos reales: usa buscar_imagenes cuando pidan ver imágenes, fotos o ejemplos de algo. Al mostrarlas, una frase corta: no describas cada foto.` : ''}${generate ? `
 - Imagen creada con IA: si Javier pide crear, generar o dibujar una imagen, usa generar_imagen con todos los detalles. Tarda cerca de un minuto: dile que ya la estás creando. Un mensaje que empieza por "(Aviso del sistema" lo escribió el sistema, no Javier.` : ''}${sketches ? `
 - BOCETOS: si Javier pide DISEÑAR un sitio o ver cómo podría quedar, usa bocetos (no programar), pasando todas sus ideas y, si el tema se presta, un tema de fotos. Dile que en unos minutos le muestras tres propuestas. Cuando llegue el aviso del taller con los bocetos en pantalla, empieza con "Así podría quedar tu sitio", di en una frase en qué se diferencia cada uno y pregúntale cuál le gusta. Cuando elija, usa programar con el MISMO proyecto pidiendo construir el sitio completo a partir de ese boceto.` : ''}`;
+
+/** Modo carro: quien habla va manejando. */
+const CAR_RULES = `
+
+MODO CARRO: la persona va manejando y solo te oye; no puede mirar la pantalla ni tocar nada. Responde en una o dos frases cortas, sin listas, y no le pidas mirar, leer ni tocar. Solo te llegan las frases en las que dice tu nombre: no comentes que te llamó ni repitas su nombre en cada respuesta.`;
 
 /** Musica de fondo. Va solo en sesiones del dueño y si hay Spotify o clave de YouTube. */
 const MUSIC_RULES = (def: string, taller: boolean) => `
@@ -338,6 +345,7 @@ export class SessionGateway implements OnGatewayConnection {
         if (!s.owner && !internal && !this.codeOk(String(msg.code ?? ''))) { this.send(client, { type: 'error', reason: 'codigo' }); client.close(4401, 'codigo'); return; }
         if (this.active >= this.cfg.maxSessions) { this.send(client, { type: 'error', reason: 'ocupado' }); client.close(4429, 'ocupado'); return; }
         if (!s.owner && this.memory.valid(msg.visitor)) s.visitor = msg.visitor;
+        if (msg.car === true && !internal) s.car = true; // modo carro: lo pide la pagina con ?carro=1
         if (internal && typeof msg.phone === 'string' && /^\+?\d{8,15}$/.test(msg.phone)) s.callerPhone = msg.phone;
         clearTimeout(authTimer);
         if (s.starting) return; s.starting = true;
@@ -376,7 +384,7 @@ export class SessionGateway implements OnGatewayConnection {
     const memoryNote = known
       ? `\n\nYa conoces a esta persona de una visita anterior${known.name ? `: se llama ${known.name}` : ''}. Lo que hablaron: ${known.summary || 'no hay resumen'}. Salúdala como a alguien conocido y no le vuelvas a pedir datos que ya dio.`
       : '';
-    s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + (s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery, this.workshop.enabled) : '') + (s.owner ? DATA_RULES : DEMO_RULES) + (s.gallery && (this.images.enabled || (s.owner && (this.workshop.enabled || this.images.canGenerate))) ? IMAGE_RULES(this.images.enabled, s.owner && this.workshop.enabled, s.owner && this.images.canGenerate) : '') + this.portfolio.prompt(!!s.gallery) + (s.owner ? '' : this.catalog.prompt()) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote });
+    s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + (s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery, this.workshop.enabled) : '') + (s.owner ? DATA_RULES : DEMO_RULES) + (s.gallery && (this.images.enabled || (s.owner && (this.workshop.enabled || this.images.canGenerate))) ? IMAGE_RULES(this.images.enabled, s.owner && this.workshop.enabled, s.owner && this.images.canGenerate) : '') + this.portfolio.prompt(!!s.gallery) + (s.owner ? '' : this.catalog.prompt()) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote + (s.car ? CAR_RULES : '') });
     s.stt = this.stt.open({
       onTranscript: (text, isFinal, speechFinal, lang) => this.onTranscript(client, s, text, isFinal, speechFinal, lang),
       onUtteranceEnd: () => this.commit(client, s),
@@ -395,12 +403,16 @@ export class SessionGateway implements OnGatewayConnection {
         if (Date.now() - s.suspendedAt > this.cfg.suspendMaxMinutes * 60_000) { this.send(client, { type: 'error', reason: 'suspension' }); client.close(4408, 'suspension'); return; }
         s.lastActivity = Date.now();
       }
-      const working = job || listening || s.suspended;
+      // Modo carro: sigue abierta aunque nadie le hable (lo que se oye sin su nombre se descarta), hasta CARRO_MAX_MINUTOS.
+      const driving = !!s.car && Date.now() - s.startedAt < this.cfg.carMaxMinutes * 60_000;
+      if (driving) s.lastActivity = Date.now();
+      const working = job || listening || s.suspended || driving;
       if (!working && Date.now() - s.startedAt > this.cfg.sessionMaxSeconds * 1000) { this.send(client, { type: 'error', reason: 'tiempo' }); client.close(4408, 'duracion'); return; }
       if (Date.now() - s.lastActivity > this.cfg.idleSeconds * 1000) { this.send(client, { type: 'error', reason: 'inactividad' }); client.close(4408, 'inactividad'); }
     }, 5000));
-    this.send(client, { type: 'ready', owner: s.owner, gate: this.cfg.micGateRms, wake: this.cfg.wakeWords[0], tts: s.browserTts ? 'browser' : 'server', voice: this.cfg.browserVoice, rate: this.cfg.browserVoiceRate });
-    const greeting = s.owner ? this.ownerGreeting() : known?.name ? `¡Hola de nuevo, ${known.name}! ¿En qué te ayudo hoy?` : this.cfg.greeting;
+    this.send(client, { type: 'ready', owner: s.owner, gate: this.cfg.micGateRms, wake: this.cfg.wakeWords[0], tts: s.browserTts ? 'browser' : 'server', voice: this.cfg.browserVoice, rate: this.cfg.browserVoiceRate, car: !!s.car });
+    // En modo carro no saluda: la sesion se abre sola con cualquier ruido y solo debe hablar cuando lo llaman.
+    const greeting = s.car ? '' : s.owner ? this.ownerGreeting() : known?.name ? `¡Hola de nuevo, ${known.name}! ¿En qué te ayudo hoy?` : this.cfg.greeting;
     if (greeting) {
       const turn = this.newTurn(s);
       this.send(client, { type: 'speech_start', id: turn.id, sampleRate: TTS_SAMPLE_RATE });
@@ -451,6 +463,21 @@ export class SessionGateway implements OnGatewayConnection {
       if (!text || s.turn || s.clientPlaying || Date.now() - s.suspendedAt < 2500 || !this.hasWakeWord(text)) return;
       this.wake(client, s);
     }
+    if (s.car && !s.suspended) {
+      // Modo carro: una frase solo cuenta si trae el nombre, si llega justo despues de una respuesta (ventana para
+      // seguir la conversacion) o si ya venia aceptada. Lo demas no va al modelo ni a la pantalla. Mientras el avatar
+      // habla, su propia voz por los parlantes (puede decir "Javier") no cuenta como llamado.
+      const heard = [...s.finals, text].join(' '), busy = !!s.turn || s.clientPlaying;
+      const called = this.hasWakeWord(heard) && !(busy && this.isEcho(s, heard, true));
+      const open = !busy && Date.now() - Math.max(s.lastTurnEnd, s.lastPlayEnd) < this.cfg.carFollowSeconds * 1000 && Math.max(s.lastTurnEnd, s.lastPlayEnd) > 0 && !s.music?.playing; // con musica sonando no hay ventana: la letra de la cancion se tomaria como una orden
+      if (!s.carHeard && !called && !(open && !!text)) {
+        if (text && isFinal) { s.finals.push(text); if (lang) s.langs.push(lang); if (s.finals.length > 6) { s.finals.shift(); s.langs.shift(); } } // el nombre puede llegar mas adelante en la misma frase
+        if (speechFinal) { s.finals = []; s.langs = []; }
+        return;
+      }
+      if (text) s.carHeard = true;
+      if (busy && called && text) { this.interrupt(client, s); } // "Javi, ..." encima de una respuesta la corta, sin contar palabras
+    }
     if (text) {
       s.lastActivity = Date.now();
       if (lang) s.lastLang = lang;
@@ -477,7 +504,14 @@ export class SessionGateway implements OnGatewayConnection {
     const text = s.finals.join(' ').trim();
     const lang = s.langs.sort((a, b) => s.langs.filter((v) => v === b).length - s.langs.filter((v) => v === a).length)[0] ?? 'es';
     s.finals = []; s.langs = []; clearTimeout(s.specTimer);
+    const carHeard = !!s.carHeard; s.carHeard = false;
     if (!text || s.suspended) return;
+    if (s.car) {
+      if (!carHeard) return; // fin de una frase que nadie le dirigio (UtteranceEnd de Deepgram)
+      if (this.isEcho(s, text, true) && Date.now() - Math.max(s.lastTurnEnd, s.lastPlayEnd) < 6000) return; // la cola de su propia voz por los parlantes
+      // Solo su nombre: contesta que esta atento (y la ventana queda abierta para la orden).
+      if (plainWords(text).filter((w) => !this.cfg.wakeWords.includes(w)).length < 1 && !(s.turn || s.clientPlaying)) { this.greetAwake(client, s); return; }
+    }
     if (s.waking) { // acaba de despertar: si solo dijeron su nombre, responde que ya esta; si siguio una pregunta, la contesta
       s.waking = false;
       const rest = plainWords(text).filter((w) => !this.cfg.wakeWords.includes(w));
@@ -493,8 +527,8 @@ export class SessionGateway implements OnGatewayConnection {
    * Con la voz del navegador el cancelador de eco no siempre quita lo que dice el avatar: si casi todas las palabras
    * reconocidas estan en lo que el avatar esta diciendo (o acaba de decir), es su propio eco y no una interrupcion.
    */
-  private isEcho(s: Session, heard: string): boolean {
-    if (!s.browserTts) return false;
+  private isEcho(s: Session, heard: string, always = false): boolean {
+    if (!s.browserTts && !always) return false;
     const wordsOf = (t: string) => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9ñ]+/).filter(Boolean);
     const spoken = new Set(wordsOf(`${s.turn?.spoken ?? ''} ${s.lastSpoken}`));
     const list = wordsOf(heard);

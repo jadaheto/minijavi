@@ -286,7 +286,7 @@ async function loadUsage() {
     ['Día', (d) => d.day], ['Conversaciones', (d) => n(d.sesiones)], ['Escucha (min)', (d) => min(d.deepgram_s)], ['Suspendido (min)', (d) => min(d.deepgram_susp_s)],
     ['Modelo: llamadas', (d) => n((d.deepseek_calls || 0) + (d.deepseek_sin_dato || 0))], ['Tokens leídos', (d) => n(d.deepseek_in)],
     ['En caché', (d) => (d.deepseek_in ? Math.round(((d.deepseek_cache || 0) / d.deepseek_in) * 100) + ' %' : '')], ['Tokens escritos', (d) => n(d.deepseek_out)],
-    ['Voz (caracteres)', (d) => n(d.eleven_chars)], ['Jev (decisiones)', (d) => (d.jev_calls ? `${n(d.jev_calls)} · ${n(d.jev_in)} tokens` : '')], ['Spotify', (d) => n(d.spotify_searches)], ['YouTube', (d) => n(d.youtube_searches)], ['WhatsApp (respuestas)', (d) => n(d.wa_out)],
+    ['Voz (caracteres)', (d) => n(d.eleven_chars)], ['Jev (decisiones)', (d) => (d.jev_calls ? `${n(d.jev_calls)} · ${n(d.jev_in)} tokens` : '')], ['Spotify', (d) => n(d.spotify_searches)], ['Tesla', (d) => n(d.tesla_calls)], ['YouTube', (d) => n(d.youtube_searches)], ['WhatsApp (respuestas)', (d) => n(d.wa_out)],
     ['Claude Code', (d) => (d.claude_jobs ? `${n(d.claude_jobs)} · ${min(d.claude_s)} min · ${(d.claude_usd || 0).toFixed(2)} USD equiv.` : '')],
     ['Estimado (USD)', (d) => (d.estimado_usd === undefined ? '' : d.estimado_usd.toFixed(2))],
   ];
@@ -565,7 +565,7 @@ async function loadProjects() {
 
 // ---------- dispositivos ----------
 async function loadDevices() {
-  loadSpotify();
+  loadSpotify(); loadTesla();
   const devices = await json('devices');
   $('list').replaceChildren(...devices.map((d) => {
     const btn = el('button', { type: 'button', className: 'small danger', textContent: 'Revocar' });
@@ -595,6 +595,28 @@ $('spotify-connect').addEventListener('click', async () => {
   else $('spotify-note').textContent = 'No se pudo iniciar la conexión con Spotify.';
 });
 $('spotify-disconnect').addEventListener('click', async () => { await api('spotify', { method: 'DELETE' }); spotifyBack = ''; loadSpotify(); });
+
+// Tesla: solo lectura (batería, carga, seguros, clima). El avatar no puede enviarle órdenes al carro.
+const TESLA_BACK = { ok: 'Cuenta de Tesla conectada.', cancelado: 'No se conectó: la autorización se canceló en Tesla.', error: 'No se pudo conectar con Tesla. Inténtalo de nuevo.' };
+let teslaBack = new URLSearchParams(location.search).get('tesla') || '';
+if (teslaBack) history.replaceState(null, '', location.pathname + location.hash);
+async function loadTesla() {
+  let st; try { st = await json('tesla'); } catch { return; }
+  $('tesla-card').hidden = !st.configured;
+  if (!st.configured) return;
+  $('tesla-state').textContent = st.connected ? `Conectado desde ${fecha(st.since)}${st.vehicles.length ? ` · ${st.vehicles.join(', ')}` : ''}.` : 'Sin conectar: el avatar no puede consultar el carro.';
+  $('tesla-state').className = st.connected ? 'ok' : '';
+  $('tesla-note').textContent = [TESLA_BACK[teslaBack] || '', st.error || '', st.connected ? `Solo lectura. Consultas de hoy: ${st.usedToday} de ${st.dailyLimit} (Tesla cobra por uso). Hay que volver a conectar cada 3 meses (hacia ${fecha(st.expires)}).` : 'Te lleva a Tesla para autorizar y vuelve aquí. Solo se pide permiso para leer datos del vehículo, no para enviarle órdenes.'].filter(Boolean).join(' ');
+  $('tesla-connect').textContent = st.connected ? 'Volver a conectar' : 'Conectar Tesla';
+  $('tesla-disconnect').hidden = !st.connected;
+}
+$('tesla-connect').addEventListener('click', async () => {
+  const r = await api('tesla/connect', { method: 'POST' });
+  const d = await r.json().catch(() => ({}));
+  if (r.ok && typeof d.url === 'string' && d.url.startsWith('https://auth.tesla.com/')) location.href = d.url;
+  else $('tesla-note').textContent = 'No se pudo iniciar la conexión con Tesla.';
+});
+$('tesla-disconnect').addEventListener('click', async () => { await api('tesla', { method: 'DELETE' }); teslaBack = ''; loadTesla(); });
 
 $('form').addEventListener('submit', async (ev) => {
   ev.preventDefault(); $('msg').textContent = '';

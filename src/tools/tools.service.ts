@@ -4,6 +4,7 @@ import { INTERESTS, LeadsService } from '../leads/leads.service';
 import { PLANE_PREFIX, PlaneMcpService } from '../mcp/plane-mcp.service';
 import { MODELS, WorkshopService } from '../workshop/workshop.service';
 import { MusicService, MusicState } from '../music/music.service';
+import { describeTesla, TeslaService } from '../tesla/tesla.service';
 import { UsageService } from '../usage/usage.service';
 import { GalleryItem, GalleryState, ImagesService } from '../images/images.service';
 import { PortfolioService } from '../portfolio/portfolio.service';
@@ -86,7 +87,7 @@ export class ToolsService {
   private readonly tools: Record<string, Tool>;
   /** Herramientas locales que solo existen en sesiones del dueño. */
   private readonly ownerTools: Record<string, Tool>;
-  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService) {
+  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService) {
     this.tools = {
       hora_actual: {
         description: 'Devuelve la fecha y la hora actuales. Usala cuando pregunten que hora es o que dia es hoy.',
@@ -451,6 +452,17 @@ export class ToolsService {
           case 'que_suena': return m.playing ? `Suena ${name()} en ${where()}, a volumen ${m.volume} por ciento.${m.source === 'youtube' && m.note ? ` No es Spotify porque ${m.note}.` : ''}` : m.queue.length ? `Está en pausa ${name()}.` : 'No hay música puesta.';
           default: return 'Acción de música desconocida.';
         }
+      },
+    };
+    // Tesla de Javier: solo lectura. El servicio no pide el permiso de comandos, asi que aqui no hay como abrir ni mover nada.
+    if (tesla?.configured) this.ownerTools.tesla = {
+      description:
+        'Consulta el estado del Tesla de Javier: batería y autonomía, si está cargando y cuánto falta, seguros, puertas y ventanas, modo centinela, temperatura, kilometraje y versión de software. ' +
+        'Solo lee: no puede abrir, cerrar, encender ni mover nada del carro, ni decir dónde está. Úsala cuando pregunte por su carro o su Tesla.',
+      parameters: { type: 'object', properties: { vehiculo: { type: 'string', description: 'Nombre del carro, solo si Javier tiene varios y dijo cuál.' } } },
+      run: async (args: Record<string, unknown>) => {
+        try { return `${describeTesla(await tesla.report(String(args.vehiculo ?? '')), cfg.timezone)}\nCuéntale solo lo que preguntó, en una o dos frases. No inventes datos que no estén aquí.`; }
+        catch (e) { return `No se pudo consultar el Tesla: ${(e as Error).message}. Díselo tal cual, sin inventar datos.`; }
       },
     };
     // Taller de programacion: Claude Code con la suscripcion de Javier. Solo existe en modo dueño y si hay token.

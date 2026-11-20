@@ -1,11 +1,11 @@
 // WebSocket hacia el backend. La URL se deriva de la pagina: sirve igual en local y detras de un proxy con HTTPS (wss).
-export function connect(code, visitor, handlers) {
+export function connect(code, visitor, handlers, extra = {}) {
   const url = new URL('ws', window.location.href);
   url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(url);
   ws.binaryType = 'arraybuffer';
   let ready = false;
-  ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'hello', code, visitor })));
+  ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'hello', code, visitor, ...extra })));
   ws.addEventListener('message', (ev) => {
     if (typeof ev.data !== 'string') return;
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
