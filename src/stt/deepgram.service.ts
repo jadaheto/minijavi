@@ -23,12 +23,18 @@ export class DeepgramService {
   private readonly log = new Logger(DeepgramService.name);
   constructor(private readonly cfg: ConfigService, private readonly usage: UsageService) {}
 
-  open(h: SttHandlers): SttStream {
+  /**
+   * `language` fija el idioma de esta escucha (el modo carro usa solo español); sin el, el configurado (multi).
+   * `keyterms`: palabras que el modelo debe reconocer mejor (Keyterm Prompting de nova-3, documentacion leida el
+   * 2026-11-20: parametro `keyterm` repetido por cada termino, tambien en streaming).
+   */
+  open(h: SttHandlers, language?: string, keyterms: string[] = []): SttStream {
     const q = new URLSearchParams({
-      model: this.cfg.deepgramModel, language: this.cfg.deepgramLanguage,
+      model: this.cfg.deepgramModel, language: language || this.cfg.deepgramLanguage,
       encoding: 'linear16', sample_rate: '16000', channels: '1',
       interim_results: 'true', endpointing: '300', utterance_end_ms: '1000', smart_format: 'true',
     });
+    for (const k of keyterms.slice(0, 20)) q.append('keyterm', k);
     const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${q}`, { headers: { Authorization: `Token ${this.cfg.deepgramApiKey}` } });
     const pending: Buffer[] = [];
     let closed = false;

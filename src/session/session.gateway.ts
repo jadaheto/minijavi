@@ -387,10 +387,13 @@ export class SessionGateway implements OnGatewayConnection {
       : '';
     s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + (s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery, this.workshop.enabled) : '') + (s.owner ? DATA_RULES : DEMO_RULES) + (s.gallery && (this.images.enabled || (s.owner && (this.workshop.enabled || this.images.canGenerate))) ? IMAGE_RULES(this.images.enabled, s.owner && this.workshop.enabled, s.owner && this.images.canGenerate) : '') + this.portfolio.prompt(!!s.gallery) + (s.owner ? '' : this.catalog.prompt()) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote + (s.car ? CAR_RULES : '') });
     s.stt = this.stt.open({
-      onTranscript: (text, isFinal, speechFinal, lang) => this.onTranscript(client, s, text, isFinal, speechFinal, lang),
+      // Idioma: en modo carro la escucha es solo en español (con ruido y musica la deteccion de idioma falla y el avatar
+      // terminaba respondiendo en ingles). En una sesion del dueño con musica sonando tampoco se cambia de idioma por lo
+      // que se oiga: la letra de una cancion en ingles no es Javier hablando en ingles.
+      onTranscript: (text, isFinal, speechFinal, lang) => this.onTranscript(client, s, text, isFinal, speechFinal, s.car || s.music?.playing ? 'es' : lang),
       onUtteranceEnd: () => this.commit(client, s),
       onClose: (reason) => { if (s.ready) { this.log.warn(`sesion #${s.n}: Deepgram se cerro (${reason})`); this.alerts.report('Deepgram (escucha)', `la conexión se cerró (${reason})`); this.send(client, { type: 'error', reason: 'escucha' }); client.close(1011, 'stt'); } },
-    });
+    }, s.car ? 'es' : undefined, s.car ? ['Javi', 'Javier'] : []); // en el carro, que oiga bien su nombre entre el ruido
     // Limites: duracion maxima de la sesion e inactividad.
     s.startedAt = Date.now();
     s.timers.push(setInterval(() => {

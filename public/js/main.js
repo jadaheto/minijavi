@@ -101,7 +101,7 @@ function setSuspended(on, notice) {
   suspended = !!on; awayNotice = on ? (notice || '') : '';
   $('away-notice').textContent = awayNotice;
   if (!on) { setActivity(null); if (state === 'away') setState(live ? 'listening' : 'idle'); }
-  else { hideCard(); $('sub-user').textContent = ''; if (state !== 'speaking' && state !== 'thinking') setState('away'); }
+  else { hideCard(); setSub('sub-user', ''); if (state !== 'speaking' && state !== 'thinking') setState('away'); }
 }
 const restState = () => (suspended || dormant ? 'away' : live ? 'listening' : 'idle');
 /** Va cambiando de actividad cada medio minuto, mas o menos, sin repetir hasta haber pasado por todas. */
@@ -214,6 +214,14 @@ function setState(s) {
   state = s; avatar.setState(s);
   $('status').dataset.state = s; $('status-text').textContent = car && live && s === 'listening' ? `Di «${wakeWord}…»` : STATE_TEXT[s];
 }
+// Subtitulos: aparecen y, unos segundos despues del ultimo cambio, se desvanecen (pedido por Javier: no deben quedarse en pantalla).
+const SUB_MS = { 'sub-user': 3500, 'sub-avatar': 4500 }, subTimers = {};
+function setSub(id, text) {
+  const el = $(id);
+  clearTimeout(subTimers[id]); el.classList.remove('fade'); el.textContent = text;
+  if (text) subTimers[id] = setTimeout(() => { el.classList.add('fade'); subTimers[id] = setTimeout(() => { el.textContent = ''; el.classList.remove('fade'); }, 700); }, SUB_MS[id]);
+}
+
 function stopSpeech() { player?.stop(); lips.reset(); speechId = -1; subChars = []; }
 
 function onMessage(msg) {
@@ -234,12 +242,12 @@ function onMessage(msg) {
       if (msg.reason === 'suspension') { closeReason = ''; dormant = true; } // sigue suspendido, ya sin oir: solo despierta con un toque
       break;
     case 'user_partial':
-      if (state !== 'speaking') { $('sub-user').textContent = msg.text; }
+      if (state !== 'speaking') { setSub('sub-user', msg.text); }
       lastTalk = performance.now();
       duckUntil = performance.now() + 2500; // la persona esta hablando: la musica baja un momento
       break;
     case 'user_final':
-      $('sub-user').textContent = msg.text; $('sub-avatar').textContent = ''; hideCard(); setState('thinking'); break;
+      setSub('sub-user', msg.text); setSub('sub-avatar', ''); hideCard(); setState('thinking'); break;
     case 'speech_start':
       stopSpeech(); speechId = msg.id; subShown = 0; player.begin(msg.sampleRate); backdrop.show(restScene()); break;
     case 'audio':
@@ -279,7 +287,7 @@ function onMessage(msg) {
     case 'suspend': // entra o sale del modo suspension
       setSuspended(msg.on, msg.notice); break;
     case 'interrupt': // el usuario hablo encima: se corta el audio y la boca vuelve a reposo
-      stopSpeech(); $('sub-avatar').textContent = ''; backdrop.show(restScene()); setState(restState()); break;
+      stopSpeech(); setSub('sub-avatar', ''); backdrop.show(restScene()); setState(restState()); break;
   }
 }
 
@@ -289,7 +297,7 @@ function shutdown(message) {
   retryAt = Math.max(retryAt, performance.now() + 2500);
   suspended = false; awayNotice = ''; $('away').hidden = true;
   setWork(null); music.stop(); tesla.hide(); stopSpeech(); hideCard(); hideGallery(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
-  $('sub-user').textContent = ''; $('sub-avatar').textContent = '';
+  setSub('sub-user', ''); setSub('sub-avatar', '');
   $('mic').hidden = true; $('owner').hidden = true; $('demo').hidden = true; $('gate').hidden = false;
   $('gate').classList.toggle('standby', armed);
   $('gate-text').textContent = dormant ? 'Estoy suspendido. Toca la pantalla para despertarme.' : armed ? (message || STANDBY_TEXT) : 'Toca para empezar a conversar. El navegador te pedirá permiso para usar el micrófono.';
@@ -346,14 +354,14 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   const playing = !!player && player.active;
   if (wasPlaying !== playing) { wasPlaying = playing; socket?.send({ type: 'playback', playing }); } // el servidor sabe cuando termina de sonar
-  if (state === 'speaking' && !playing) { lips.reset(); setState(restState()); if (state === 'away') $('sub-avatar').textContent = ''; setTimeout(() => { if (state !== 'speaking') backdrop.show(restScene()); }, 2500); }
+  if (state === 'speaking' && !playing) { lips.reset(); setState(restState()); if (state === 'away') setSub('sub-avatar', ''); setTimeout(() => { if (state !== 'speaking') backdrop.show(restScene()); }, 2500); }
   const t = playing ? player.time() : -1;
   const w = lips.update(state === 'speaking' ? t : -1, dt);
   for (const v of VISEMES) avatar.setMorph(v, Math.max(w[v], avatar.exprMouth[v] || 0));
   if (state === 'speaking' && subChars.length) { // subtitulos que avanzan con la voz
     let n = subShown;
     while (n < subChars.length && subChars[n].t <= t + 0.25) n++;
-    if (n !== subShown) { subShown = n; $('sub-avatar').textContent = subChars.slice(0, n).map((x) => x.c).join(''); }
+    if (n !== subShown) { subShown = n; setSub('sub-avatar', subChars.slice(0, n).map((x) => x.c).join('')); }
   }
   if (music.active) music.duck(playing || state === 'speaking' || state === 'thinking' || now < duckUntil);
   runActivities(now);

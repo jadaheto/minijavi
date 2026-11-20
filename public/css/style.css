@@ -14,6 +14,8 @@ html, body { margin: 0; height: 100%; background: radial-gradient(120% 90% at 50
 .subtitles { position: fixed; left: 16px; right: 16px; bottom: calc(28px + env(safe-area-inset-bottom)); text-align: center; pointer-events: none; }
 .subtitles p { margin: 6px auto; max-width: 34em; padding: 8px 14px; border-radius: 12px; background: rgba(10, 13, 17, .62); backdrop-filter: blur(8px); width: fit-content; }
 .subtitles p:empty { display: none; }
+.subtitles p { transition: opacity .6s ease; }
+.subtitles p.fade { opacity: 0; }
 .sub-user { color: var(--muted); font-size: clamp(14px, 2.2vw, 18px); }
 .sub-avatar { font-size: clamp(17px, 2.8vw, 24px); }
 .subtitles.off { display: none; }
