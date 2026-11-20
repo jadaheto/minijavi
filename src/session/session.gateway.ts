@@ -81,6 +81,7 @@ interface Session {
   suspendedAt: number;
   waking: boolean;       // acaba de despertar: la frase en curso empieza por la palabra para despertar
   canSuspend: boolean;   // las llamadas de WhatsApp no se suspenden
+  news?: { index: number }; // noticia que se esta viendo (0 = la lista)
   car?: boolean;         // modo carro: solo atiende las frases que traen su nombre (o las que siguen a una respuesta)
   carHeard?: boolean;    // la frase en curso ya fue aceptada (para no soltarla a la mitad cuando se cierra la ventana)
   starting?: boolean;    // ya llego el saludo del navegador y se esta abriendo la sesion
@@ -361,6 +362,7 @@ export class SessionGateway implements OnGatewayConnection {
       if (msg?.type === 'music' && s.music) { if (Number.isInteger(msg.index) && msg.index >= 0 && msg.index < s.music.queue.length) s.music.index = msg.index; if (typeof msg.playing === 'boolean') s.music.playing = msg.playing; return; }
       if (msg?.type === 'gallery' && s.gallery && msg.hide === true) { Object.assign(s.gallery, { title: '', kind: '', items: [], index: 0 }); return; } // toco al avatar: se quitan las imagenes
       if (msg?.type === 'gallery' && s.gallery) { if (Number.isInteger(msg.index) && msg.index >= 0 && msg.index < s.gallery.items.length) s.gallery.index = msg.index; return; }
+      if (msg?.type === 'news') { if (Number.isInteger(msg.index) && msg.index >= 0 && msg.index <= 20) (s.news ??= { index: 0 }).index = msg.index; return; } // toco una noticia en la pantalla
       if (msg?.type === 'wake') { if (s.suspended) { this.wake(client, s); this.greetAwake(client, s); } return; } // toque en la pantalla
       if (msg?.type === 'playback' && !msg.playing) s.lastPlayEnd = Date.now();
       if (msg?.type === 'playback' && !(s.turn && !msg.playing)) s.clientPlaying = !!msg.playing; // mientras el turno sigue generando, se considera hablando
@@ -735,7 +737,7 @@ export class SessionGateway implements OnGatewayConnection {
             result = 'NO se ejecutó. Por seguridad, esta acción no corre en la misma respuesta en que leíste datos de terceros ni en un aviso automático. Dile a Javier qué ibas a hacer y pídele que te lo confirme; si dice que sí, vuelve a llamar la herramienta.';
           }
           else {
-            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, demo: s.demo, source: s.callerPhone ? 'llamada' : 'voz',
+            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, news: (s.news ??= { index: 0 }), demo: s.demo, source: s.callerPhone ? 'llamada' : 'voz',
               notify: (note) => { if (s.ready) { s.notes.push(note); this.pumpNotes(client, s); } } });
             if (c.name === 'buscar_imagenes' && out.gallery) s.imageSearches++;
             if (out.gallery) this.sendGallery(client, s, out.gallery);
@@ -750,6 +752,7 @@ export class SessionGateway implements OnGatewayConnection {
             if (out.card && !turn.ctrl.signal.aborted) this.send(client, { type: 'card', ...out.card });
             if (out.music) this.send(client, { type: 'music', ...out.music });
             if (out.tesla && !turn.ctrl.signal.aborted) this.send(client, { type: 'tesla', ...out.tesla });
+            if (out.news && !turn.ctrl.signal.aborted) this.send(client, { type: 'news', ...out.news });
           }
           this.log.log(`sesion #${s.n}: herramienta ${c.name} -> ${result.slice(0, 80)}`);
           s.history.push({ role: 'tool', tool_call_id: c.id, content: result });

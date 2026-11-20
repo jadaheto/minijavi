@@ -4,6 +4,7 @@ import { INTERESTS, LeadsService } from '../leads/leads.service';
 import { PLANE_PREFIX, PlaneMcpService } from '../mcp/plane-mcp.service';
 import { MODELS, WorkshopService } from '../workshop/workshop.service';
 import { MusicService, MusicState } from '../music/music.service';
+import { NewsService } from '../news/news.service';
 import { describeTesla, teslaCard, TeslaFocus, TeslaService } from '../tesla/tesla.service';
 import { UsageService } from '../usage/usage.service';
 import { GalleryItem, GalleryState, ImagesService } from '../images/images.service';
@@ -14,6 +15,8 @@ import { ApprovalsService } from '../policy/approvals.service';
 
 /** Resultado de una herramienta: el texto para el modelo y, si aplica, un efecto visual para el navegador. */
 export interface ToolResult { text: string; scene?: string; reaction?: string; card?: { title: string; lines: string[]; qr?: string; caption?: string }; music?: Record<string, unknown>;
+  /** Panel de noticias: la lista numerada, una noticia abierta o quitarlo. */
+  news?: Record<string, unknown>;
   /** Panel animado con el estado del Tesla (bateria, carga, seguros, clima). */
   tesla?: Record<string, unknown>;
   /** La galeria de la sesion cambio: 'show' (contenido nuevo), 'select' (otra seleccionada) o 'hide'. */
@@ -63,6 +66,8 @@ const UNTRUSTED: Record<string, string> = { que_hiciste: 'la bitácora (nombres 
 /** Datos de la sesion que algunas herramientas necesitan (la direccion publica, para enlaces y QR). */
 export interface ToolContext { /** Interesados registrados en esta conversacion (para anotarles algo, como que pidieron precio). */ leadIds?: number[];
   origin: string; music?: MusicState; gallery?: GalleryState;
+  /** Noticia que se esta viendo en esta conversacion (0 = la lista), para "la siguiente". */
+  news?: { index: number };
   /** Demostracion en curso en esta conversacion (el avatar actua como el asistente del negocio del visitante). */
   demo?: DemoState;
   /** Para trabajos que terminan despues del turno (una imagen generada): deja un aviso que el avatar cuenta cuando pueda. */
@@ -107,7 +112,7 @@ export class ToolsService {
   private readonly tools: Record<string, Tool>;
   /** Herramientas locales que solo existen en sesiones del dueño. */
   private readonly ownerTools: Record<string, Tool>;
-  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService) {
+  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService, news?: NewsService) {
     this.tools = {
       hora_actual: {
         description: 'Devuelve la fecha y la hora actuales. Usala cuando pregunten que hora es o que dia es hoy.',
@@ -279,6 +284,28 @@ export class ToolsService {
         else g.index = (g.index + (args.accion === 'anterior' ? g.items.length - 1 : 1)) % g.items.length;
         if (g.kind === 'generadas') return { text: `Ahora se ve en grande la imagen ${g.index + 1} de ${g.items.length}. Confírmalo en pocas palabras y pregúntale si le quiere hacer algún cambio a esa imagen; si pide cambios, usa generar_imagen con cambiar en ${g.index + 1} y solo los cambios en la descripción.`, gallery: 'select' };
         return { text: `Ahora se ve ${g.kind === 'bocetos' ? 'el boceto' : 'la foto'} ${g.index + 1} de ${g.items.length}. Confírmalo en pocas palabras.`, gallery: 'select' };
+      },
+    };
+    // Noticias de inteligencia artificial: titulares que el servidor trae una vez al dia de un webhook de Javier. Publica.
+    if (news?.enabled) this.tools.noticias = {
+      description: 'Noticias recientes de inteligencia artificial (titulares de medios; se actualizan una vez al día). "ver" muestra en pantalla la lista numerada; "abrir" con un número muestra esa noticia en grande con un código QR para leerla completa; "siguiente" y "anterior" pasan de una a otra; "quitar" las saca de la pantalla. ' +
+        'Úsala cuando pidan las noticias de inteligencia artificial o de IA, o digan "ve al artículo 3", "abre la dos", "la siguiente", "vuelve a la lista", "quita las noticias".',
+      parameters: { type: 'object', properties: { accion: { type: 'string', enum: ['ver', 'abrir', 'siguiente', 'anterior', 'quitar'] }, numero: { type: 'number', description: 'Número de la noticia, para "abrir".' } }, required: ['accion'] },
+      run: (args, ctx) => {
+        const st = ctx.news ?? { index: 0 }, items = news.items, action = String(args.accion);
+        if (action === 'quitar') { st.index = 0; return { text: 'Noticias quitadas de la pantalla.', news: { action: 'hide' } }; }
+        if (!items.length) { if (!news.loading) void news.refresh(); return 'Las noticias de hoy todavía se están trayendo; tarda cerca de un minuto. Dile que te las pida otra vez en un momento.'; }
+        const source = 'las noticias (titulares de medios, texto de terceros)';
+        if (action === 'ver') {
+          st.index = 0;
+          return { untrusted: true, news: news.panel(), text: `En pantalla está la lista numerada de ${items.length} noticias de inteligencia artificial (del ${news.day}).\n${asData(source, items.map((i) => `${i.n}. ${i.title}${i.source ? ` (${i.source}${i.date ? `, ${i.date}` : ''})` : ''}`).join('\n'))}\n` +
+            'Dile cuántas hay, menciona dos o tres titulares en pocas palabras (sin leer la lista entera) y pregúntale cuál quiere abrir. No inventes detalles que no estén en los titulares.' };
+        }
+        const k = action === 'abrir' ? Math.round(Number(args.numero)) : st.index ? ((st.index - 1 + (action === 'siguiente' ? 1 : items.length - 1)) % items.length) + 1 : action === 'siguiente' ? 1 : items.length;
+        if (!(k >= 1 && k <= items.length)) return `Hay ${items.length} noticias; pídele un número entre 1 y ${items.length}.`;
+        const it = items[k - 1]; st.index = k;
+        return { untrusted: true, news: news.panel(k), text: `En pantalla está la noticia ${k} de ${items.length}${it.qr ? ', con un código QR que la abre completa en el celular' : ''}.\n${asData(source, `Titular: ${it.title}\nMedio: ${it.source || 'sin dato'}\nFecha: ${it.date || 'sin dato'}${it.summary ? `\nResumen: ${it.summary}` : ''}`)}\n` +
+          'Cuéntasela en una o dos frases con SOLO lo que dice ahí: no tienes el texto completo de la nota, así que no agregues cifras, causas ni detalles. Dile que con el código QR puede leerla completa y pregúntale si quiere ver otra.' };
       },
     };
     this.ownerTools = {

@@ -6,6 +6,7 @@ import { connect } from './socket.js';
 import { createBackdrop, emojiBurst, floatEmoji } from './fx.js';
 import { createMusic, imageColor } from './music.js';
 import { createTeslaPanel } from './tesla.js';
+import { createNewsPanel } from './news.js';
 import { BrowserVoice } from './browser-voice.js';
 import { createGate } from './mic-gate.js';
 
@@ -34,6 +35,8 @@ let serverPlayer = null; // reproductor del audio que manda el servidor (ElevenL
 // Musica de fondo (modo dueño): el servidor manda la cola; aqui suena en el mini reproductor y baja cuando alguien habla.
 // Panel animado del Tesla (modo dueño): aparece cuando el avatar consulta el carro.
 const tesla = createTeslaPanel($('tesla'));
+// Noticias de inteligencia artificial: lista numerada o una noticia abierta con su QR. Al tocar una se le avisa al servidor.
+const news = createNewsPanel($('news'), (index) => socket?.send({ type: 'news', index }));
 // Vista previa del panel con datos de EJEMPLO (no consulta el carro): abrir con ?demo=tesla. Se repite para ver la animacion.
 if (new URLSearchParams(location.search).get('demo') === 'tesla') {
   const demo = [
@@ -277,7 +280,9 @@ function onMessage(msg) {
     case 'music': // musica de fondo
       onMusic(msg); break;
     case 'tesla': // estado del carro
-      hideCard(); if (gallery) hideGallery(); tesla.show(msg); break;
+      hideCard(); if (gallery) hideGallery(); news.hide(); tesla.show(msg); break;
+    case 'news': // noticias de inteligencia artificial
+      hideCard(); if (gallery) hideGallery(); tesla.hide(); news.show(msg); break;
     case 'spotify_token': { // respuesta al token pedido por el reproductor de Spotify
       const w = tokenWaiters; tokenWaiters = [];
       for (const x of w) msg.token ? x.resolve(msg.token) : x.reject(new Error(msg.error || 'sin token'));
@@ -296,7 +301,7 @@ function shutdown(message) {
   live = false; connecting = false; prebuffer.length = 0; loud = 0;
   retryAt = Math.max(retryAt, performance.now() + 2500);
   suspended = false; awayNotice = ''; $('away').hidden = true;
-  setWork(null); music.stop(); tesla.hide(); stopSpeech(); hideCard(); hideGallery(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
+  setWork(null); music.stop(); tesla.hide(); news.hide(); stopSpeech(); hideCard(); hideGallery(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
   setSub('sub-user', ''); setSub('sub-avatar', '');
   $('mic').hidden = true; $('owner').hidden = true; $('demo').hidden = true; $('gate').hidden = false;
   $('gate').classList.toggle('standby', armed);
@@ -374,7 +379,7 @@ window.addEventListener('pointerdown', () => { if (live && suspended) socket?.se
 // Con imagenes en pantalla el avatar esta pequeño en la esquina: tocarlo las quita y lo devuelve a su tamaño.
 $('stage').addEventListener('click', () => { if (gallery) { hideGallery(); socket?.send({ type: 'gallery', hide: true }); } });
 window.__avatarDebug = {
-  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, gallery: showGallery, work: setWork, music: onMusic, tesla: (d) => tesla.show(d), message: onMessage,
+  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, gallery: showGallery, work: setWork, music: onMusic, tesla: (d) => tesla.show(d), news: (d) => news.show(d), message: onMessage,
   standby: () => { armed = true; shutdown(''); }, suspend: setSuspended, activity: (n) => { setActivity(n); actUntil = performance.now() + 600000; },
   get weights() { return { ...lips.weights }; }, get state() { return state; }, get time() { return player ? player.time() : -1; }, morphNames: avatar.morphNames, missing,
 };

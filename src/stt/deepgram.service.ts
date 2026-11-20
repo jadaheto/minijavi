@@ -34,7 +34,8 @@ export class DeepgramService {
       encoding: 'linear16', sample_rate: '16000', channels: '1',
       interim_results: 'true', endpointing: '300', utterance_end_ms: '1000', smart_format: 'true',
     });
-    for (const k of keyterms.slice(0, 20)) q.append('keyterm', k);
+    // Keyterm solo existe en los modelos nova-3: con otro modelo configurado no se envia (Deepgram podria rechazar la conexion).
+    if (/^nova-3/.test(this.cfg.deepgramModel)) for (const k of keyterms.slice(0, 20)) q.append('keyterm', k);
     const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${q}`, { headers: { Authorization: `Token ${this.cfg.deepgramApiKey}` } });
     const pending: Buffer[] = [];
     let closed = false;

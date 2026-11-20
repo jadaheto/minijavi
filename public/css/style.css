@@ -230,3 +230,42 @@ body.tesla .cover-art, body.showing .tsl { display: none; }
   body.tesla:not(.showing) #stage { transform: translateY(24vh) scale(.62); transform-origin: 50% 50%; }
 }
 @media (prefers-reduced-motion: reduce) { .tsl, .tsl * { animation: none !important; transition: none !important; } .tsl-list li, .tsl-chip { opacity: 1; } }
+
+/* Panel de noticias: a la derecha, con el avatar corrido a la izquierda (como el del Tesla). */
+.nws { position: fixed; right: max(18px, 3vw); top: 50%; transform: translateY(-50%); width: min(520px, 44vw); max-height: 88dvh; overflow: auto; z-index: 4; padding: 16px 16px 12px; border-radius: 22px; display: grid; gap: 12px;
+  color: #e8edf5; background: linear-gradient(160deg, rgba(22, 27, 36, .94), rgba(10, 13, 18, .94)); border: 1px solid rgba(255, 255, 255, .08); box-shadow: 0 24px 70px rgba(0, 0, 0, .55); backdrop-filter: blur(14px); }
+.nws[hidden] { display: none; }
+.nws.in { animation: tsl-in .55s cubic-bezier(.2, .9, .2, 1); }
+body.news:not(.showing) #stage { transform: translateX(-21vw); }
+body.news .cover-art, body.showing .nws { display: none; }
+.nws button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; min-height: 0; }
+.nws-head { display: flex; align-items: center; gap: 10px; }
+.nws-title { flex: 1; font-size: 13px; text-transform: uppercase; letter-spacing: .09em; color: #9aa6b8; }
+.nws-back, .nws-close { flex: none; padding: 5px 10px; line-height: 1.2; border-radius: 999px; background: rgba(255, 255, 255, .08) !important; font-size: 13px; color: #cfd6e2 !important; }
+.nws-close { width: 28px; height: 28px; padding: 0; display: grid; place-content: center; font-size: 18px; line-height: 1; }
+.nws-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.nws-item { opacity: 0; animation: tsl-row .45s ease forwards; }
+.nws-row { width: 100%; display: flex; align-items: center; gap: 14px; padding: 11px 12px; border-radius: 14px; text-align: left; background: rgba(255, 255, 255, .045) !important; transition: background .2s ease, transform .2s ease; }
+.nws-row:hover { background: rgba(255, 255, 255, .1) !important; transform: translateX(-3px); }
+.nws-n { flex: none; width: 38px; height: 38px; display: grid; place-content: center; border-radius: 12px; font-size: 18px; font-weight: 700; color: #0b1220; background: linear-gradient(140deg, #7cc4ff, #4f8dff); }
+.nws-text { display: grid; gap: 3px; min-width: 0; }
+.nws-h { font-size: 15.5px; line-height: 1.3; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.nws-meta { margin: 0; font-size: 12px; color: #8f9aac; }
+.nws-hint { margin: 0; text-align: center; font-size: 12px; color: #7f8a9c; }
+.nws-open { display: grid; gap: 10px; justify-items: start; padding: 6px 4px 2px; animation: tsl-row .5s ease; }
+.nws-n.big { width: 46px; height: 46px; font-size: 22px; border-radius: 14px; }
+.nws-h.big { margin: 0; font-size: clamp(20px, 2.1vw, 27px); line-height: 1.22; display: block; overflow: visible; }
+.nws-sum { margin: 0; font-size: 15.5px; line-height: 1.5; color: #cfd6e2; }
+.nws-qr { justify-self: center; display: grid; justify-items: center; gap: 7px; margin-top: 4px; }
+.nws-qr img { width: min(190px, 42vw); height: auto; border-radius: 12px; padding: 8px; background: #fff; }
+.nws-qr small { font-size: 12px; color: #9aa6b8; }
+.nws-nav { display: flex; justify-content: center; gap: 7px; }
+.nws-nav button { width: 32px; height: 32px; padding: 0; display: grid; place-content: center; line-height: 1; border-radius: 10px; background: rgba(255, 255, 255, .07) !important; font-weight: 600; color: #aab4c4 !important; }
+.nws-nav button.on { background: linear-gradient(140deg, #7cc4ff, #4f8dff) !important; color: #0b1220 !important; }
+@media (max-aspect-ratio: 4/5) {
+  .nws { right: auto; left: 50%; top: 8px; transform: translateX(-50%); width: min(520px, 94vw); max-height: 62dvh; }
+  .nws.in { animation: none; }
+  body.news:not(.showing) #stage { transform: translateY(30vh) scale(.5); transform-origin: 50% 50%; }
+  .nws-qr img { width: 150px; }
+}
+@media (prefers-reduced-motion: reduce) { .nws, .nws * { animation: none !important; transition: none !important; } .nws-item { opacity: 1; } }

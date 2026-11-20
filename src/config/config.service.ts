@@ -105,6 +105,9 @@ export class ConfigService {
   readonly teslaRedirectUri: string;
   readonly teslaApiUrl: string;
   readonly teslaDailyCalls: number;
+  /** Noticias de IA: webhook (https) que devuelve la pagina del boletin, y hora local desde la que se piden una vez al dia. */
+  readonly newsUrl: string;
+  readonly newsHour: number;
   readonly musicDefaultQuery: string;
   readonly musicVolume: number;
   readonly musicDailySearches: number;
@@ -290,6 +293,8 @@ export class ConfigService {
     this.spotifyClientId = spotifyOn ? str('SPOTIFY_CLIENT_ID') : '';
     this.spotifyClientSecret = spotifyOn ? str('SPOTIFY_CLIENT_SECRET') : '';
     this.spotifyRedirectUri = spotifyOn ? str('SPOTIFY_REDIRECT_URI') : '';
+    this.newsUrl = /^https:\/\/[^\s]+$/.test(str('NOTICIAS_URL')) ? str('NOTICIAS_URL') : '';
+    this.newsHour = Math.min(23, int('NOTICIAS_HORA', 6, 0));
     const teslaOn = str('TESLA', '1') !== '0';
     this.teslaClientId = teslaOn ? str('TESLA_CLIENT_ID') : '';
     this.teslaClientSecret = teslaOn ? str('TESLA_CLIENT_SECRET') : '';
