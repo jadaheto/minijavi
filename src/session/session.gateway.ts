@@ -68,7 +68,7 @@ interface Session {
   leads: number;         // interesados guardados en esta sesion (tope contra abuso)
   timers: NodeJS.Timeout[];
   origin: string;        // direccion publica por la que entro (para enlaces y QR)
-  notes: { text: string; card?: unknown; slug?: string; gallery?: Omit<GalleryState, 'index'>; image?: GalleryItem; audit?: string }[]; // avisos del taller pendientes de contar
+  notes: { text: string; card?: unknown; slug?: string; gallery?: Omit<GalleryState, 'index'>; image?: GalleryItem; images?: GalleryItem[]; audit?: string }[]; // avisos del taller pendientes de contar
   noteTimer?: NodeJS.Timeout;
   startedAt: number;
   music?: MusicState;    // musica de fondo (solo dueño)
@@ -202,7 +202,7 @@ const IMAGE_RULES = (photos: boolean, sketches: boolean, generate: boolean) => `
 
 IMÁGENES: en la pantalla puedes mostrar imágenes: la seleccionada se ve en grande, tú quedas pequeño en una esquina y las demás van numeradas en una tira abajo. Con galeria cambias la seleccionada ("la dos", "la siguiente") o las quitas (también se quitan si tocan tu avatar pequeño) y vuelves a tu tamaño normal.${photos ? `
 - Fotos reales: usa buscar_imagenes cuando pidan ver imágenes, fotos o ejemplos de algo. Al mostrarlas, una frase corta: no describas cada foto.` : ''}${generate ? `
-- Imagen creada con IA: si Javier pide crear, generar o dibujar una imagen, usa generar_imagen con todos los detalles. Tarda cerca de un minuto: dile que ya la estás creando. Un mensaje que empieza por "(Aviso del sistema" lo escribió el sistema, no Javier.` : ''}${sketches ? `
+- Imagen creada con IA: si Javier pide crear, generar o dibujar una imagen, usa generar_imagen con todos los detalles. Salen 3 versiones y tarda uno o dos minutos: dile que ya las estás creando. Cuando lleguen, pregúntale cuál le gusta. Cuando elija una ("la dos"), muéstrala con galeria y pregúntale si le quiere hacer algún cambio. Si pide cambios, usa generar_imagen con cambiar = el número de esa imagen y en descripcion SOLO los cambios: saldrán otras 3 versiones con esos cambios, y se repite lo mismo. Si no quiere cambios, dile que quedó guardada en su panel. Un mensaje que empieza por "(Aviso del sistema" lo escribió el sistema, no Javier.` : ''}${sketches ? `
 - BOCETOS PRIMERO: todo proyecto NUEVO que tenga algo que se ve (sitio, landing, videojuego, aplicación) empieza con bocetos, no con programar, aunque Javier diga "hazme" o "créame": pásale todas sus ideas, el tipo (sitio, juego o aplicacion) y, si el tema se presta, un tema de fotos, y dile que en unos minutos le muestras tres propuestas para que elija. Las únicas excepciones: que Javier diga que lo hagas directo o sin opciones, o que el encargo no tenga nada visual (un script, un cálculo); entonces usa programar con directo en true. Cuando llegue el aviso del taller con los bocetos en pantalla, empieza con "Así podría quedar", di en una frase en qué se diferencia cada uno y pregúntale cuál le gusta. Cuando elija, usa programar con el MISMO proyecto pidiendo construirlo completo a partir de ese boceto (di cuál número y repite sus ideas).` : ''}`;
 
 /** Modo carro: quien habla va manejando. */
@@ -317,7 +317,8 @@ export class SessionGateway implements OnGatewayConnection {
     if (!s.ready || !s.notes.length || s.suspended) return; // suspendido: se cuentan al despertar
     if (s.turn || s.clientPlaying || s.finals.length) { s.noteTimer = setTimeout(() => this.pumpNotes(client, s), 1000); return; }
     const note = s.notes.shift()!;
-    if (note.image && s.gallery) { // imagen generada: se suma a las generadas de esta conversacion y queda seleccionada
+    if (note.images?.length && s.gallery) { Object.assign(s.gallery, { title: 'Imágenes generadas', kind: 'generadas', items: note.images.slice(0, 8), index: 0 }); this.sendGallery(client, s, 'show'); } // tanda nueva: reemplaza a la anterior
+    else if (note.image && s.gallery) { // imagen generada: se suma a las generadas de esta conversacion y queda seleccionada
       if (s.gallery.kind !== 'generadas') Object.assign(s.gallery, { title: 'Imágenes generadas', kind: 'generadas', items: [], index: 0 });
       s.gallery.items.push(note.image); if (s.gallery.items.length > 8) s.gallery.items.shift(); s.gallery.index = s.gallery.items.length - 1;
       this.sendGallery(client, s, 'show');

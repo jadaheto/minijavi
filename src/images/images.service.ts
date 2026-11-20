@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ConfigService } from '../config/config.service';
 import { DbService } from '../db/db.service';
@@ -81,12 +81,65 @@ export class ImagesService implements OnModuleInit {
   }
 
   /** Antes de lanzar una generacion: '' si se puede, o el motivo por el que no. Cuenta el intento. */
-  reserveGeneration(): string {
+  reserveGeneration(count = 1): string {
     if (!this.canGenerate) return 'la generación de imágenes no está configurada';
     this.today();
-    if (this.generated >= this.cfg.imagesDailyGenerations) return 'se alcanzó el tope de imágenes generadas de hoy';
-    this.generated++; this.usage.add('image_generations');
+    if (this.generated + count > this.cfg.imagesDailyGenerations) return 'se alcanzó el tope de imágenes generadas de hoy';
+    this.generated += count; this.usage.add('image_generations', count);
     return '';
+  }
+
+  /** Descripcion y formato con que se genero una imagen guardada (para pedir cambios sobre ella). */
+  async source(name: string): Promise<{ prompt: string; format: string } | undefined> {
+    if (!this.file(name)) return undefined;
+    const row = (await this.db.query<any>('SELECT prompt, format FROM generated_images WHERE name = $1', [name]).catch(() => []))[0];
+    return { prompt: String(row?.prompt ?? ''), format: FORMATS[String(row?.format)] ? String(row.format) : 'horizontal' };
+  }
+
+  private async store(img: { buf: Buffer; type: string }, prompt: string, fmt: string): Promise<string> {
+    if (img.buf.length < 500 || img.buf.length > 20 * 1024 * 1024) throw new Error('la imagen generada no tiene un tamaño válido');
+    mkdirSync(this.dir, { recursive: true });
+    const name = `${randomBytes(12).toString('hex')}.${img.type === 'image/png' ? 'png' : img.type === 'image/webp' ? 'webp' : 'jpg'}`;
+    writeFileSync(join(this.dir, name), img.buf);
+    await this.db.query('INSERT INTO generated_images (at, name, prompt, format, bytes) VALUES ($1, $2, $3, $4, $5)', [new Date().toISOString(), name, prompt.slice(0, 1500), fmt, img.buf.length])
+      .catch((e) => this.log.warn(`la imagen se guardó pero no quedó anotada: ${(e as Error).message}`));
+    return name;
+  }
+
+  /**
+   * Varias versiones de una vez (pedido por Javier el 2026-11-19: tres para elegir). Sin `base` son imagenes nuevas de la
+   * descripcion; con `base` (nombre de una ya generada) son CAMBIOS sobre esa imagen: OpenAI la recibe y la edita
+   * (`POST /v1/images/edits`). Mismo orden de proveedores que `generate`. Magnific no edita: si toca el respaldo, se vuelve
+   * a generar desde la descripcion original mas los cambios (`edited` queda en false y se avisa).
+   */
+  async generateSet(prompt: string, format = 'horizontal', count = 3, base?: string, signal?: AbortSignal): Promise<{ names: string[]; provider: 'OpenAI' | 'Magnific'; fallback?: string; edited: boolean }> {
+    let fmt = FORMATS[format] ? format : 'horizontal', basePrompt = '', baseFile: string | null = null;
+    if (base) {
+      const src = await this.source(base); baseFile = this.file(base);
+      if (!src || !baseFile) throw new Error('la imagen que se quiere cambiar ya no existe');
+      basePrompt = src.prompt; fmt = src.format;
+    }
+    const full = base ? `${basePrompt ? `${basePrompt}\nCambios pedidos: ` : ''}${prompt}` : prompt;
+    let imgs: { buf: Buffer; type: string }[] = [], provider: 'OpenAI' | 'Magnific' = 'OpenAI', fallback: string | undefined, edited = false;
+    if (this.cfg.imageOpenAiKey) {
+      try {
+        imgs = await this.viaOpenAi(base ? `Modifica esta imagen conservando todo lo demás igual (composición, sujeto y estilo). Cambios pedidos: ${prompt}` : prompt, fmt, signal, count, baseFile ?? undefined);
+        edited = !!base; this.usage.add('image_openai', imgs.length);
+      } catch (e) {
+        if (e instanceof Blocked || !this.cfg.magnificApiKey || signal?.aborted) throw e;
+        fallback = (e as Error).message; this.log.warn(`imagen: ${fallback}; se intenta con Magnific`);
+      }
+    }
+    if (!imgs.length) {
+      const done = await Promise.allSettled(Array.from({ length: count }, () => this.viaMagnific(full, fmt, signal)));
+      imgs = done.flatMap((d) => (d.status === 'fulfilled' ? [d.value] : []));
+      if (!imgs.length) throw (done[0] as PromiseRejectedResult).reason;
+      provider = 'Magnific'; this.usage.add('image_magnific', imgs.length);
+    }
+    const names: string[] = [];
+    for (const img of imgs.slice(0, count)) names.push(await this.store(img, full, fmt));
+    this.log.log(`${names.length} imagen(es) ${edited ? 'editada(s)' : 'generada(s)'} con ${provider}`);
+    return { names, provider, fallback, edited };
   }
 
   /**
@@ -98,19 +151,14 @@ export class ImagesService implements OnModuleInit {
     const fmt = FORMATS[format] ? format : 'horizontal';
     let img: { buf: Buffer; type: string } | undefined, provider: 'OpenAI' | 'Magnific' = 'OpenAI', fallback: string | undefined;
     if (this.cfg.imageOpenAiKey) {
-      try { img = await this.viaOpenAi(prompt, fmt, signal); this.usage.add('image_openai'); }
+      try { img = (await this.viaOpenAi(prompt, fmt, signal))[0]; this.usage.add('image_openai'); }
       catch (e) {
         if (e instanceof Blocked || !this.cfg.magnificApiKey || signal?.aborted) throw e;
         fallback = (e as Error).message; this.log.warn(`imagen: ${fallback}; se intenta con Magnific`);
       }
     }
     if (!img) { img = await this.viaMagnific(prompt, fmt, signal); provider = 'Magnific'; this.usage.add('image_magnific'); }
-    if (img.buf.length < 500 || img.buf.length > 20 * 1024 * 1024) throw new Error('la imagen generada no tiene un tamaño válido');
-    mkdirSync(this.dir, { recursive: true });
-    const name = `${randomBytes(12).toString('hex')}.${img.type === 'image/png' ? 'png' : img.type === 'image/webp' ? 'webp' : 'jpg'}`;
-    writeFileSync(join(this.dir, name), img.buf);
-    await this.db.query('INSERT INTO generated_images (at, name, prompt, format, bytes) VALUES ($1, $2, $3, $4, $5)', [new Date().toISOString(), name, prompt.slice(0, 1500), fmt, img.buf.length])
-      .catch((e) => this.log.warn(`la imagen se guardó pero no quedó anotada: ${(e as Error).message}`));
+    const name = await this.store(img, prompt, fmt);
     this.log.log(`imagen generada con ${provider} (${Math.round(img.buf.length / 1024)} KB)`);
     return { name, provider, fallback };
   }
@@ -120,11 +168,19 @@ export class ImagesService implements OnModuleInit {
    * GPT Image devuelven siempre la imagen en `data[0].b64_json`. No se confirmo en la documentacion la forma exacta del
    * rechazo por contenido: se reconoce por `moderation_blocked` o por las palabras de su mensaje.
    */
-  private async viaOpenAi(prompt: string, format: string, signal?: AbortSignal): Promise<{ buf: Buffer; type: string }> {
+  private async viaOpenAi(prompt: string, format: string, signal?: AbortSignal, n = 1, editFile?: string): Promise<{ buf: Buffer; type: string }[]> {
+    // Con `editFile` se editan imagenes: `POST /v1/images/edits` en JSON, con la imagen como data URL en `images[].image_url`
+    // (referencia leida el 2026-11-19). `n` (1 a 10) pide varias versiones en una sola peticion, en las dos rutas.
+    const common = { model: this.cfg.imageOpenAiModel, prompt: prompt.slice(0, 4000), size: OPENAI_SIZES[format], quality: this.cfg.imageOpenAiQuality, output_format: 'jpeg', n };
+    let body: Record<string, unknown> = common, path = 'generations';
+    if (editFile) {
+      const buf = readFileSync(editFile), mime = editFile.endsWith('.png') ? 'image/png' : editFile.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+      body = { ...common, images: [{ image_url: `data:${mime};base64,${buf.toString('base64')}` }] }; path = 'edits';
+    }
     let res: Response;
     try {
-      res = await fetch('https://api.openai.com/v1/images/generations', { method: 'POST', headers: { Authorization: `Bearer ${this.cfg.imageOpenAiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: this.cfg.imageOpenAiModel, prompt: prompt.slice(0, 4000), size: OPENAI_SIZES[format], quality: this.cfg.imageOpenAiQuality, output_format: 'jpeg', n: 1 }), signal: signal ?? AbortSignal.timeout(180_000) });
+      res = await fetch(`https://api.openai.com/v1/images/${path}`, { method: 'POST', headers: { Authorization: `Bearer ${this.cfg.imageOpenAiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body), signal: signal ?? AbortSignal.timeout(240_000) });
     } catch (e) { throw new Error(`no se pudo conectar con OpenAI (${(e as Error).name})`); }
     const d: any = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -132,9 +188,9 @@ export class ImagesService implements OnModuleInit {
       if (code === 'moderation_blocked' || code === 'content_policy_violation' || /safety system|content policy|moderation/i.test(msg)) throw new Blocked('el filtro de contenido de OpenAI rechazó esa descripción');
       throw new Error(`OpenAI respondió ${res.status}${code === 'insufficient_quota' ? ' (la cuenta no tiene saldo)' : res.status === 401 ? ' (clave inválida)' : msg ? ` (${msg})` : ''}`);
     }
-    const b64 = String(d?.data?.[0]?.b64_json ?? '');
-    if (!b64) throw new Error('OpenAI terminó sin entregar la imagen');
-    return { buf: Buffer.from(b64, 'base64'), type: 'image/jpeg' };
+    const out = (Array.isArray(d?.data) ? d.data : []).map((x: any) => String(x?.b64_json ?? '')).filter(Boolean).map((b64: string) => ({ buf: Buffer.from(b64, 'base64'), type: 'image/jpeg' }));
+    if (!out.length) throw new Error('OpenAI terminó sin entregar la imagen');
+    return out;
   }
 
   /** Magnific (Mystic): crea la tarea, la consulta hasta que termina (~2 min como maximo) y descarga la imagen. */

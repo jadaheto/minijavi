@@ -66,7 +66,7 @@ export interface ToolContext { /** Interesados registrados en esta conversacion 
   /** Demostracion en curso en esta conversacion (el avatar actua como el asistente del negocio del visitante). */
   demo?: DemoState;
   /** Para trabajos que terminan despues del turno (una imagen generada): deja un aviso que el avatar cuenta cuando pueda. */
-  notify?: (note: { text: string; image?: GalleryItem }) => void;
+  notify?: (note: { text: string; image?: GalleryItem; images?: GalleryItem[] }) => void;
   /** La sesion es del dueño (para herramientas publicas que le muestran mas a Javier, como los casos ocultos). */
   owner?: boolean; /** De donde viene la conversacion: 'voz' (sitio) o 'llamada'. */ source?: string; }
 interface Tool {
@@ -277,6 +277,7 @@ export class ToolsService {
         if (args.accion === 'quitar') { Object.assign(g, { title: '', kind: '', items: [], index: 0 }); return { text: 'Galería quitada.', gallery: 'hide' }; }
         if (args.accion === 'ver') { const k = Math.round(Number(args.numero)); if (!(k >= 1 && k <= g.items.length)) return `Solo hay ${g.items.length}; pídele un número entre 1 y ${g.items.length}.`; g.index = k - 1; }
         else g.index = (g.index + (args.accion === 'anterior' ? g.items.length - 1 : 1)) % g.items.length;
+        if (g.kind === 'generadas') return { text: `Ahora se ve en grande la imagen ${g.index + 1} de ${g.items.length}. Confírmalo en pocas palabras y pregúntale si le quiere hacer algún cambio a esa imagen; si pide cambios, usa generar_imagen con cambiar en ${g.index + 1} y solo los cambios en la descripción.`, gallery: 'select' };
         return { text: `Ahora se ve ${g.kind === 'bocetos' ? 'el boceto' : 'la foto'} ${g.index + 1} de ${g.items.length}. Confírmalo en pocas palabras.`, gallery: 'select' };
       },
     };
@@ -291,25 +292,39 @@ export class ToolsService {
         },
       },
     };
-    // Generacion de imagenes con IA (Magnific). Tarda: se lanza en segundo plano y el avatar avisa cuando esta en pantalla.
+    // Generacion de imagenes con IA (OpenAI y, de respaldo, Magnific). Cada pedido trae 3 versiones para elegir; sobre la
+    // elegida se pueden pedir cambios, que tambien llegan en 3 versiones. Tarda: corre en segundo plano y el avatar avisa.
     if (images.canGenerate) this.ownerTools.generar_imagen = {
-      description: 'Genera una imagen con inteligencia artificial a partir de una descripción y la muestra en pantalla cuando está lista (tarda cerca de un minuto). Úsala cuando Javier pida crear, generar, dibujar o inventar una imagen. Para fotos reales que ya existen usa buscar_imagenes.',
+      description: 'Genera con inteligencia artificial 3 versiones de una imagen y las muestra numeradas en pantalla para que Javier elija (tarda uno o dos minutos). Úsala cuando pida crear, generar, dibujar o inventar una imagen. ' +
+        'También sirve para hacerle CAMBIOS a una imagen generada que está en pantalla: pon en "cambiar" su número y en "descripcion" solo los cambios; salen 3 versiones nuevas de esa imagen. Para fotos reales que ya existen usa buscar_imagenes.',
       parameters: { type: 'object', properties: {
-        descripcion: { type: 'string', description: 'Qué debe verse, con todos los detalles que dio Javier: sujeto, estilo, colores, ambiente.' },
-        formato: { type: 'string', enum: ['horizontal', 'cuadrada', 'vertical'], description: 'Por defecto horizontal.' },
+        descripcion: { type: 'string', description: 'Imagen nueva: qué debe verse, con todos los detalles que dio Javier (sujeto, estilo, colores, ambiente). Cambios: solo lo que Javier quiere cambiar ("que sea de noche", "quítale el sombrero").' },
+        formato: { type: 'string', enum: ['horizontal', 'cuadrada', 'vertical'], description: 'Por defecto horizontal. En cambios se conserva el de la imagen original.' },
+        cambiar: { type: 'number', description: 'Número de la imagen generada en pantalla a la que se le hacen los cambios. Omítelo para una imagen nueva.' },
       }, required: ['descripcion'] },
-      run: (args, ctx) => {
+      run: async (args, ctx) => {
         const prompt = String(args.descripcion ?? '').trim();
-        if (prompt.length < 5) return 'Falta describir la imagen. Pregúntale qué quiere ver.';
+        if (prompt.length < 5) return 'Falta describir la imagen o los cambios. Pregúntale qué quiere ver.';
         if (!ctx.gallery || !ctx.notify) return 'En esta conversación no hay pantalla donde mostrar imágenes.';
-        const no = images.reserveGeneration();
+        let base: string | undefined;
+        if (args.cambiar !== undefined && args.cambiar !== null && args.cambiar !== '') {
+          const k = Math.round(Number(args.cambiar)), g = ctx.gallery;
+          if (g.kind !== 'generadas' || !g.items.length) return 'No hay imágenes generadas en pantalla para cambiar. Pregúntale qué imagen quiere crear.';
+          if (!(k >= 1 && k <= g.items.length)) return `En pantalla hay ${g.items.length}; pregúntale a cuál le hace los cambios (del 1 al ${g.items.length}).`;
+          base = String(g.items[k - 1].full ?? '').match(/^\/imagenes\/([a-f0-9]{24}\.(?:jpg|png|webp))$/)?.[1];
+          if (!base || !(await images.source(base))) return 'Esa imagen ya no está guardada; no se le pueden hacer cambios. Ofrécele crearla de nuevo.';
+        }
+        const no = images.reserveGeneration(3);
         if (no) return `No se generó: ${no}.`;
-        const notify = ctx.notify;
-        void images.generate(prompt, String(args.formato ?? 'horizontal'))
-          .then(({ name, provider, fallback }) => notify({ text: `(Aviso del sistema: la imagen que pidió Javier ya se generó y está en pantalla, en grande. Quedó guardada: la encuentra en su panel, pestaña Imágenes.${fallback ? ` OJO: OpenAI no pudo (${fallback}) y la hizo el respaldo, ${provider}; menciónalo.` : ''} Díselo en una frase y pregúntale si le gusta o quiere otra versión.)`,
-            image: { thumb: `/imagenes/${name}`, full: `/imagenes/${name}`, label: prompt.slice(0, 120), credit: `Generada con IA (${provider})` } }))
-          .catch((e) => notify({ text: `(Aviso del sistema: no se pudo generar la imagen que pidió Javier: ${(e as Error).message}. Díselo en una frase.)` }));
-        return 'La imagen se está generando en segundo plano; tarda cerca de un minuto. Dile que ya la estás creando y que se la muestras apenas esté; puede seguir hablando contigo.';
+        const notify = ctx.notify, shots = (names: string[], provider: string) => names.map((name, i) => ({ thumb: `/imagenes/${name}`, full: `/imagenes/${name}`, label: `${i + 1}. ${prompt.slice(0, 110)}`, credit: `Generada con IA (${provider})` }));
+        void images.generateSet(prompt, String(args.formato ?? 'horizontal'), 3, base)
+          .then(({ names, provider, fallback, edited }) => notify({ images: shots(names, provider),
+            text: `(Aviso del sistema: ya están en pantalla, numeradas, ${names.length} ${base ? 'versiones con los cambios que pidió Javier' : 'versiones de la imagen que pidió Javier'}. Quedaron guardadas en su panel, pestaña Imágenes.` +
+              `${fallback ? ` OJO: OpenAI no pudo (${fallback}) y las hizo el respaldo, ${provider}; menciónalo.` : ''}${base && !edited ? ' OJO: el respaldo no puede editar una imagen: las volvió a crear desde la descripción con los cambios, así que pueden verse distintas a la original; díselo.' : ''}` +
+              ` Dile en una frase que ya están y pregúntale cuál le gusta. Cuando elija una, muéstrala con galeria y pregúntale si le quiere hacer algún cambio.)` }))
+          .catch((e) => notify({ text: `(Aviso del sistema: no se pudieron generar las imágenes que pidió Javier: ${(e as Error).message}. Díselo en una frase.)` }));
+        return base ? 'Se están generando 3 versiones con esos cambios sobre la imagen elegida; tarda uno o dos minutos. Dile que ya las estás creando y que se las muestras apenas estén.'
+          : 'Se están generando 3 versiones en segundo plano; tarda uno o dos minutos. Dile que ya las estás creando y que le muestras las tres para que elija; puede seguir hablando contigo.';
       },
     };
     // Seguimiento por voz: cambiar el estado de un interesado o dejarle una nota.

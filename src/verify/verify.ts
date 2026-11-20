@@ -1158,7 +1158,7 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     const src = (await import('node:fs')).readFileSync(join(__dirname, '..', '..', 'src', 'tesla', 'tesla.service.ts'), 'utf8');
     must(!/method: 'POST'[^\n]*\/api\/1\//.test(src) && !/wake_up'|\/command\//.test(src.replace(/\/\*[\s\S]*?\*\//g, '')), 'el servicio de Tesla no debe tener llamadas de escritura');
     await again.disconnect();
-    teslaFetch = undefined; Object.assign(process.env, { TESLA_CLIENT_ID: '', TESLA_CLIENT_SECRET: '', TESLA_REDIRECT_URI: '', TESLA_CONSULTAS_DIA: '' });
+    teslaFetch = undefined; Object.assign(process.env, { TESLA_CLIENT_ID: '', TESLA_CLIENT_SECRET: '', TESLA_REDIRECT_URI: '' }); delete process.env.TESLA_CONSULTAS_DIA;
     return 'permisos de solo lectura; dormido → último dato con su hora, sin despertar; en línea → en vivo; caché; token rotado guardado; tope diario';
   });
 
@@ -1180,6 +1180,48 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     for (const k of ['sitio', 'juego', 'aplicacion'] as const) must(sketchTask(k).startsWith('Encargo de BOCETOS') && /exactamente 3/.test(sketchTask(k)) && /bocetos\.json/.test(sketchTask(k)), `encargo de bocetos (${k}) mal armado`);
     must(!(await tools.run('programar', JSON.stringify(game), false)).text.includes('iniciado'), 'un visitante no puede programar');
     return 'nuevo sin "directo" → pide bocetos; bocetos de juego, sitio y aplicación; elegido o existente → construye; "directo" → construye';
+  });
+
+  await check('Imágenes: cada pedido trae 3 versiones y los cambios se hacen sobre la elegida, también en 3', async () => {
+    const { ImagesService } = await import('../images/images.service');
+    Object.assign(process.env, { OPENAI_API_KEY: 'clave-openai-imagenes', MAGNIFIC_API_KEY: 'clave-magnific', IMAGES_DAILY_GENERATIONS: '9' });
+    const icfg = new ConfigService(), images = new ImagesService(icfg, usage, P.db);
+    const JPG = (k: number) => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(900, k)]);
+    const calls: { path: string; body: any }[] = []; let openaiOk = true;
+    imageFetch = (url, init) => {
+      if (url.includes('api.openai.com')) { const body = JSON.parse(String(init.body)); calls.push({ path: new URL(url).pathname, body }); return openaiOk ? new Response(JSON.stringify({ data: Array.from({ length: body.n }, (_, i) => ({ b64_json: JPG(i + 1).toString('base64') })) }), { status: 200 }) : new Response(JSON.stringify({ error: { code: 'insufficient_quota', message: 'sin saldo' } }), { status: 429 }); }
+      if (url.endsWith('/v1/ai/mystic')) { calls.push({ path: 'magnific', body: JSON.parse(String(init.body)) }); return new Response(JSON.stringify({ data: { task_id: 'tarea-123', generated: ['https://img.magnific.invalid/a.jpg'] } }), { status: 200 }); }
+      return new Response(JPG(9), { status: 200, headers: { 'content-type': 'image/jpeg' } });
+    };
+    const tools = new ToolsService(icfg, { definitions: async () => [] } as any, P.leads, { enabled: false, defaultModel: { label: '' } } as any, { enabled: false } as any, usage, images, { visible: () => [], list: () => [] } as any, {} as any, P.actions, P.approvals);
+    const gallery: any = images.newState(), notes: any[] = [];
+    const ctx = { origin: '', gallery, notify: (n: any) => { notes.push(n); if (n.images) Object.assign(gallery, { kind: 'generadas', items: n.images, index: 0 }); } };
+    const ask = async (args: unknown) => { const t = (await tools.run('generar_imagen', JSON.stringify(args), true, ctx)).text; await wait(250); return t; };
+    // Pedido nuevo: una peticion con n = 3 y tres imagenes numeradas en pantalla.
+    must(/3 versiones/.test(await ask({ descripcion: 'un burro alado sobre nubes', formato: 'cuadrada' })), 'el pedido nuevo no arrancó');
+    must(calls.length === 1 && calls[0].path === '/v1/images/generations' && calls[0].body.n === 3 && calls[0].body.size === '1024x1024', `petición: ${JSON.stringify(calls[0])?.slice(0, 200)}`);
+    must(notes.length === 1 && notes[0].images.length === 3 && new Set(notes[0].images.map((i: any) => i.full)).size === 3 && /cuál le gusta/.test(notes[0].text) && /algún cambio/.test(notes[0].text), `aviso: ${JSON.stringify(notes[0])?.slice(0, 300)}`);
+    // Elegir una: la galeria manda preguntar por cambios.
+    const pick = await tools.run('galeria', '{"accion":"ver","numero":2}', true, ctx);
+    must(gallery.index === 1 && /algún cambio/.test(pick.text) && /cambiar en 2/.test(pick.text), `al elegir: ${pick.text}`);
+    // Cambios: se edita ESA imagen (va adjunta), en su mismo formato, y vuelven 3.
+    const chosen = String(gallery.items[1].full).split('/').pop()!;
+    must(/3 versiones con esos cambios/.test(await ask({ descripcion: 'que sea de noche', cambiar: 2 })), 'los cambios no arrancaron');
+    const edit = calls[1];
+    must(edit?.path === '/v1/images/edits' && edit.body.n === 3 && edit.body.size === '1024x1024' && /de noche/.test(edit.body.prompt) && edit.body.images?.[0]?.image_url === `data:image/jpeg;base64,${readFileSync(images.file(chosen)!).toString('base64')}`, `edición: ${JSON.stringify({ ...edit?.body, images: edit?.body?.images?.length })}`);
+    must(notes.length === 2 && notes[1].images.length === 3 && /con los cambios/.test(notes[1].text) && gallery.items.length === 3 && !gallery.items.some((i: any) => String(i.full).endsWith(chosen)), 'debían quedar en pantalla las 3 versiones nuevas');
+    const row = (await P.db.query<any>('SELECT prompt, format FROM generated_images WHERE name = $1', [String(gallery.items[0].full).split('/').pop()]))[0];
+    must(/burro alado/.test(row?.prompt) && /de noche/.test(row.prompt) && row.format === 'cuadrada', `la versión cambiada debía guardar la descripción completa: ${JSON.stringify(row)}`);
+    must(/Solo|hay 3|del 1 al 3/.test(await ask({ descripcion: 'otro cambio', cambiar: 7 })) && notes.length === 2, 'un número que no está en pantalla no debe generar nada');
+    // Si OpenAI no puede, el respaldo no edita: se vuelve a crear desde la descripcion con los cambios y se avisa.
+    openaiOk = false; calls.length = 0;
+    await ask({ descripcion: 'con un arcoíris', cambiar: 1 }); await wait(400);
+    must(calls.filter((c) => c.path === 'magnific').length === 3 && calls.filter((c) => c.path === 'magnific').every((c) => /burro alado/.test(c.body.prompt) && /arcoíris/.test(c.body.prompt)) && /no puede editar/.test(notes[2]?.text ?? ''), `respaldo: ${notes[2]?.text}`);
+    // El tope cuenta imagenes, no pedidos (9 de tope = 3 pedidos).
+    must(/tope/.test(await ask({ descripcion: 'una imagen más de prueba' })), 'el cuarto pedido debía chocar con el tope diario');
+    must(!(await tools.run('generar_imagen', '{"descripcion":"un gato cualquiera"}', false, ctx)).text.includes('versiones'), 'un visitante no puede generar imágenes');
+    imageFetch = undefined; Object.assign(process.env, { OPENAI_API_KEY: '', MAGNIFIC_API_KEY: '' }); delete process.env.IMAGES_DAILY_GENERATIONS;
+    return 'pedido → 3 versiones; al elegir pregunta por cambios; cambios → edita la elegida y trae 3; respaldo sin edición avisa; tope por imágenes';
   });
 
   rmSync(dir, { recursive: true, force: true });

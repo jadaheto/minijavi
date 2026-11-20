@@ -327,7 +327,7 @@ export class ConfigService {
     this.tallerGithubUrl = str('TALLER_GITHUB_URL', 'https://github.com').replace(/\/+$/, '');
     this.unsplashAccessKey = (process.env.UNSPLASH_ACCESS_KEY ?? '').trim();
     this.magnificApiKey = (process.env.MAGNIFIC_API_KEY ?? '').trim();
-    this.imagesDailyGenerations = int('IMAGES_DAILY_GENERATIONS', 20, 0);
+    this.imagesDailyGenerations = int('IMAGES_DAILY_GENERATIONS', 60, 0); // cada pedido genera 3 versiones
     this.imageOpenAiKey = str('IMAGEN_OPENAI', '1') === '0' ? '' : str('OPENAI_API_KEY') || (this.capableProvider === 'openai' ? this.capableKey : '');
     this.imageOpenAiModel = str('IMAGEN_OPENAI_MODELO', 'gpt-image-2.6-flare');
     this.imageOpenAiQuality = ['low', 'medium', 'high'].includes(str('IMAGEN_OPENAI_CALIDAD').toLowerCase()) ? str('IMAGEN_OPENAI_CALIDAD').toLowerCase() : 'medium';
