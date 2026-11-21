@@ -1,4 +1,7 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { BusinessService } from '../business/business.service';
+import { BusinessDeskService } from '../business/desk.service';
+import { asData } from '../tools/data';
+import { Optional, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { ConfigService } from '../config/config.service';
@@ -71,7 +74,10 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly cfg: ConfigService, private readonly db: DbService, private readonly llm: DeepSeekService, private readonly tools: ToolsService,
     private readonly wa: WhatsAppService, private readonly knowledge: KnowledgeService, private readonly portfolio: PortfolioService,
     private readonly visits: VisitsService, private readonly leads: LeadsService, private readonly usage: UsageService, private readonly alerts: AlertsService,
-    private readonly optout: OptOutService, private readonly guard: InjectionGuard, private readonly catalog: CatalogService) {}
+    private readonly optout: OptOutService, private readonly guard: InjectionGuard, private readonly catalog: CatalogService,
+    @Optional() private readonly biz?: BusinessService, @Optional() private readonly desk?: BusinessDeskService) {}
+  /** Modo negocio: usos de cada funcion por conversacion abierta (topes). */
+  private readonly deskCounts = new Map<string, Record<string, number>>();
 
   get enabled() { return this.cfg.whatsappReplies === 'avatar' && this.wa.canSend; }
   onModuleInit() {
@@ -93,6 +99,8 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
       this.seen.add(m.id); if (this.seen.size > 5000) this.seen.delete(this.seen.values().next().value!);
       if (Number(m.timestamp) && Date.now() / 1000 - Number(m.timestamp) > MAX_AGE_S) { this.log.warn('mensaje de WhatsApp viejo (reintento de Meta): no se contesta'); continue; }
       if (m.type === 'reaction') continue;
+      // MODO NEGOCIO: el dueño del negocio le escribe a su propio numero para abrir la ventana de 24 h de los avisos. No es un cliente.
+      if (this.biz?.on && this.desk?.isOwner(phone)) { void this.wa.markRead(m.id); void this.desk.ownerWrote().then((t) => this.wa.sendText(phone, t)).catch((e) => this.log.warn(`respuesta al dueño: ${(e as Error).message}`)); continue; }
       const text = String(m.text?.body ?? m.button?.text ?? m.interactive?.button_reply?.title ?? m.interactive?.list_reply?.title ?? '').trim().slice(0, 4000);
       let item: Incoming | undefined;
       if (text) item = { id: m.id, kind: 'texto', text, mediaId: '' };
@@ -126,9 +134,11 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async reply(phone: string, name: string, items: Incoming[]) {
-    const t0 = Date.now(), last = items[items.length - 1];
+    const t0 = Date.now(), last = items[items.length - 1], biz = this.biz?.on && this.desk ? this.biz : undefined;
+    // MODO NEGOCIO: el chat esta en manos de una persona del negocio: el asistente calla y le reenvia lo que escriben.
+    if (biz && (await this.desk!.paused(phone))) { void this.wa.markRead(last.id); void this.desk!.forward(phone, name, items.map((i) => i.text || `(${i.kind})`).join(' ')); return; }
     const times = (this.recent.get(phone) ?? []).filter((t) => t0 - t < 3_600_000);
-    if (times.length >= this.cfg.waMaxPerHour) { this.log.warn('chat de WhatsApp: un número llegó al tope por hora'); return this.fixed(phone, 'Por ahora me escribiste muchos mensajes seguidos 🙈. Dame un rato y seguimos, o espera a que Javier te escriba.', last.id); }
+    if (times.length >= this.cfg.waMaxPerHour) { this.log.warn('chat de WhatsApp: un número llegó al tope por hora'); return this.fixed(phone, biz ? 'Por ahora me escribiste muchos mensajes seguidos 🙈. Dame un rato y seguimos.' : 'Por ahora me escribiste muchos mensajes seguidos 🙈. Dame un rato y seguimos, o espera a que Javier te escriba.', last.id); }
     this.recent.set(phone, [...times, t0]);
     void this.wa.markRead(last.id, true);
 
@@ -152,11 +162,12 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
     const screen = this.guard.screen(userText, 'un chat de WhatsApp'); // señal de inyeccion, en paralelo con la respuesta
     const context = await this.context(userText);
     const messages: any[] = [
-      { role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + this.portfolio.prompt(true) + this.catalog.prompt() + RULES(phone, name || chat.name, this.wa.canVoice) },
+      { role: 'system', content: biz ? biz.prompt('whatsapp', { phone, name: name || chat.name }) : this.cfg.systemPrompt + this.cfg.costenoPrompt + this.portfolio.prompt(true) + this.catalog.prompt() + RULES(phone, name || chat.name, this.wa.canVoice) },
       ...past.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.text })),
       { role: 'user', content: userText + (asVoice ? '\n\n(Mensaje recibido como nota de voz: responde para ser escuchado.)' : '') + context },
     ];
-    const defs = (await this.tools.definitions(false)).filter((d: any) => CHAT_TOOLS.has(d.function?.name));
+    const defs = biz ? this.desk!.definitions() : (await this.tools.definitions(false)).filter((d: any) => CHAT_TOOLS.has(d.function?.name));
+    const countKey = `${phone}:${chat.open_at}`; if (biz && !this.deskCounts.has(countKey)) { if (this.deskCounts.size > 2000) this.deskCounts.clear(); this.deskCounts.set(countKey, {}); }
     const gallery: GalleryState = { title: '', kind: '', items: [], index: 0 } as GalleryState;
     let answer = ''; const used: string[] = [];
     for (let round = 0; round < 4; round++) {
@@ -167,7 +178,11 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
       messages.push({ role: 'assistant', content: text || null, tool_calls: calls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments || '{}' } })) });
       for (const c of calls) {
         let result: string, args = c.arguments;
-        if (!CHAT_TOOLS.has(c.name)) result = 'Error: esa herramienta no existe en este chat.';
+        if (biz) { // solo las funciones del negocio; el contacto es el numero desde el que escriben
+          if (await screen.blocks('registrar_interesado')) result = BLOCKED_NOTE;
+          else { used.push(c.name); result = (await this.desk!.run(c.name, c.arguments, { channel: 'whatsapp', phone, name: name || chat.name, counts: this.deskCounts.get(countKey)! })).text; }
+        }
+        else if (!CHAT_TOOLS.has(c.name)) result = 'Error: esa herramienta no existe en este chat.';
         else if (await screen.blocks(c.name)) result = BLOCKED_NOTE;
         else if (c.name === 'registrar_interesado' && leadIds.length >= 2) result = 'No se guardó: esta persona ya quedó registrada en esta conversación. Dile que Javier ya tiene sus datos.';
         else {
@@ -188,7 +203,7 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
 
     // Precios: en el chat la respuesta aun no ha salido, asi que aqui SI se frena. Si trae un precio que no esta en el
     // catalogo (o cualquiera, si no hay catalogo), no se envia: va la frase de la cotizacion y Javier recibe el aviso.
-    if (!used.includes('precio_dolar') && this.catalog.spoken(answer, 'un chat de WhatsApp')) answer = 'Sobre precios, Javier te prepara la cotización según lo que necesitas 🙌. Cuéntame un poco más de tu negocio y se lo paso para que te escriba con el valor.';
+    if (!biz && !used.includes('precio_dolar') && this.catalog.spoken(answer, 'un chat de WhatsApp')) answer = 'Sobre precios, Javier te prepara la cotización según lo que necesitas 🙌. Cuéntame un poco más de tu negocio y se lo paso para que te escriba con el valor.';
 
     let sentVoice = false;
     if (asVoice) try { await this.wa.sendVoice(phone, answer.slice(0, 2500)); sentVoice = true; } catch (e) { this.log.warn(`chat de WhatsApp: no salió la nota de voz, va en texto (${(e as Error).message})`); }
@@ -204,7 +219,7 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
     await this.db.query('INSERT INTO wa_chats (phone, name, last_at, open_at, turns, leads, cases) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (phone) DO UPDATE SET name = excluded.name, last_at = excluded.last_at, open_at = excluded.open_at, turns = excluded.turns, leads = excluded.leads, cases = excluded.cases',
       [phone, name || chat.name, new Date().toISOString(), chat.open_at, Number(chat.turns) + 1, leadIds.join(','), Number(chat.cases)]);
     this.usage.add('wa_in', items.length); this.usage.add('wa_out');
-    void this.optout.check(userText, phone, 'chat de WhatsApp'); // en segundo plano: si pidio no ser contactado, queda marcado
+    if (!biz) void this.optout.check(userText, phone, 'chat de WhatsApp'); // en segundo plano: si pidio no ser contactado, queda marcado
     this.log.log(`chat de WhatsApp: respondido en ${Date.now() - t0} ms (${items.length} ${items.length === 1 ? 'mensaje' : 'mensajes'}${sentVoice ? ', con nota de voz' : ''})`);
   }
 
@@ -214,6 +229,7 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
     try {
       const hits = await this.knowledge.search(text.slice(0, 1000), false, AbortSignal.timeout(3000));
       if (!hits.length) return '';
+      if (this.biz?.on) return `\n\nDe los documentos del negocio, lo más relacionado con lo que preguntó el cliente: ${asData('los documentos del negocio', hits.map((h) => `- ${h.text.replace(/\s+/g, ' ')}`).join('\n'))}`;
       return '\n\n(Información de referencia sobre Javier, tomada de su base de conocimiento. Úsala solo si sirve para responder; no la copies literal ni menciones que existe:\n' + hits.map((h) => `- ${h.text.replace(/\s+/g, ' ')}`).join('\n') + ')';
     } catch { return ''; }
   }
@@ -234,6 +250,7 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
     if (!rows.length) return;
     const seconds = Math.max(0, (Date.parse(chat.last_at) - Date.parse(chat.open_at)) / 1000);
     await this.leads.logConversation('whatsapp', `${chat.name ? chat.name + ' ' : ''}(+${chat.phone})`, seconds, rows.map((r) => `${r.role === 'assistant' ? '🤖' : '🧑'} ${r.text}`));
+    if (this.biz?.on) return; // modo negocio: la conversacion queda en su panel; el embudo y los informes son de Javier
     // Cierre: se revisa toda la conversacion (sin Jev es la unica revision de los mensajes sin palabras de rechazo).
     void this.optout.check(rows.filter((r) => r.role !== 'assistant').map((r) => r.text).join('\n'), chat.phone, 'chat de WhatsApp', true);
     const leadIds = chat.leads ? chat.leads.split(',').map(Number).filter(Boolean) : [];

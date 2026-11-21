@@ -6,5 +6,8 @@
   "color": "#b0541c",
   "avatar": "hombre",
   "voz": "",
-  "preguntas": ["¿Cuánto vale el pan de bono?", "¿Hacen domicilios?", "¿A qué hora abren los domingos?"]
+  "preguntas": ["¿Cuánto vale el pan de bono?", "¿Hacen domicilios?", "¿A qué hora abren los domingos?"],
+  "dueno_whatsapp": "",
+  "funciones": ["pedidos", "citas", "interesados", "humano"],
+  "humano_minutos": 60
 }

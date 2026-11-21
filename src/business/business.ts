@@ -23,7 +23,15 @@ export interface BusinessConfig {
   preguntas: string[];
   /** Nombre con el que se presenta el asistente (opcional; si falta: "el asistente virtual de <nombre>"). */
   asistente: string;
+  /** WhatsApp del dueño del negocio (solo digitos, con indicativo): recibe los avisos mientras su ventana de 24 h este abierta. '' = sin avisos por WhatsApp. */
+  duenoWhatsapp: string;
+  /** Lo que el asistente puede hacer ademas de responder. */
+  funciones: Funcion[];
+  /** Minutos que el asistente deja de responder en un chat tras pasarlo a una persona. */
+  humanoMinutos: number;
 }
+export const FUNCIONES = ['pedidos', 'citas', 'interesados', 'humano'] as const;
+export type Funcion = (typeof FUNCIONES)[number];
 
 const txt = (v: unknown, max: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 
@@ -43,5 +51,8 @@ export function loadBusiness(file: string): BusinessConfig {
     color: /^#[0-9a-f]{6}$/i.test(String(j.color)) ? String(j.color).toLowerCase() : '#3987e5',
     preguntas: (Array.isArray(j.preguntas) ? j.preguntas : []).map((q: unknown) => txt(q, 90)).filter((q: string) => q.length > 4).slice(0, 3),
     asistente: txt(j.asistente, 40),
+    duenoWhatsapp: ((d) => (d.length === 10 && d.startsWith('3') ? `57${d}` : d.length >= 10 && d.length <= 15 ? d : ''))(String(j.dueno_whatsapp ?? '').replace(/\D/g, '')),
+    funciones: Array.isArray(j.funciones) ? FUNCIONES.filter((f) => j.funciones.includes(f)) : [...FUNCIONES],
+    humanoMinutos: Math.min(1440, Math.max(5, Number(j.humano_minutos) || 60)),
   };
 }

@@ -1963,7 +1963,7 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     Object.assign(process.env, { MODO: 'negocio', NEGOCIO_ARCHIVO: file, OWNER_SECRET: 'una-clave-larga-de-dueno-123', CLAUDE_CODE_OAUTH_TOKEN: 'token', RESUMEN_HORA: '7', WHATSAPP_REPLIES: 'avatar', POLYMARKET: '1', REPORTE_SECRET: 'secreto-de-reporte-123456' });
     const bcfg = new ConfigService();
     for (const k of ['MODO', 'NEGOCIO_ARCHIVO', 'OWNER_SECRET', 'CLAUDE_CODE_OAUTH_TOKEN', 'RESUMEN_HORA', 'WHATSAPP_REPLIES', 'POLYMARKET', 'REPORTE_SECRET']) { if (envBefore[k] === undefined) delete process.env[k]; else process.env[k] = envBefore[k]; }
-    must(bcfg.business?.nombre === 'Panadería Sol' && bcfg.ownerSecret === '' && bcfg.claudeToken === '' && bcfg.briefHour === -1 && bcfg.whatsappReplies === 'off' && bcfg.polymarket === false && bcfg.demoDocs === false && bcfg.elevenVoiceId === 'k1LcwPlB8fqtr2BOqzNo' && bcfg.greeting === b0.saludo, 'en modo negocio debía apagarse lo de Javier y usarse la voz y el saludo del negocio');
+    must(bcfg.business?.nombre === 'Panadería Sol' && bcfg.ownerSecret === '' && bcfg.claudeToken === '' && bcfg.briefHour === -1 && bcfg.whatsappReplies === 'avatar' && bcfg.callMode === 'rechazar' && bcfg.polymarket === false && bcfg.demoDocs === false && bcfg.elevenVoiceId === 'k1LcwPlB8fqtr2BOqzNo' && bcfg.greeting === b0.saludo, 'en modo negocio debía apagarse lo de Javier y usarse la voz y el saludo del negocio');
     must(new ConfigService().business === undefined, 'sin MODO=negocio el servicio es el de Javier');
     // Carga de documentos: cada archivo se lee con el modelo capaz; va a Qdrant como publico; uno con ordenes no entra.
     fsx.writeFileSync(join(docsDir, 'menu.pdf'), '%PDF-1.7\n1 0 obj << /Type /Page >> endobj\n%%EOF');
@@ -2006,10 +2006,96 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     must(ready?.owner === false && sess?.owner === false && !sess.page && /asistente virtual de Panadería Sol/.test(sent.filter((m) => m.type === 'say').map((m) => m.text).join(' ')), `inicio en modo negocio: ${JSON.stringify(ready)}`);
     sess.clientPlaying = false; gw.onTranscript(client, sess, '¿cuánto vale el pan de bono hoy?', true, true, 'es'); await wait(600);
     const q = asked.at(-1)!;
-    must(q && q.tools === 0 && /atiende por VOZ a los clientes de "Panadería Sol"/.test(q.sys) && !/PORTAFOLIO DE JAVIER|Javier/.test(q.sys) && /<<<DATOS de los documentos del negocio[\s\S]*Pan de bono - \$3\.500/.test(q.user), `pregunta en modo negocio: ${JSON.stringify(q).slice(0, 400)}`);
+    must(q && q.tools === 0 && /Atiendes por VOZ a los clientes de "Panadería Sol"/.test(q.sys) && !/PORTAFOLIO DE JAVIER|Javier/.test(q.sys) && /<<<DATOS de los documentos del negocio[\s\S]*Pan de bono - \$3\.500/.test(q.user), `pregunta en modo negocio: ${JSON.stringify(q).slice(0, 400)}`);
     handlers.close?.(); await wait(100);
     must(wrapped === 0, 'en modo negocio no se arma el informe de visita de Javier');
     return 'archivo validado; lo de Javier apagado en código; voz y saludo del negocio; documentos leídos y a Qdrant, el que trae órdenes no entra; ficha en la base; página y consumo; sin modo dueño ni herramientas; responde con sus documentos';
+  });
+
+  await check('Modo negocio, funciones: pedidos, citas, interesados y pasar a una persona, con avisos al dueño por Telegram y WhatsApp (ventana de 24 h)', async () => {
+    const { loadBusiness } = await import('../business/business');
+    const { BusinessDeskService } = await import('../business/desk.service');
+    const { BusinessPanelController } = await import('../business/panel.controller');
+    const { WaChatService } = await import('../whatsapp/wa-chat.service');
+    const fsx = await import('node:fs');
+    const file = join(dir, 'negocio-c2.json');
+    fsx.writeFileSync(file, JSON.stringify({ nombre: 'Panadería Sol', dueno_whatsapp: '300 111 2233', humano_minutos: 30 }));
+    const biz0 = loadBusiness(file);
+    must(biz0.duenoWhatsapp === '573001112233' && biz0.funciones.length === 4 && biz0.humanoMinutos === 30, `config: ${JSON.stringify(biz0)}`);
+    fsx.writeFileSync(file, JSON.stringify({ nombre: 'Solo pedidos', funciones: ['pedidos', 'volar'] }));
+    const only = loadBusiness(file);
+    await P.db.query('DELETE FROM orders'); await P.db.query('DELETE FROM handoffs'); await P.db.query("DELETE FROM meta WHERE key = 'dueno_ultimo'");
+    const cfgB: any = Object.assign(Object.create(Object.getPrototypeOf(P.cfg)), P.cfg, { business: biz0, businessPanelKey: 'clave-del-panel-123', whatsappReplies: 'avatar', whatsappPhoneNumberId: '111' });
+    const waOut: { to: string; text: string }[] = [], tgOut: string[] = [];
+    const waFake = { canSend: true, canVoice: false, enabled: true, sendText: async (to: string, text: string) => { waOut.push({ to, text }); return 'id'; }, markRead: async () => undefined, understand: async () => null } as any;
+    const alertsB = { enabled: true, send: async (t: string) => { tgOut.push(t); return ''; }, report() {} } as any;
+    const desk = new BusinessDeskService(cfgB, P.db, P.leads, waFake, usage, alertsB); await desk.onModuleInit();
+    must(desk.definitions().length === 4 && new BusinessDeskService(Object.assign(Object.create(Object.getPrototypeOf(P.cfg)), P.cfg, { business: only }), P.db, P.leads, waFake, usage).definitions().length === 1, 'las funciones salen de la configuración');
+    const voz = { channel: 'voz' as const, counts: {} as Record<string, number> };
+    const pedido = (extra: any) => JSON.stringify({ productos: [{ nombre: 'Pan de bono', cantidad: 2, precio: 7500 }, { nombre: 'Almojábana', cantidad: 3, precio: 2500 }], nombre: 'Carla', entrega: 'Recoge a las 5', ...extra });
+    must(/NO se guardó: primero repítele/.test((await desk.run('tomar_pedido', pedido({ contacto: '3005550001' }), voz)).text), 'sin confirmación no se guarda');
+    must(/falta un teléfono/.test((await desk.run('tomar_pedido', pedido({ confirmado: true }), voz)).text), 'por voz hace falta el teléfono');
+    must(/celular parece incompleto \(tiene 9 dígitos/.test((await desk.run('tomar_pedido', pedido({ confirmado: true, contacto: '300 555 001' }), voz)).text), 'un celular con un dígito menos no se guarda');
+    const r1 = await desk.run('tomar_pedido', pedido({ confirmado: true, contacto: '3005550001' }), voz);
+    const [o1] = await desk.orders();
+    must(/Pedido guardado con el número/.test(r1.text) && /\$22\.500/.test(r1.text) && o1.kind === 'pedido' && Number(o1.total) === 22500 && /2 × Pan de bono/.test(o1.detail) && o1.channel === 'voz', `pedido: ${r1.text} ${JSON.stringify(o1)}`);
+    await wait(50);
+    must(tgOut.length === 1 && /Pedido #/.test(tgOut[0]) && /Carla/.test(tgOut[0]) && waOut.length === 0, `con la ventana cerrada el aviso va solo por Telegram: tg ${tgOut.length}, wa ${waOut.length}`);
+    // El dueño escribe "hola": se abre su ventana; el siguiente aviso va por las dos vias.
+    must(desk.isOwner('+57 300 111 2233') && !desk.isOwner('573009999999') && !desk.windowOpen(), 'dueño y ventana');
+    must(/por 24 horas te aviso aquí/.test(await desk.ownerWrote()) && desk.windowOpen(), 'al escribir el dueño se abre la ventana');
+    const chat = { channel: 'whatsapp' as const, phone: '573005550002', name: 'Luis', counts: {} as Record<string, number> };
+    const r2 = await desk.run('agendar_cita', JSON.stringify({ servicio: 'Torta de cumpleaños', fecha: 'sábado 28', hora: '3 pm', nombre: 'Luis', contacto: '999', confirmado: true }), chat); await wait(50);
+    const cita = (await desk.orders()).find((o) => o.kind === 'cita')!;
+    must(/NO digas que ya está confirmada/.test(r2.text) && cita.contact === '+573005550002' && cita.when_text === 'sábado 28, 3 pm' && tgOut.length === 2 && waOut.length === 1 && waOut[0].to === '573001112233' && /Solicitud de cita/.test(waOut[0].text), `cita: ${JSON.stringify(cita)} wa ${JSON.stringify(waOut)}`);
+    // Interesado: solo con autorizacion; queda en la tabla de interesados del cliente.
+    must(/falta su autorización/.test((await desk.run('guardar_interesado', JSON.stringify({ nombre: 'Ana', interes: 'pedidos grandes' }), chat)).text), 'sin autorización no se guarda');
+    const nLeads = (await P.leads.list(500)).length;
+    must(/Guardado con el número/.test((await desk.run('guardar_interesado', JSON.stringify({ nombre: 'Ana', interes: 'pedidos grandes', autoriza: true }), chat)).text) && (await P.leads.list(500)).length === nLeads + 1, 'interesado guardado');
+    must(/ya se registraron varios/.test((await desk.run('guardar_interesado', JSON.stringify({ nombre: 'Ana', interes: 'x', autoriza: true }), chat)).text), 'tope por conversación');
+    // Pasar a una persona: en WhatsApp el asistente calla en ese chat y reenvia lo que escriben (sin inundar).
+    const r3 = await desk.run('pasar_a_humano', JSON.stringify({ motivo: 'Queja por un pedido' }), chat); await wait(50);
+    must(/le escribirá por este chat/.test(r3.text) && (await desk.paused('573005550002')) && !(await desk.paused('573000000000')) && /no responderá en ese chat durante 30 minutos/.test(tgOut.at(-1)!), `pasar a humano: ${r3.text}`);
+    const n0 = tgOut.length; await desk.forward('573005550002', 'Luis', '¿hay alguien?'); await desk.forward('573005550002', 'Luis', 'hola??');
+    must(tgOut.length === n0 + 1 && /sigue escribiendo/.test(tgOut.at(-1)!), 'lo que escribe en pausa se reenvía una vez cada 2 minutos');
+    must(/falta su nombre y un teléfono|hace falta su nombre y un teléfono/.test((await desk.run('pasar_a_humano', JSON.stringify({ motivo: 'x' }), { channel: 'voz', counts: {} })).text), 'por voz hace falta teléfono para que lo llamen');
+    await desk.resume('573005550002'); must(!(await desk.paused('573005550002')), 'el dueño puede quitar la pausa');
+    // Ventana: a las 22,5 h (de dia) se le recuerda una vez; pasadas 24 h se cierra y el aviso va solo por Telegram.
+    const dayAt = new Date('2026-11-24T20:00:00.000Z').getTime(); (desk as any).ownerLast = dayAt - 22.5 * 3600_000; (desk as any).reminded = 0; waOut.length = 0;
+    must((await desk.remind(dayAt)) === true && (await desk.remind(dayAt + 60_000)) === false && waOut.length === 1 && /Respóndeme "hola"/.test(waOut[0].text), `recordatorio: ${JSON.stringify(waOut)}`);
+    (desk as any).ownerLast = Date.now() - 25 * 3600_000; waOut.length = 0; const t0 = tgOut.length;
+    await desk.notify('prueba'); must(waOut.length === 0 && tgOut.length >= t0 + 1 && !desk.windowOpen(), 'con la ventana vencida no se escribe por WhatsApp');
+    // Panel del cliente: clave, cookie, datos, cambiar estado.
+    const ctl = new BusinessPanelController(cfgB, { on: true, config: biz0 } as any, desk, P.leads);
+    const mkRes = () => { const h: Record<string, string> = {}; return { h, setHeader: (k: string, v: string) => { h[k] = v; } } as any; };
+    const reqOf = (cookie = '', ip = '10.0.0.1') => ({ headers: { cookie, 'x-forwarded-for': ip }, socket: {} } as any);
+    let denied = 0; try { await ctl.data(reqOf()); } catch { denied++; } try { ctl.login(reqOf(), mkRes(), { clave: 'mala' }); } catch { denied++; }
+    const resOk = mkRes(); ctl.login(reqOf(), resOk, { clave: 'clave-del-panel-123' });
+    const cookie = String(resOk.h['Set-Cookie']).split(';')[0];
+    const d: any = await ctl.data(reqOf(cookie));
+    must(denied === 2 && /HttpOnly/.test(resOk.h['Set-Cookie']) && d.negocio === 'Panadería Sol' && d.pedidos.length === 1 && d.citas.length === 1 && d.interesados.length >= 1 && d.avisos.whatsapp === '+573001112233', `panel: negadas ${denied}, ${JSON.stringify({ p: d.pedidos.length, c: d.citas.length })}`);
+    await ctl.setOrder(reqOf(cookie), String(o1.id), { estado: 'atendido' }); must((await desk.orders()).find((o) => o.id === o1.id)!.status === 'atendido', 'marcar atendido');
+    let blocked = 0; for (let i = 0; i < 6; i++) { try { ctl.login(reqOf('', '10.0.0.9'), mkRes(), { clave: 'x' }); } catch (e) { if ((e as any).status === 429) blocked++; } }
+    must(blocked === 1, 'al sexto intento fallido debía bloquear');
+    // Chat de WhatsApp del negocio: el cliente pide; el contacto es su numero; el dueño no es un cliente; en pausa no responde.
+    await desk.ownerWrote(); waOut.length = 0; let llmCalls = 0, sys = '';
+    const llmW = { chat: async function* (messages: any[], defs: any[]) { llmCalls++; sys = String(messages[0].content);
+      if (llmCalls === 1) { must((defs ?? []).length === 4, 'el chat del negocio debe tener las 4 funciones'); yield { type: 'tool_calls', calls: [{ id: 't1', name: 'tomar_pedido', arguments: pedido({ confirmado: true, contacto: '000' }) }] }; return; }
+      yield { type: 'text', delta: 'Listo, tu pedido quedó registrado **hoy**.' }; } } as any;
+    const bizFake = { on: true, config: biz0, prompt: (ch: string, p: any) => `PROMPT NEGOCIO ${ch} ${p.phone}` } as any;
+    const chatSvc = new (WaChatService as any)(cfgB, P.db, llmW, { definitions: async () => [{ function: { name: 'registrar_interesado' } }], run: async () => ({ text: 'no' }) }, waFake, { enabled: false }, { prompt: () => 'PORTAFOLIO' }, { add: async () => undefined, analyze: async () => ({}) }, P.leads, usage, alertsB, P.optout, { screen: () => ({ blocks: async () => false }) }, { prompt: () => 'CATALOGO', spoken: () => true }, bizFake, desk);
+    const hook = (from: string, body: string, id: string) => chatSvc.onWebhook({ metadata: { phone_number_id: '111' }, contacts: [{ profile: { name: 'Marta' }, wa_id: from }], messages: [{ id, from, timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body } }] });
+    hook('573005550009', 'quiero 2 pan de bono y 3 almojábanas', 'm1'); await wait(3600);
+    const ow = (await desk.orders())[0];
+    must(llmCalls === 2 && /PROMPT NEGOCIO whatsapp 573005550009/.test(sys) && ow.contact === '+573005550009' && ow.channel === 'whatsapp' && waOut.some((m) => m.to === '573005550009' && /quedó registrado \*hoy\*/.test(m.text)) && waOut.some((m) => m.to === '573001112233' && /Pedido #/.test(m.text)), `chat del negocio: llamadas ${llmCalls}, ${JSON.stringify(waOut)}`);
+    waOut.length = 0; hook('573001112233', 'hola', 'm2'); await wait(300);
+    must(llmCalls === 2 && waOut.length === 1 && waOut[0].to === '573001112233' && /por 24 horas/.test(waOut[0].text), 'el "hola" del dueño abre la ventana y no pasa por el modelo');
+    await desk.run('pasar_a_humano', JSON.stringify({ motivo: 'queja' }), { channel: 'whatsapp', phone: '573005550009', name: 'Marta', counts: {} }); (desk as any).forwarded.clear(); const tg0 = tgOut.length;
+    hook('573005550009', '¿ya viene mi pedido?', 'm3'); await wait(3400);
+    must(llmCalls === 2 && tgOut.length > tg0 && /sigue escribiendo/.test(tgOut.at(-1)!), 'con el chat en pausa el asistente no responde y reenvía al dueño');
+    chatSvc.onModuleDestroy(); desk.onModuleDestroy();
+    await P.db.query('DELETE FROM orders'); await P.db.query('DELETE FROM handoffs'); await P.db.query("DELETE FROM meta WHERE key = 'dueno_ultimo'");
+    return 'pedido con total y confirmación; cita como solicitud; interesado con autorización; topes; contacto del chat puesto por el servidor; pausa y reenvío; avisos por Telegram y, con la ventana abierta, WhatsApp; recordatorio antes de cerrar; panel con clave, cookie y bloqueo; chat del negocio y "hola" del dueño';
   });
 
   rmSync(dir, { recursive: true, force: true });

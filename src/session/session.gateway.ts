@@ -21,6 +21,7 @@ import { asData, demoTurns, DemoState, ToolsService } from '../tools/tools.servi
 import { DemoDocsService, DemoPage, DocUpdate } from '../demo/demo-docs.service';
 import { DemoSendService } from '../demo/demo-send.service';
 import { BusinessService } from '../business/business.service';
+import { BusinessDeskService } from '../business/desk.service';
 import { AlertsService } from '../ops/alerts.service';
 import { PortfolioService } from '../portfolio/portfolio.service';
 import { CapableModelService } from '../llm/capable.service';
@@ -56,6 +57,8 @@ interface Session {
   owner: boolean;        // dispositivo registrado del dueño: habilita las herramientas privadas
   /** Enlace /demo/<id> (B2): la conversacion es con el asistente de ESE negocio (sin herramientas, su voz, sus topes). */
   page?: DemoPage;
+  /** Modo negocio: cuantas veces se uso cada funcion en esta conversacion (topes). */
+  deskCounts?: Record<string, number>;
   stt?: SttStream;
   history: any[];
   finals: string[];      // tramos finales de la frase que el usuario esta diciendo
@@ -152,6 +155,7 @@ const FILLERS: Record<string, string | Record<string, string>> = {
   buscar_imagenes: 'Déjame buscar fotos.',
   generar_imagen: 'Listo, ya la mando a crear.',
   resumen_del_dia: 'Déjame revisar qué hay de nuevo.',
+  tomar_pedido: 'Ya te anoto el pedido.', agendar_cita: 'Déjame anotarla.', guardar_interesado: 'Anoto tus datos.', pasar_a_humano: 'Ya le aviso a alguien del negocio.',
   pedir_cotizacion: 'Listo, lo dejo anotado.',
   que_hiciste: 'Déjame revisar la bitácora.',
   portafolio: 'Te cuento un caso.',
@@ -311,6 +315,7 @@ export class SessionGateway implements OnGatewayConnection {
     @Optional() private readonly demoDocs?: DemoDocsService,
     @Optional() private readonly demoSend?: DemoSendService,
     @Optional() private readonly biz?: BusinessService,
+    @Optional() private readonly desk?: BusinessDeskService,
   ) {
     // Cuando Claude Code termina un encargo, se le cuenta a Javier en las sesiones de dueño abiertas.
     this.workshop.onDone((d) => { for (const [s, client] of this.owners) void this.workshopNote(client, s, d.project.slug); });
@@ -772,7 +777,7 @@ export class SessionGateway implements OnGatewayConnection {
     const spec: Spec = { text, lang, ctrl: new AbortController(), events: [], done: false };
     s.spec = spec;
     (async () => {
-      const [tools, ctx] = await Promise.all([this.biz?.on ? [] : this.tools.definitions(s.owner), this.context(s, text)]);
+      const [tools, ctx] = await Promise.all([this.biz?.on ? this.desk?.definitions() ?? [] : this.tools.definitions(s.owner), this.context(s, text)]);
       for await (const ev of this.llm.chat([...s.history, { role: 'user', content: userMsg(text, lang) + ctx }], tools, spec.ctrl.signal, s.owner ? 2000 : 400)) {
         if (ev.type === 'text') spec.tFirst ??= Date.now();
         spec.events.push(ev); spec.wake?.();
@@ -857,7 +862,7 @@ export class SessionGateway implements OnGatewayConnection {
           const route = round === 0 ? turn.screen?.route() : undefined;
           if (round === 0) turn.capable = this.guard.useCapable(route, s.owner);
           // Durante una demostracion solo existe la herramienta demo (impuesto aqui, no solo en el prompt).
-          const defs = s.page || this.biz?.on ? [] : s.demo.on ? (await this.tools.definitions(s.owner) as any[]).filter((t) => t.function?.name === 'demo') : this.guard.tools(await this.tools.definitions(s.owner) as any[], route);
+          const defs = this.biz?.on ? (this.desk?.definitions() ?? []) as any[] : s.page ? [] : s.demo.on ? (await this.tools.definitions(s.owner) as any[]).filter((t) => t.function?.name === 'demo') : this.guard.tools(await this.tools.definitions(s.owner) as any[], route);
           source = turn.capable ? this.viaCapable(s, turn, view, defs) : this.llm.chat(view, defs, turn.ctrl.signal, s.owner ? 2000 : 400);
         }
         for await (const ev of source) {
@@ -880,6 +885,7 @@ export class SessionGateway implements OnGatewayConnection {
           let result: string;
           if (c.name === 'registrar_interesado' && s.leads >= 3) result = 'No se guardó: ya se registraron varios contactos en esta conversación.';
           else if (c.name === 'buscar_imagenes' && !s.owner && s.imageSearches >= this.cfg.imagesPerSession) result = 'No se buscó: ya se mostraron varias tandas de imágenes en esta conversación. Dile que por ahora no puedes mostrar más.';
+          else if (this.biz?.on) result = this.desk ? (await this.desk.run(c.name, c.arguments, { channel: 'voz', counts: (s.deskCounts ??= {}) })).text : 'Esa función no existe en este asistente.'; // MODO NEGOCIO: solo las funciones del negocio
           else if (s.demo.on && c.name !== 'demo') result = 'NO se ejecutó: durante la demostración no se usan herramientas. Sigue en el papel o termina la demostración con demo terminar.';
           else if (!s.owner && turn.screen && (await turn.screen.blocks(c.name))) result = BLOCKED_NOTE;
           else if (GATED.has(c.name) && (auto || turn.tainted)) {

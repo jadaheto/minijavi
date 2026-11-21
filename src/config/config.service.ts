@@ -156,6 +156,8 @@ export class ConfigService {
   readonly business?: BusinessConfig;
   /** Clave con la que Javier lee el consumo de este cliente (GET /api/consumo). Vacia = apagado. */
   readonly reportSecret: string;
+  /** Clave del panel del cliente en modo negocio (NEGOCIO_PANEL_CLAVE, minimo 12). Vacia = sin panel. */
+  readonly businessPanelKey: string;
   /** "Crea tu propio asistente": documentos subidos a una demo (DEMO_DOCUMENTOS=0 lo apaga). Topes de tamaño, paginas, por IP, por dia y dias que se guardan. */
   readonly demoDocs: boolean;
   readonly demoDocMb: number;
@@ -406,6 +408,7 @@ export class ConfigService {
     this.briefDays = [...new Set(str('RESUMEN_DIAS', '1,2,3,4,5').split(',').map((d) => Number(d.trim())).filter((d) => Number.isInteger(d) && d >= 1 && d <= 7))];
     this.briefVoice = str('RESUMEN_VOZ', '1') !== '0';
     this.reportSecret = str('REPORTE_SECRET').length >= 16 ? str('REPORTE_SECRET') : '';
+    this.businessPanelKey = str('NEGOCIO_PANEL_CLAVE').length >= 12 ? str('NEGOCIO_PANEL_CLAVE') : '';
     this.demoDocs = str('DEMO_DOCUMENTOS', '1') !== '0';
     this.demoDocMb = Math.min(40, int('DEMO_DOC_MB', 10, 1));
     this.demoDocPages = int('DEMO_DOC_PAGINAS', 20, 1);
@@ -476,7 +479,7 @@ ${readFileSync(costenoFile, 'utf8').trim()}` : '';
         business: b, greeting: b.saludo, elevenVoiceId: b.voz || this.elevenVoiceId, costenoPrompt: '',
         ownerSecret: '', claudeToken: '', planeMcpUrl: '', youtubeApiKey: '', spotifyClientId: '', spotifyClientSecret: '', teslaClientId: '', teslaClientSecret: '',
         googleMapsKey: '', openChargeMapKey: '', polymarket: false, newsUrl: '', newsColombia: false, unsplashAccessKey: '', magnificApiKey: '', imageOpenAiKey: '',
-        briefHour: -1, followupHour: -1, demoDocs: false, callMode: 'rechazar', whatsappReplies: 'off', n8nWebhookUrl: '', leadsWebhookUrl: '', visitorMemoryDays: 0, visitReports: false,
+        briefHour: -1, followupHour: -1, demoDocs: false, callMode: 'rechazar', whatsappReplies: this.whatsappReplies === 'avatar' ? 'avatar' : 'off', n8nWebhookUrl: '', leadsWebhookUrl: '', visitorMemoryDays: 0, visitReports: false,
       });
     }
   }
