@@ -7,6 +7,7 @@ import { createBackdrop, emojiBurst, floatEmoji } from './fx.js';
 import { createMusic, imageColor } from './music.js';
 import { createTeslaPanel } from './tesla.js';
 import { createNewsPanel } from './news.js';
+import { createMarketsPanel } from './markets.js';
 import { BrowserVoice } from './browser-voice.js';
 import { createGate } from './mic-gate.js';
 
@@ -37,6 +38,20 @@ let serverPlayer = null; // reproductor del audio que manda el servidor (ElevenL
 const tesla = createTeslaPanel($('tesla'));
 // Noticias de inteligencia artificial: lista numerada o una noticia abierta con su QR. Al tocar una se le avisa al servidor.
 const news = createNewsPanel($('news'), (index) => socket?.send({ type: 'news', index }));
+// Mercados de prediccion (modo dueño, solo consulta): lista numerada con las probabilidades de cada opcion.
+const markets = createMarketsPanel($('markets'));
+// Vista previa de los mercados con datos de EJEMPLO (no consulta nada): abrir con ?demo=mercados.
+if (new URLSearchParams(location.search).get('demo') === 'mercados') {
+  const o = (label, pct, d1, trend) => ({ label, pct, d1, trend });
+  const items = [
+    { n: 1, title: 'Ejemplo: ¿decisión del banco central en diciembre?', ends: '2026-12-10', volume24: 3969460, more: 1, options: [o('Aumento de 25 pb', 89.5, -3, { m: 78.5, w: 88.5, d: 92.5 }), o('Sin cambios', 8.3, 5.3, { m: 18.5, w: 3, d: 3 }), o('Aumento de 50+ pb', 1.8, -3.1, { m: 2.7, w: 7.7, d: 4.9 }), o('Recorte de 25 pb', 0.4, 0.1, { m: 0.7, d: 0.3 })] },
+    { n: 2, title: 'Ejemplo: ¿una empresa de IA sale a bolsa antes de junio?', ends: '2027-06-30', volume24: 410000, more: 0, options: [o('Sí', 34, 6.5, { m: 18, w: 22, d: 27.5, h: 33 }), o('No', 66, -6.5, { m: 82, w: 78, d: 72.5, h: 67 })] },
+    { n: 3, title: 'Ejemplo: ¿qué precio alcanzará Bitcoin este año?', ends: '2027-01-01', volume24: 1357487, more: 20, options: [o('↓ 55,000', 63.5, -4.2, { m: 41, w: 70, d: 67.7 }), o('↓ 50,000', 39.9, -2, { m: 22, w: 44, d: 41.9 }), o('↑ 70,000', 12, 1.1, { m: 30, w: 9, d: 10.9 })] },
+    { n: 4, title: 'Ejemplo: próximas elecciones presidenciales', ends: '2027-04-19', volume24: 870556, more: 40, options: [o('Candidata A', 45.7, 0.3, { m: 44, w: 46.5, d: 45.4 }), o('Candidato B', 17.3, -0.8, { m: 12, w: 18, d: 18.1 }), o('Candidato C', 14.5, 0, { m: 15 })] },
+  ];
+  let step = 0; const next = () => { const k = step++ % 3; markets.show(k === 0 ? { action: 'list', title: 'Mercados que más se mueven hoy (ejemplo)', items } : { action: 'open', title: 'Ejemplo', items, index: k }); };
+  setTimeout(() => { $('gate').hidden = true; next(); setInterval(next, 9000); }, 1500);
+}
 // Vista previa del panel con datos de EJEMPLO (no consulta el carro): abrir con ?demo=tesla. Se repite para ver la animacion.
 if (new URLSearchParams(location.search).get('demo') === 'tesla') {
   const demo = [
@@ -280,9 +295,11 @@ function onMessage(msg) {
     case 'music': // musica de fondo
       onMusic(msg); break;
     case 'tesla': // estado del carro
-      hideCard(); if (gallery) hideGallery(); news.hide(); tesla.show(msg); break;
+      hideCard(); if (gallery) hideGallery(); news.hide(); markets.hide(); tesla.show(msg); break;
     case 'news': // noticias de inteligencia artificial
-      hideCard(); if (gallery) hideGallery(); tesla.hide(); news.show(msg); break;
+      hideCard(); if (gallery) hideGallery(); tesla.hide(); markets.hide(); news.show(msg); break;
+    case 'markets': // mercados de prediccion
+      hideCard(); if (gallery) hideGallery(); tesla.hide(); news.hide(); markets.show(msg); break;
     case 'spotify_token': { // respuesta al token pedido por el reproductor de Spotify
       const w = tokenWaiters; tokenWaiters = [];
       for (const x of w) msg.token ? x.resolve(msg.token) : x.reject(new Error(msg.error || 'sin token'));
@@ -301,7 +318,7 @@ function shutdown(message) {
   live = false; connecting = false; prebuffer.length = 0; loud = 0;
   retryAt = Math.max(retryAt, performance.now() + 2500);
   suspended = false; awayNotice = ''; $('away').hidden = true;
-  setWork(null); music.stop(); tesla.hide(); news.hide(); stopSpeech(); hideCard(); hideGallery(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
+  setWork(null); music.stop(); tesla.hide(); news.hide(); markets.hide(); stopSpeech(); hideCard(); hideGallery(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
   setSub('sub-user', ''); setSub('sub-avatar', '');
   $('mic').hidden = true; $('owner').hidden = true; $('demo').hidden = true; $('gate').hidden = false;
   $('gate').classList.toggle('standby', armed);
@@ -379,7 +396,7 @@ window.addEventListener('pointerdown', () => { if (live && suspended) socket?.se
 // Con imagenes en pantalla el avatar esta pequeño en la esquina: tocarlo las quita y lo devuelve a su tamaño.
 $('stage').addEventListener('click', () => { if (gallery) { hideGallery(); socket?.send({ type: 'gallery', hide: true }); } });
 window.__avatarDebug = {
-  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, gallery: showGallery, work: setWork, music: onMusic, tesla: (d) => tesla.show(d), news: (d) => news.show(d), message: onMessage,
+  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, gallery: showGallery, work: setWork, music: onMusic, tesla: (d) => tesla.show(d), news: (d) => news.show(d), markets: (d) => markets.show(d), message: onMessage,
   standby: () => { armed = true; shutdown(''); }, suspend: setSuspended, activity: (n) => { setActivity(n); actUntil = performance.now() + 600000; },
   get weights() { return { ...lips.weights }; }, get state() { return state; }, get time() { return player ? player.time() : -1; }, morphNames: avatar.morphNames, missing,
 };

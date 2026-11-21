@@ -81,6 +81,7 @@ interface Session {
   suspendedAt: number;
   waking: boolean;       // acaba de despertar: la frase en curso empieza por la palabra para despertar
   canSuspend: boolean;   // las llamadas de WhatsApp no se suspenden
+  marketList?: { items: any[]; title: string }; // mercados de prediccion mostrados por ultima vez (para abrir uno por su numero)
   news?: { index: number; part?: number }; // noticia que se esta viendo (0 = la lista) y parte de la lectura completa
   car?: boolean;         // modo carro: solo atiende las frases que traen su nombre (o las que siguen a una respuesta)
   carHeard?: boolean;    // la frase en curso ya fue aceptada (para no soltarla a la mitad cuando se cierra la ventana)
@@ -737,7 +738,7 @@ export class SessionGateway implements OnGatewayConnection {
             result = 'NO se ejecutó. Por seguridad, esta acción no corre en la misma respuesta en que leíste datos de terceros ni en un aviso automático. Dile a Javier qué ibas a hacer y pídele que te lo confirme; si dice que sí, vuelve a llamar la herramienta.';
           }
           else {
-            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, news: (s.news ??= { index: 0 }), demo: s.demo, source: s.callerPhone ? 'llamada' : 'voz',
+            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, news: (s.news ??= { index: 0 }), marketList: (s.marketList ??= { items: [], title: '' }), demo: s.demo, source: s.callerPhone ? 'llamada' : 'voz',
               notify: (note) => { if (s.ready) { s.notes.push(note); this.pumpNotes(client, s); } } });
             if (c.name === 'buscar_imagenes' && out.gallery) s.imageSearches++;
             if (out.gallery) this.sendGallery(client, s, out.gallery);
@@ -753,6 +754,7 @@ export class SessionGateway implements OnGatewayConnection {
             if (out.music) this.send(client, { type: 'music', ...out.music });
             if (out.tesla && !turn.ctrl.signal.aborted) this.send(client, { type: 'tesla', ...out.tesla });
             if (out.news && !turn.ctrl.signal.aborted) this.send(client, { type: 'news', ...out.news });
+            if (out.markets && !turn.ctrl.signal.aborted) this.send(client, { type: 'markets', ...out.markets });
           }
           this.log.log(`sesion #${s.n}: herramienta ${c.name} -> ${result.slice(0, 80)}`);
           s.history.push({ role: 'tool', tool_call_id: c.id, content: result });

@@ -5,6 +5,7 @@ import { PLANE_PREFIX, PlaneMcpService } from '../mcp/plane-mcp.service';
 import { MODELS, WorkshopService } from '../workshop/workshop.service';
 import { MusicService, MusicState } from '../music/music.service';
 import { NewsService } from '../news/news.service';
+import { MarketEvent, PolymarketService } from '../markets/polymarket.service';
 import { describeTesla, teslaCard, TeslaFocus, TeslaService } from '../tesla/tesla.service';
 import { UsageService } from '../usage/usage.service';
 import { GalleryItem, GalleryState, ImagesService } from '../images/images.service';
@@ -15,6 +16,8 @@ import { ApprovalsService } from '../policy/approvals.service';
 
 /** Resultado de una herramienta: el texto para el modelo y, si aplica, un efecto visual para el navegador. */
 export interface ToolResult { text: string; scene?: string; reaction?: string; card?: { title: string; lines: string[]; qr?: string; caption?: string }; music?: Record<string, unknown>;
+  /** Panel de mercados de prediccion: lista numerada con las probabilidades, o quitarlo. */
+  markets?: Record<string, unknown>;
   /** Panel de noticias: la lista numerada, una noticia abierta o quitarlo. */
   news?: Record<string, unknown>;
   /** Panel animado con el estado del Tesla (bateria, carga, seguros, clima). */
@@ -68,6 +71,8 @@ export interface ToolContext { /** Interesados registrados en esta conversacion 
   origin: string; music?: MusicState; gallery?: GalleryState;
   /** Noticia que se esta viendo en esta conversacion (0 = la lista), para "la siguiente". */
   news?: { index: number; part?: number };
+  /** Mercados de prediccion mostrados por ultima vez en esta conversacion (para "abre el mercado 3"). */
+  marketList?: { items: MarketEvent[]; title: string };
   /** Demostracion en curso en esta conversacion (el avatar actua como el asistente del negocio del visitante). */
   demo?: DemoState;
   /** Para trabajos que terminan despues del turno (una imagen generada): deja un aviso que el avatar cuenta cuando pueda. */
@@ -112,7 +117,7 @@ export class ToolsService {
   private readonly tools: Record<string, Tool>;
   /** Herramientas locales que solo existen en sesiones del dueño. */
   private readonly ownerTools: Record<string, Tool>;
-  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService, news?: NewsService) {
+  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService, news?: NewsService, markets?: PolymarketService) {
     this.tools = {
       hora_actual: {
         description: 'Devuelve la fecha y la hora actuales. Usala cuando pregunten que hora es o que dia es hoy.',
@@ -547,6 +552,45 @@ export class ToolsService {
           case 'que_suena': return m.playing ? `Suena ${name()} en ${where()}, a volumen ${m.volume} por ciento.${m.source === 'youtube' && m.note ? ` No es Spotify porque ${m.note}.` : ''}` : m.queue.length ? `Está en pausa ${name()}.` : 'No hay música puesta.';
           default: return 'Acción de música desconocida.';
         }
+      },
+    };
+    // Mercados de prediccion (Polymarket): solo consulta de probabilidades publicas. Decision de Javier: nada de apuestas.
+    // El servicio solo sabe leer; aqui no existe ninguna accion para operar, y el avatar no aconseja apostar.
+    if (markets?.enabled) this.ownerTools.mercados = {
+      description: 'Consulta mercados de predicción de Polymarket: qué probabilidad le da hoy el mercado a que pase algo (política, economía, cripto, tecnología, inteligencia artificial). "tendencias" muestra los que más se mueven hoy (opcionalmente de un tema); "buscar" busca por un asunto; "abrir" con un número muestra en grande uno de los que están en pantalla, con su gráfica de evolución y todas sus opciones; "quitar" los saca de la pantalla. ' +
+        'Solo informa: NO se puede apostar, comprar ni operar desde aquí, y no debes recomendar apuestas ni explicar cómo hacerlas. Úsala cuando Javier pregunte por Polymarket, por "los mercados", o "qué probabilidad le dan a...".',
+      parameters: { type: 'object', properties: {
+        accion: { type: 'string', enum: ['tendencias', 'buscar', 'abrir', 'quitar'] },
+        numero: { type: 'number', description: 'Para "abrir": número del mercado en la lista en pantalla ("abre el mercado 3", "el segundo").' },
+        tema: { type: 'string', enum: markets.topics, description: 'Para "tendencias", si pidió un tema: ai (inteligencia artificial), tech (tecnología), crypto (criptomonedas), economy (economía), politics (política), geopolitics (mundo y conflictos). Omítelo para todos.' },
+        consulta: { type: 'string', description: 'Para "buscar": el asunto en INGLÉS y en pocas palabras (los mercados están en inglés), por ejemplo "bitcoin 150k", "OpenAI IPO", "Fed rates".' },
+      }, required: ['accion'] },
+      run: async (args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult | string> => {
+        const action = String(args.accion), shown = ctx.marketList ?? { items: [], title: '' };
+        const rules = 'Son probabilidades que marca un mercado de apuestas, no hechos ni pronósticos tuyos: dilo así si viene al caso. No recomiendes apostar, no digas cómo hacerlo ni des consejos de inversión; si lo pide, dile que desde aquí solo se consulta.';
+        const moved = (d?: number) => (d === undefined || Math.abs(d) < 0.5 ? '' : ` (${d > 0 ? 'subió' : 'bajó'} ${Math.abs(d)} puntos en 24 h)`);
+        if (action === 'quitar') { shown.items = []; return { text: 'Mercados quitados de la pantalla.', markets: { action: 'hide' } }; }
+        if (action === 'abrir') {
+          const k = Math.round(Number(args.numero));
+          if (!shown.items.length) return 'No hay mercados en pantalla. Pregúntale si quiere ver los que más se mueven o buscar un asunto.';
+          if (!(k >= 1 && k <= shown.items.length)) return `En pantalla hay ${shown.items.length} mercados; pídele un número entre 1 y ${shown.items.length}.`;
+          const e = shown.items[k - 1], t = e.options[0]?.trend;
+          const past = t ? [t.m !== undefined ? `hace un mes ${t.m} %` : '', t.w !== undefined ? `hace una semana ${t.w} %` : '', t.d !== undefined ? `ayer ${t.d} %` : ''].filter(Boolean).join(', ') : '';
+          return { untrusted: true, markets: { action: 'open', title: shown.title, items: shown.items, index: k },
+            text: `En pantalla está en grande el mercado ${k}, con su medidor, la gráfica de evolución y sus opciones.\n${asData('Polymarket (títulos y cifras de terceros)', `${e.title}\n${e.options.map((o) => `- ${o.label}: ${o.pct} %${moved(o.d1)}`).join('\n')}${e.more ? `\n(y ${e.more} opciones más)` : ''}${past ? `\nLa opción principal estaba: ${past}.` : ''}${e.ends ? `\nCierra: ${e.ends}` : ''}\nVolumen en 24 h: ${e.volume24} USD`)}\n` +
+              `Cuéntaselo en dos o tres frases: qué opción va adelante, con qué probabilidad y cómo se ha movido. ${rules}` };
+        }
+        const query = String(args.consulta ?? '').trim();
+        if (action === 'buscar' && query.length < 2) return 'Falta el asunto a buscar. Pregúntale sobre qué quiere ver mercados.';
+        let events;
+        try { events = action === 'buscar' ? await markets.search(query) : await markets.trending(String(args.tema ?? '')); }
+        catch (e) { return `No se pudieron consultar los mercados: ${(e as Error).message}. Díselo tal cual, sin inventar cifras.`; }
+        if (!events.length) return action === 'buscar' ? 'No hay mercados abiertos sobre eso. Díselo y ofrécele buscar otro asunto.' : 'La fuente no devolvió mercados ahora. Díselo.';
+        const lines = events.map((e) => `${e.n}. ${e.title} — ${e.options.slice(0, 3).map((o) => `${o.label}: ${o.pct} %${moved(o.d1)}`).join('; ')}${e.options.length + e.more > 3 ? ` (y ${e.options.length + e.more - 3} opciones más)` : ''}${e.ends ? ` · cierra ${e.ends}` : ''}`);
+        shown.items = events; shown.title = action === 'buscar' ? `Mercados: ${query}`.slice(0, 60) : 'Mercados que más se mueven hoy';
+        return { untrusted: true, markets: { action: 'list', title: shown.title, items: events },
+          text: `En pantalla hay ${events.length} mercados numerados con sus probabilidades.\n${asData('Polymarket (títulos y cifras de terceros)', lines.join('\n'))}\n` +
+            `Cuéntale dos o tres en una frase cada uno, diciendo "el mercado le da un X por ciento a...", y dile que puede abrir cualquiera por su número para ver su gráfica. ${rules}` };
       },
     };
     // Tesla de Javier: solo lectura. El servicio no pide el permiso de comandos, asi que aqui no hay como abrir ni mover nada.

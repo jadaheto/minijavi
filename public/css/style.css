@@ -269,3 +269,64 @@ body.news .cover-art, body.showing .nws { display: none; }
   .nws-qr img { width: 150px; }
 }
 @media (prefers-reduced-motion: reduce) { .nws, .nws * { animation: none !important; transition: none !important; } .nws-item { opacity: 1; } }
+
+/* Panel de mercados de prediccion: usa la caja del de noticias (.nws) y agrega medidores, tendencias y barras animadas. */
+.mkt { --up: #34d17f; --down: #ef5350; --flat: #6fb2ff; width: min(540px, 45vw); }
+.mkt .nws-list { gap: 8px; }
+.mkt-item { opacity: 0; animation: tsl-row .45s ease forwards; }
+.mkt-row { width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 16px; text-align: left; background: rgba(255, 255, 255, .045) !important; transition: background .2s ease, transform .2s ease; }
+.mkt-row:hover { background: rgba(255, 255, 255, .1) !important; transform: translateX(-3px); }
+.mkt-text { flex: 1; min-width: 0; display: grid; gap: 5px; }
+.mkt-top { display: flex; align-items: flex-start; gap: 10px; }
+.mkt-top .nws-n { width: 28px; height: 28px; font-size: 14px; border-radius: 9px; }
+.mkt-top .nws-h { font-size: 14.5px; }
+.mkt-lead { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: #cfd6e2; }
+.mkt-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mkt-chg { flex: none; padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.mkt-chg.up { color: var(--up); background: rgba(52, 209, 127, .14); }
+.mkt-chg.down { color: var(--down); background: rgba(239, 83, 80, .14); }
+.mkt-foot { font-size: 11.5px; color: #8f9aac; }
+.mkt-side { flex: none; display: grid; justify-items: center; gap: 3px; }
+.mkt-ring { position: relative; flex: none; }
+.mkt-ring svg { display: block; width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
+.mkt-ring circle { fill: none; stroke-width: 9; }
+.mkt-track { stroke: rgba(255, 255, 255, .09); }
+.mkt-arc { stroke: #5aa8ff; stroke-linecap: round; filter: drop-shadow(0 0 5px rgba(90, 168, 255, .7)); }
+.mkt-mid { position: absolute; inset: 0; display: flex; align-items: baseline; justify-content: center; gap: 1px; padding-top: 34%; line-height: 1; }
+.mkt-num { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.mkt-mid small { font-size: 10px; color: #9aa6b8; }
+.mkt-trend { display: block; width: 96px; height: 26px; overflow: visible; --c: var(--flat); }
+.mkt-trend.up { --c: var(--up); } .mkt-trend.down { --c: var(--down); }
+.mkt-line { fill: none; stroke: var(--c); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; stroke-dasharray: 1; stroke-dashoffset: 1; animation: mkt-draw 1.1s cubic-bezier(.3, .7, .2, 1) forwards; }
+@keyframes mkt-draw { to { stroke-dashoffset: 0; } }
+.mkt-dot { fill: var(--c); opacity: 0; animation: mkt-pop .4s ease forwards; filter: drop-shadow(0 0 4px var(--c)); }
+@keyframes mkt-pop { from { opacity: 0; } to { opacity: 1; } }
+.mkt-area { fill: var(--c); opacity: 0; animation: mkt-fade .9s ease forwards; }
+@keyframes mkt-fade { to { opacity: .13; } }
+/* Mercado abierto */
+.mkt-open { display: grid; gap: 14px; padding: 4px 4px 0; }
+.mkt-hero { display: flex; align-items: center; gap: 16px; }
+.mkt-hero .mkt-num { font-size: 36px; } .mkt-hero .mkt-mid small { font-size: 15px; } .mkt-hero .mkt-mid { padding-top: 33%; }
+.mkt-hero .mkt-ring circle { stroke-width: 8; }
+.mkt-info { min-width: 0; display: grid; gap: 8px; }
+.mkt-info .nws-h.big { font-size: clamp(18px, 1.8vw, 23px); }
+.mkt-info .mkt-lead { font-size: 15px; }
+.mkt-chart { display: grid; gap: 4px; padding: 10px 12px 6px; border-radius: 14px; background: rgba(255, 255, 255, .04); }
+.mkt-cap { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: #8f9aac; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mkt-trend.big { width: 100%; height: 150px; }
+.mkt-trend.big .mkt-line { stroke-width: 2.6; animation-duration: 1.5s; }
+.mkt-val { fill: #e8edf5; font-size: 11px; font-weight: 600; opacity: 0; animation: mkt-pop .4s ease forwards; }
+.mkt-lab { fill: #8f9aac; font-size: 9.5px; }
+.mkt-opts { display: grid; gap: 5px; }
+.mkt-opt { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 9px; border-radius: 8px; font-size: 13px; overflow: hidden; background: rgba(255, 255, 255, .05); opacity: 0; animation: tsl-row .4s ease forwards; }
+.mkt-opt::before { content: ''; position: absolute; inset: 0 auto 0 0; width: var(--pct, 0%); background: linear-gradient(90deg, rgba(79, 141, 255, .5), rgba(124, 196, 255, .25)); transform-origin: 0 50%; animation: mkt-bar 1s cubic-bezier(.2, .8, .2, 1) backwards; animation-delay: inherit; }
+.mkt-opt:first-child::before { background: linear-gradient(90deg, rgba(90, 168, 255, .75), rgba(124, 196, 255, .35)); }
+@keyframes mkt-bar { from { transform: scaleX(0); } }
+.mkt-opt > * { position: relative; }
+.mkt-right { flex: none; display: flex; align-items: center; gap: 7px; }
+.mkt-right b { font-variant-numeric: tabular-nums; }
+.mkt .nws-hint { font-size: 11px; }
+body.markets:not(.showing) #stage { transform: translateX(-21vw); }
+body.markets .cover-art, body.showing .mkt { display: none; }
+@media (max-aspect-ratio: 4/5) { .mkt { width: min(540px, 94vw); } body.markets:not(.showing) #stage { transform: translateY(30vh) scale(.5); transform-origin: 50% 50%; } .mkt-trend:not(.big) { display: none; } }
+@media (prefers-reduced-motion: reduce) { .mkt-item, .mkt-opt, .mkt-dot, .mkt-val { opacity: 1; animation: none; } .mkt-line { stroke-dashoffset: 0; animation: none; } .mkt-area { opacity: .13; animation: none; } .mkt-opt::before { animation: none; } }
