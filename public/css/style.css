@@ -49,10 +49,16 @@ button.ghost { background: rgba(255, 255, 255, .12); }
 .music-ctl button { width: 28px; height: 24px; min-height: 0; padding: 0; flex: none; border: 0; border-radius: 7px; background: rgba(255, 255, 255, .1); color: #e6ebf5; font-size: 12px; line-height: 1; cursor: pointer; }
 .music-ctl button:hover { background: rgba(255, 255, 255, .2); }
 .music-open { margin-left: auto; font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; color: #c0caf5; text-decoration: none; border: 1px solid rgba(255, 255, 255, .25); border-radius: 999px; padding: 4px 8px; }
+/* Logo oficial de Spotify (archivo de su pagina de diseño, sin modificar; version blanca porque el fondo no es negro ni
+   blanco puros). Sus reglas: minimo 70 px de ancho, nunca encima de la caratula y con aire alrededor. */
+.spotify-logo { display: block; width: 78px; height: auto; }
+.music-logo { display: none; margin: 10px 10px 2px; }
+.music[data-source="spotify"] .music-logo { display: block; }
+.cover-art .spotify-logo { position: absolute; left: 2px; top: calc(100% + 16px); width: clamp(78px, 7vw, 104px); }
 /* Caratula grande de lo que suena (Spotify): entera, al lado del avatar (que se corre para no taparla) y enlazada a Spotify. */
 .cover-art { position: fixed; right: 7vw; top: 50%; width: min(52vh, 32vw); aspect-ratio: 1; transform: translateY(-52%); z-index: 2; border-radius: 8px; box-shadow: 0 18px 60px rgba(0, 0, 0, .55); animation: card-in .5s ease-out; }
 .cover-art[hidden] { display: none; }
-.cover-art img { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: 8px; background: #191414; }
+.cover-art img:not(.spotify-logo) { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: 8px; background: #191414; }
 body.cover:not(.showing) #stage { transform: translateX(-17vw); }
 body.showing .cover-art { display: none; } /* con una imagen en grande, la caratula queda en el reproductor */
 @media (max-aspect-ratio: 4/5) {
@@ -125,7 +131,7 @@ body { --strip: 132px; --mini: .3; }
 #stage { transform-origin: 0 100%; transition: transform .55s cubic-bezier(.2, .8, .2, 1); }
 body.showing #stage { transform: scale(var(--mini)); z-index: 5; cursor: pointer; border-radius: 40px; filter: drop-shadow(0 8px 30px rgba(0, 0, 0, .6)); }
 body.showing:has(#music:not([hidden])) #stage { transform: translateY(-254px) scale(var(--mini)); }
-body.showing:has(#music[data-source="spotify"]:not([hidden])) #stage { transform: translateY(-112px) scale(var(--mini)); } /* el reproductor de musica ocupa esa esquina */
+body.showing:has(#music[data-source="spotify"]:not([hidden])) #stage { transform: translateY(-146px) scale(var(--mini)); } /* el reproductor de musica ocupa esa esquina */
 body.showing .fx, body.showing #backdrop { visibility: hidden; }
 body.showing .subtitles { bottom: calc(var(--strip) + 22px + env(safe-area-inset-bottom)); left: calc(100vw * var(--mini)); }
 body.showing .away, body.showing .gate.standby { padding-bottom: 0; bottom: calc(var(--strip) + 22px); }
