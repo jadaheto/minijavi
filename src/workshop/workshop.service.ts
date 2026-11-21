@@ -53,6 +53,7 @@ interface Run {
   usd: number; turns: number;
   decision?: number | null;                     // decision del modelo "auto": al cerrar se anota como le fue
   backup?: { token: string; model: string; reason: string }; // el encargo siguio con el modelo de respaldo
+  steppedDown?: boolean;                        // Fable no pudo (limite o cuenta): ya se intento con Opus
 }
 interface Job {
   slug: string; proc?: ChildProcess; t0: number; activity: string; spoken: string; steps: number; timer?: NodeJS.Timeout; cancelled?: boolean; timedOut?: boolean;
@@ -390,6 +391,18 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     else if (!ok) {
       const raw = `${summary} ${r.stderr}`, known = explainClaudeError(raw);
       summary = known ? `Claude Code no pudo trabajar: ${known}.` : `Claude Code falló${r.err ? `: ${r.err.message}` : ''}. ${summary || r.stderr.replace(/\s+/g, ' ').slice(-300) || `código ${r.code}`}`;
+    }
+    // ESCALON previo (pedido por Javier el 2026-11-21): si el encargo iba con Fable 5.2 y fallo por limite o cuenta, la
+    // misma pasada se repite con Opus 5.5 (misma suscripcion, misma sesion). Si Opus tampoco puede, sigue el relevo al respaldo.
+    if (!ok && !job.cancelled && !job.timedOut && !run.backup && !run.steppedDown && result?.subtype !== 'error_max_turns' && run.model.id === MODELS[0].id && run.deadline - Date.now() > 60_000
+      && accountFailure(`${String(result?.result ?? '')} ${lastText} ${r.stderr}`)) {
+      const before = run.model, opus = MODELS[1];
+      run.steppedDown = true; run.model = { id: opus.id, label: opus.label }; project.model = opus.label; run.pass--;
+      job.model = opus.label; job.activity = 'Fable no pudo: sigue con Opus'; job.spoken = 'sigue trabajando con Opus, porque Fable llegó a su límite';
+      this.log.warn(`taller: "${project.slug}": Fable 5.2 no pudo (límite o cuenta); la pasada se repite con Opus 5.5`);
+      const err = this.pass(job, r.prompt);
+      if (!err) { this.save(project); this.emit(true); return; }
+      run.pass++; run.model = before; project.model = before.label;
     }
     // RELEVO: si lo que fallo es la cuenta o el servicio (limite, credencial, saldo o saturacion) y hay modelo de respaldo, la MISMA pasada se repite
     // con el respaldo, en sesion nueva (la de la suscripcion no se puede retomar con otro proveedor). Una vez por encargo.

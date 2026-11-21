@@ -77,4 +77,16 @@ export class AlertsService {
       return res.ok ? '' : `Telegram respondió ${res.status}`;
     } catch (e) { return (e as Error).name; }
   }
+
+  /** Foto al chat de Javier (sendPhoto, campo "photo", pie hasta 1024). Devuelve '' si salio o el motivo si no. */
+  async sendPhoto(image: Buffer, mime: string, caption = ''): Promise<string> {
+    if (!this.enabled) return 'Telegram no está configurado';
+    try {
+      const form = new FormData();
+      form.append('chat_id', this.cfg.telegramChatId); if (caption) form.append('caption', caption.slice(0, 1000));
+      form.append('photo', new Blob([new Uint8Array(image)], { type: mime }), `imagen.${mime.split('/')[1] || 'jpg'}`);
+      const res = await fetch(`https://api.telegram.org/bot${this.cfg.telegramBotToken}/sendPhoto`, { method: 'POST', body: form, signal: AbortSignal.timeout(60_000) });
+      return res.ok ? '' : `Telegram respondió ${res.status}`;
+    } catch (e) { return (e as Error).name; }
+  }
 }

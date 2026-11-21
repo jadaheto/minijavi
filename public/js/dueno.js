@@ -463,6 +463,8 @@ async function loadDemos() {
     const kids = [title, meta];
     if (d.error) kids.push(el('small', { className: 'danger-text', textContent: `Error: ${d.error}` }));
     if (d.saludo) kids.push(el('small', { textContent: `Saludo: «${d.saludo}»${d.preguntas.length ? ` · Preguntas: ${d.preguntas.join(' / ')}` : ''}` }));
+    if (d.image) kids.push(el('a', { href: d.image, target: '_blank', rel: 'noopener' }, el('img', { src: d.image, alt: `Imagen de ${d.business}`, loading: 'lazy', className: 'demo-img' })));
+    else if (d.imageError) kids.push(el('small', { className: 'danger-text', textContent: `Sin imagen del negocio: ${d.imageError}${d.portada ? ' · tiene portada hecha por Claude Code' : ' · puedes pedirle al avatar «haz la portada de la demo de …»'}` }));
     if (d.ficha) kids.push(el('pre', { textContent: d.ficha }));
     const open = el('a', { href: d.url, target: '_blank', rel: 'noopener', textContent: 'Abrir la demo' });
     const copy = el('button', { type: 'button', className: 'small', textContent: 'Copiar enlace' });

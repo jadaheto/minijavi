@@ -1,4 +1,5 @@
-import { Controller, Get, Param, Res } from '@nestjs/common';
+import { Controller, Get, Optional, Param, Res } from '@nestjs/common';
+import { WorkshopService } from '../workshop/workshop.service';
 import type { Response } from 'express';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,7 +16,7 @@ const WHY = { no_existe: 'Esta demostración no existe.', vencida: 'Esta demostr
 @Controller('demo')
 export class DemoPageController {
   private html?: string;
-  constructor(private readonly docs: DemoDocsService) {}
+  constructor(private readonly docs: DemoDocsService, @Optional() private readonly workshop?: WorkshopService) {}
 
   @Get(':id')
   async page(@Param('id') id: string, @Res() res: Response) {
@@ -27,7 +28,7 @@ export class DemoPageController {
     }
     this.html ??= readFileSync(join(__dirname, '..', '..', 'public', 'index.html'), 'utf8');
     const out = this.html
-      .replace('<head>', `<head>\n  <base href="/">\n  <meta name="robots" content="noindex, nofollow">\n  <meta name="minijavi-demo" content="${esc(p.id)}">${p.config.imagen && /^[A-Za-z0-9._-]+$/.test(p.config.imagen) ? `\n  <meta name="minijavi-demo-image" content="/imagenes/${esc(p.config.imagen)}">` : ''}`)
+      .replace('<head>', `<head>\n  <base href="/">\n  <meta name="robots" content="noindex, nofollow">\n  <meta name="minijavi-demo" content="${esc(p.id)}">${p.config.imagen && /^[A-Za-z0-9._-]+$/.test(p.config.imagen) ? `\n  <meta name="minijavi-demo-image" content="/imagenes/${esc(p.config.imagen)}">` : ''}${!p.config.imagen && p.config.portada && /^[a-z0-9-]+$/.test(p.config.portada) && this.workshop?.hasSite(p.config.portada) ? `\n  <meta name="minijavi-demo-portada" content="/p/${esc(p.config.portada)}/">` : ''}`)
       .replace(/<title>[^<]*<\/title>/, `<title>Asistente de ${esc(p.business)}</title>`);
     return res.type('html').send(out);
   }

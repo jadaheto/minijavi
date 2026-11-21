@@ -19,6 +19,8 @@ export const ACTION_KINDS = {
   mensaje_seguimiento: { label: 'Mensaje de seguimiento', channel: 'mensaje', class: 'autonoma', literal: true },
   llamada_seguimiento: { label: 'Llamada de seguimiento', channel: 'llamada', class: 'autonoma', literal: false },
   oferta: { label: 'Oferta con precio', channel: 'mensaje', class: 'aprobacion', literal: true },
+  // B3: enlace de la demo de su negocio (plantilla con imagen; su texto dice que es el asistente con IA de Javier). Siempre con aprobacion.
+  enviar_demo: { label: 'Enlace de la demo de su negocio por WhatsApp', channel: 'mensaje', class: 'aprobacion', literal: false },
 } as const satisfies Record<string, { label: string; channel: 'mensaje' | 'llamada'; class: 'libre' | 'autonoma' | 'aprobacion'; literal: boolean }>;
 /** En todo contacto saliente minijavi dice que es el asistente con IA de Javier. Asi se reconoce esa frase en un texto. */
 export const SAYS_AI = /asistente\s+(?:virtual\s+|digital\s+)?(?:con|de)\s+(?:ia|inteligencia\s+artificial)\b|\b(?:ia|inteligencia\s+artificial)\s+de\s+javier\b|\bsoy\s+una?\s+(?:ia|inteligencia\s+artificial)\b/i;

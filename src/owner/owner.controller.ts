@@ -265,7 +265,8 @@ export class OwnerController {
     return { enabled: this.demos.enabled, perDay: this.cfg.demoPageDailyMinutes, perChat: this.cfg.demoPageMinutes, demos: rows.map((d) => {
       let p: any = {}; try { p = JSON.parse(d.profile || '{}'); } catch { /* fila con error */ }
       return { id: d.id, business: d.business, status: d.status, error: d.error, created: d.created_at, expires: d.expires_at, pages: d.pages, kind: d.kind, chunks: d.chunks, lead: d.lead_id || null,
-        url: `/demo/${d.id}`, minutesToday: this.demos!.usedMinutes(d.id), ficha: String(p.ficha ?? '').slice(0, 1500), saludo: p.config?.saludo ?? '', preguntas: p.config?.preguntas ?? [], color: p.config?.color ?? '' };
+        url: `/demo/${d.id}`, minutesToday: this.demos!.usedMinutes(d.id), ficha: String(p.ficha ?? '').slice(0, 1500), saludo: p.config?.saludo ?? '', preguntas: p.config?.preguntas ?? [], color: p.config?.color ?? '',
+        image: p.config?.imagen ? `/imagenes/${p.config.imagen}` : '', imageError: p.config?.imagen ? '' : String(p.config?.imagenError ?? ''), portada: p.config?.portada ? `/p/${p.config.portada}/` : '' };
     }) };
   }
   @Post('demos/:id/alargar')

@@ -1858,6 +1858,76 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     return 'configuración por el modelo capaz (sin enlaces) o por defecto; página con base y noindex; vencida, inexistente y tope del día; sin herramientas, ficha y fragmentos, saludo del negocio, no es sesión del dueño; 5 minutos por charla; cuenta el uso y no es visita; alargar y borrar';
   });
 
+  await check('Envío de la demo: solo con tu aprobación, con la imagen del negocio, y Claude Code como último recurso para la portada', async () => {
+    const { DemoDocsService } = await import('../demo/demo-docs.service');
+    const { DemoSendService } = await import('../demo/demo-send.service');
+    const fsx = await import('node:fs');
+    at('2026-11-24T15:00:00.000Z'); await setP('simulacion', false); await setP('produccion', true);
+    for (const a of await P.approvals.pending()) await P.approvals.decide(a.id, false, 'panel');
+    const docs = new DemoDocsService(P.cfg, P.db, { readsFiles: true } as any, { enabled: false, deleteDemo: async () => undefined } as any, { screen: () => ({ blocks: async () => false }) } as any, usage);
+    const imgFile = join(dir, 'demo-prueba.jpg'); fsx.writeFileSync(imgFile, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]));
+    const told: { kind: string; text: string }[] = [];
+    const alertsFake = { enabled: true, send: async (t: string) => { told.push({ kind: 'texto', text: t }); return ''; }, sendPhoto: async (_b: Buffer, _m: string, t: string) => { told.push({ kind: 'foto', text: t }); return ''; } } as any;
+    const send = new DemoSendService(P.cfg, docs, P.leads, P.approvals, P.policy, P.wa, { file: (n: string) => (n === 'negocio.jpg' ? imgFile : null) } as any, alertsFake);
+    send.onModuleInit();
+    const mk = async (id: string, leadId: number, config: any) => { const now = Date.now(); await P.db.query('INSERT INTO demos (id, business, created_at, expires_at, status, profile, lead_id, consent_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [id, 'Panadería Sol', new Date(now).toISOString(), new Date(now + 7 * 86400_000).toISOString(), 'listo', JSON.stringify({ negocio: 'Panadería Sol', ficha: 'Pan $2.000', colores: [], config: { saludo: 'Hola', personalidad: '', preguntas: [], color: '#f2a900', auto: true, imagenLista: true, ...config } }), leadId, new Date(now).toISOString()]); };
+    // Lo que sale a Meta se captura para mirar la plantilla.
+    const prev = globalThis.fetch, metaCalls: { url: string; body: any }[] = [];
+    globalThis.fetch = (async (url: any, init?: any) => { const u = String(url);
+      if (u.includes('graph.facebook.com') && u.endsWith('/media')) { metaCalls.push({ url: u, body: 'archivo' }); return new Response(JSON.stringify({ id: 'media-1' }), { status: 200 }); }
+      if (u.includes('graph.facebook.com') && u.endsWith('/messages')) { metaCalls.push({ url: u, body: JSON.parse(String(init?.body ?? '{}')) }); return new Response(JSON.stringify({ messages: [{ id: 'wamid.1' }] }), { status: 200 }); }
+      return prev(url, init); }) as any;
+    // 1) Dejo sus datos con un WhatsApp: llega la imagen a Telegram y una solicitud; NADA sale sin aprobar.
+    const lead = await P.leads.add({ name: 'Carla Pérez', contact: '3007770001', interest: 'chatbots', source: 'voz' });
+    await mk('panaderia-sol-aaa111', lead.id, { imagen: 'negocio.jpg' });
+    must((await send.offer('panaderia-sol-aaa111', 0)) === 'aprobacion', 'debía pedir aprobación');
+    const pend = (await P.approvals.pending()).filter((a) => a.kind === 'enviar_demo');
+    must(pend.length === 1 && pend[0].contact === '573007770001' && /minijavi_demo/.test(pend[0].content) && /\/demo\/panaderia-sol-aaa111/.test(pend[0].content) && metaCalls.length === 0, `solicitud: ${JSON.stringify(pend.map((a) => a.content))}; salió a Meta: ${metaCalls.length}`);
+    must(told[0]?.kind === 'foto' && /Demo lista: Panadería Sol/.test(told[0].text), `aviso con la imagen: ${JSON.stringify(told)}`);
+    must((await send.offer('panaderia-sol-aaa111', 0)) === 'nada' && (await P.approvals.pending()).filter((a) => a.kind === 'enviar_demo').length === 1, 'la misma demo no se propone dos veces');
+    const done = await P.approvals.decide(pend[0].id, true, 'panel');
+    const tpl = metaCalls.find((c) => c.url.endsWith('/messages'))?.body;
+    must(done.ok && metaCalls[0]?.url.endsWith('/media') && String(tpl?.to).replace('+', '') === '573007770001' && tpl.template.name === 'minijavi_demo' && tpl.template.language.code === 'es'
+      && tpl.template.components[0].parameters[0].image.id === 'media-1' && tpl.template.components[1].parameters[0].text === 'Carla' && tpl.template.components[1].parameters[1].text === 'Panadería Sol'
+      && tpl.template.components[2].sub_type === 'url' && tpl.template.components[2].parameters[0].text === 'panaderia-sol-aaa111', `plantilla enviada: ${done.text} ${JSON.stringify(tpl)}`);
+    // 2) Sin datos de contacto: solo el aviso a Javier con el enlace; ninguna solicitud.
+    told.length = 0; await mk('panaderia-sol-bbb222', 0, { imagen: 'negocio.jpg' });
+    must((await send.offer('panaderia-sol-bbb222', 0)) === 'aviso' && /no dejó sus datos/.test(told[0].text) && /\/demo\/panaderia-sol-bbb222/.test(told[0].text) && (await P.approvals.pending()).filter((a) => a.kind === 'enviar_demo').length === 0, `sin datos: ${JSON.stringify(told)}`);
+    // 3) Sin imagen (fallaron los generadores): se avisa, se propone con la imagen de cabecera y se dice como pedir la portada.
+    told.length = 0; metaCalls.length = 0;
+    const lead2 = await P.leads.add({ name: 'Luis Gómez', contact: '3007770002', interest: 'chatbots', source: 'voz' });
+    await mk('panaderia-sol-ccc333', lead2.id, { imagenError: 'OpenAI: sin saldo; Magnific: caído' });
+    must((await send.offer('panaderia-sol-ccc333', 0)) === 'aprobacion' && told[0].kind === 'texto' && /No se pudo generar la imagen[\s\S]*haz la portada de la demo de Panadería Sol/.test(told[0].text), `sin imagen: ${JSON.stringify(told)}`);
+    const p3 = (await P.approvals.pending()).find((a) => a.kind === 'enviar_demo')!;
+    must(/tu imagen de cabecera/.test(p3.content), 'la solicitud debía decir que va con la imagen de cabecera');
+    await P.approvals.decide(p3.id, false, 'panel'); must(metaCalls.length === 0, 'rechazada: no debía salir nada');
+    // Una demo vencida ya no se envia aunque se apruebe.
+    told.length = 0; const lead3 = await P.leads.add({ name: 'Ana Ruiz', contact: '3007770003', interest: 'chatbots', source: 'voz' });
+    await mk('panaderia-sol-ddd444', lead3.id, { imagen: 'negocio.jpg' }); await send.offer('panaderia-sol-ddd444', 0);
+    await P.db.query('UPDATE demos SET expires_at = $1 WHERE id = $2', [new Date(Date.now() - 1000).toISOString(), 'panaderia-sol-ddd444']);
+    const p4 = (await P.approvals.pending()).find((a) => a.kind === 'enviar_demo')!; const d4 = await P.approvals.decide(p4.id, true, 'panel');
+    must(metaCalls.length === 0 && /venció/.test(d4.text), `demo vencida: ${d4.text}`);
+    globalThis.fetch = prev;
+    // 4) Portada con Claude Code: solo el dueño, solo si no hay imagen; empieza con Fable.
+    const started: any[] = [];
+    const wk = { enabled: true, defaultModel: { label: '' }, busy: () => (started.length ? 'portada-x' : undefined), progress: () => '', start: (...a: any[]) => { started.push(a); return 'Encargo iniciado.'; }, find: () => ({ slug: 'portada-x' }), list: () => [] } as any;
+    const tools = new ToolsService(P.cfg, { definitions: async () => [] } as any, P.leads, wk, { enabled: false } as any, usage, { enabled: false, canGenerate: false } as any, { visible: () => [], list: () => [], prompt: () => '' } as any, {} as any, P.actions, P.approvals, undefined, undefined, undefined, undefined, undefined, undefined, undefined, docs);
+    must(/no existe/.test((await tools.run('portada_demo', '{"demo":"Panadería Sol"}', false)).text), 'un visitante no puede pedir la portada');
+    await P.db.query("DELETE FROM demos WHERE id IN ('panaderia-sol-bbb222', 'panaderia-sol-ddd444')");
+    must(/varias demos/.test((await tools.run('portada_demo', '{"demo":"Panadería Sol"}', true)).text) && started.length === 0, 'con dos demos del mismo nombre debía preguntar cuál');
+    await P.db.query("DELETE FROM demos WHERE id = 'panaderia-sol-ccc333'");
+    must(/ya tiene su imagen/.test((await tools.run('portada_demo', '{"demo":"panaderia sol"}', true)).text) && started.length === 0, 'con imagen generada no se usa Claude Code');
+    await P.db.query("DELETE FROM demos WHERE id = 'panaderia-sol-aaa111'"); await mk('panaderia-sol-eee555', 0, { imagenError: 'fallaron' });
+    const pt = await tools.run('portada_demo', '{"demo":"panadería sol"}', true);
+    must(started.length === 1 && started[0][4] === 'fable' && started[0][3] === true && /sitio\/index\.html/.test(started[0][1]) && /<<<DATOS de la ficha del negocio/.test(started[0][1]) && /Fable 5\.2/.test(pt.text), `portada: ${pt.text}`);
+    must(JSON.parse((await docs.get('panaderia-sol-eee555'))!.profile).config.portada === 'portada-x', 'la demo debía quedar apuntando a su portada');
+    const wsrc = fsx.readFileSync(join(__dirname, '..', 'workshop', 'workshop.service.' + (__filename.endsWith('.ts') ? 'ts' : 'js')), 'utf8');
+    must(/steppedDown/.test(wsrc) && /Opus/.test(wsrc), 'falta el escalón de Fable a Opus en el taller');
+    await P.db.query("DELETE FROM demos WHERE id = 'panaderia-sol-eee555'");
+    await setP('simulacion', true); await setP('produccion', false);
+    return 'solicitud con imagen a Telegram y nada sale sin aprobar; plantilla minijavi_demo con imagen, nombre, negocio y enlace; una vez por demo; sin datos solo aviso; sin imagen va la de cabecera y se dice cómo pedir la portada; vencida no sale; portada solo dueño, solo sin imagen, con Fable';
+  });
+
   rmSync(dir, { recursive: true, force: true });
   const icon = { ok: '✓', FALLA: '✗', omitida: '–' };
   console.log('\nVERIFICACIÓN DE MINIJAVI (simulación: no se envió nada a nadie)\n');

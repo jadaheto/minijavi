@@ -414,6 +414,9 @@ if (DEMO_PAGE) {
   $('gate-text').textContent = 'Toca para hablar con el asistente. El navegador te pedirá permiso para usar el micrófono.';
   const pic = document.querySelector('meta[name="minijavi-demo-image"]')?.getAttribute('content') || '';
   if (/^\/imagenes\/[A-Za-z0-9._-]+$/.test(pic)) { const img = document.createElement('img'); img.className = 'gate-hero'; img.src = pic; img.alt = ''; $('gate-form').prepend(img); }
+  // Sin imagen (los generadores fallaron) pero con portada hecha por Claude Code: se muestra aislada, sin permisos.
+  const cover = document.querySelector('meta[name="minijavi-demo-portada"]')?.getAttribute('content') || '';
+  if (!pic && /^\/p\/[a-z0-9-]+\/$/.test(cover)) { const f = document.createElement('iframe'); f.className = 'gate-hero'; f.src = cover; f.setAttribute('sandbox', ''); f.title = 'Portada'; f.loading = 'lazy'; $('gate-form').prepend(f); }
 }
 
 function onMicChunk(buffer) {

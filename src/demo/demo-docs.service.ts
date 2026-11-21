@@ -47,7 +47,9 @@ export function demoImagePrompt(negocio: string, escena: string, color: string):
 export type DocState = 'esperando' | 'leyendo' | 'listo' | 'error';
 export interface DemoDoc { id: string; business: string; created_at: string; expires_at: string; status: string; profile: string; chunks: number; pages: number; kind: string; lead_id: number; consent_at: string; error: string; }
 /** Configuracion del enlace /demo/<id> (B2): la arma el modelo capaz a partir de la ficha; si falla, una por defecto. */
-export interface DemoConfig { saludo: string; personalidad: string; preguntas: string[]; color: string; auto: boolean; escena?: string; imagen?: string }
+export interface DemoConfig { saludo: string; personalidad: string; preguntas: string[]; color: string; auto: boolean; escena?: string; imagen?: string;
+  /** Ya se intento la imagen (con o sin exito): el envio por WhatsApp no espera mas. */ imagenLista?: boolean; imagenError?: string;
+  /** Proyecto del taller con la portada hecha por Claude Code (ultimo recurso si OpenAI y Magnific fallaron). */ portada?: string }
 export interface DemoProfile { negocio: string; ficha: string; colores: string[]; extra?: string; config?: DemoConfig }
 export interface DemoPage { id: string; business: string; profile: DemoProfile; config: DemoConfig; expires: string; usedMin: number }
 export interface DocUpdate { state: DocState; message: string; id?: string; business?: string; profile?: DemoProfile }
@@ -220,14 +222,18 @@ ${p.ficha}`) },
     } catch (e) { this.log.warn(`demo ${id}: configuración por defecto (${(e as Error).message.slice(0, 120)})`); }
     await this.db.query('UPDATE demos SET profile = $1 WHERE id = $2', [JSON.stringify({ ...p, config }), id]).catch(() => undefined);
     // Imagen del negocio (plantilla de WhatsApp y pagina del enlace). Si no hay generador o se acabo el tope, la demo sigue sin ella.
-    if (this.images?.canGenerate && !this.images.reserveGeneration(1)) {
+    // Orden: OpenAI (IMAGEN_RESPALDO_MODELO / IMAGEN_OPENAI_MODELO) y, si falla, Magnific (lo hace ImagesService.generate).
+    const no = !this.images?.canGenerate ? 'no hay generador de imágenes configurado' : this.images.reserveGeneration(1);
+    if (no) config.imagenError = no;
+    else {
       try {
-        const img = await this.images.generate(demoImagePrompt(p.negocio, config.escena ?? '', config.color), 'horizontal', AbortSignal.timeout(180_000));
+        const img = await this.images!.generate(demoImagePrompt(p.negocio, config.escena ?? '', config.color), 'horizontal', AbortSignal.timeout(180_000));
         config.imagen = img.name;
-        await this.db.query('UPDATE demos SET profile = $1 WHERE id = $2', [JSON.stringify({ ...p, config }), id]).catch(() => undefined);
-        this.log.log(`demo ${id}: imagen del negocio lista (${img.provider})`);
-      } catch (e) { this.log.warn(`demo ${id}: sin imagen del negocio (${(e as Error).message.slice(0, 120)})`); }
+        this.log.log(`demo ${id}: imagen del negocio lista (${img.provider}${img.fallback ? `, ${img.fallback}` : ''})`);
+      } catch (e) { config.imagenError = (e as Error).message.slice(0, 200); this.log.warn(`demo ${id}: sin imagen del negocio (${config.imagenError})`); }
     }
+    config.imagenLista = true;
+    await this.db.query('UPDATE demos SET profile = $1 WHERE id = $2', [JSON.stringify({ ...p, config }), id]).catch(() => undefined);
     return config;
   }
 
@@ -260,6 +266,14 @@ ${p.ficha}`) },
     await this.knowledge.deleteDemo(id).catch((e) => this.log.warn(`demo ${id}: no se borraron sus fragmentos (${(e as Error).message})`));
     await this.db.query('DELETE FROM demos WHERE id = $1', [id]);
     return true;
+  }
+
+  /** Cambia la configuracion guardada de una demo (por ejemplo, el proyecto de su portada). */
+  async patchConfig(id: string, patch: Partial<DemoConfig>): Promise<void> {
+    const d = await this.get(id); if (!d) return;
+    const p: DemoProfile = JSON.parse(d.profile || '{}');
+    p.config = { ...(p.config ?? DemoDocsService.fallbackConfig(p)), ...patch };
+    await this.db.query('UPDATE demos SET profile = $1 WHERE id = $2', [JSON.stringify(p), id]);
   }
 
   async get(id: string): Promise<DemoDoc | undefined> { return (await this.db.query<DemoDoc>('SELECT * FROM demos WHERE id = $1', [id]))[0]; }

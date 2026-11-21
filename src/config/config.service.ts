@@ -45,6 +45,9 @@ export class ConfigService {
   readonly whatsappPhoneNumberId: string;
   readonly whatsappTemplate: string;
   readonly whatsappTemplateLang: string;
+  /** Plantilla con el enlace de la demo (B3): cabecera con la imagen del negocio, {{1}} nombre, {{2}} negocio, boton /demo/{{1}}. */
+  readonly whatsappDemoTemplate: string;
+  readonly whatsappDemoTemplateLang: string;
   readonly whatsappHeaderImageUrl: string;
   readonly whatsappApiVersion: string;
   readonly whatsappDefaultCountry: string;
@@ -283,6 +286,8 @@ export class ConfigService {
     this.whatsappPhoneNumberId = str('WHATSAPP_PHONE_NUMBER_ID');
     this.whatsappTemplate = str('WHATSAPP_TEMPLATE');
     this.whatsappTemplateLang = str('WHATSAPP_TEMPLATE_LANG', 'es_MX');
+    this.whatsappDemoTemplate = str('WHATSAPP_PLANTILLA_DEMO', 'minijavi_demo');
+    this.whatsappDemoTemplateLang = str('WHATSAPP_PLANTILLA_DEMO_IDIOMA', 'es');
     this.whatsappHeaderImageUrl = str('WHATSAPP_HEADER_IMAGE_URL');
     this.whatsappApiVersion = str('WHATSAPP_API_VERSION', 'v27.0');
     this.whatsappDefaultCountry = str('WHATSAPP_DEFAULT_COUNTRY', '57');
@@ -374,7 +379,7 @@ export class ConfigService {
     this.magnificApiKey = (process.env.MAGNIFIC_API_KEY ?? '').trim();
     this.imagesDailyGenerations = int('IMAGES_DAILY_GENERATIONS', 60, 0); // cada pedido genera 3 versiones
     this.imageOpenAiKey = str('IMAGEN_OPENAI', '1') === '0' ? '' : str('OPENAI_API_KEY') || (this.capableProvider === 'openai' ? this.capableKey : '');
-    this.imageOpenAiModel = str('IMAGEN_OPENAI_MODELO', 'gpt-image-2.6-flare');
+    this.imageOpenAiModel = str('IMAGEN_OPENAI_MODELO') || str('IMAGEN_RESPALDO_MODELO') || 'gpt-image-2.6-flare'; // IMAGEN_RESPALDO_MODELO: el nombre que usa Javier en su .env
     this.imageOpenAiQuality = ['low', 'medium', 'high'].includes(str('IMAGEN_OPENAI_CALIDAD').toLowerCase()) ? str('IMAGEN_OPENAI_CALIDAD').toLowerCase() : 'medium';
     this.imagesPerSession = int('IMAGES_PER_SESSION', 4, 0);
     this.imagesDailySearches = int('IMAGES_DAILY_SEARCHES', 150, 1);

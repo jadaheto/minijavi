@@ -71,6 +71,29 @@ export class WhatsAppService {
     } catch (e) { return `no se pudo conectar con WhatsApp: ${(e as Error).name}`; }
   }
 
+  /**
+   * B3: plantilla con el enlace de la demo de su negocio (WHATSAPP_PLANTILLA_DEMO, aprobada por Meta el 2026-11-21:
+   * cabecera IMAGEN, cuerpo {{1}} primer nombre y {{2}} negocio, boton URL https://yo.minijavi.com/demo/{{1}} -> el id).
+   * La imagen se sube a Meta y va por su id (probado el 2026-11-21). Devuelve '' si Meta la acepto, o el motivo.
+   */
+  async sendDemo(contact: string, name: string, business: string, demoId: string, image: { buf: Buffer; mime: string }): Promise<string> {
+    if (!this.enabled) return 'WhatsApp no está configurado';
+    const to = toPhone(contact, this.cfg.whatsappDefaultCountry);
+    if (!to) return 'el contacto no es un número de WhatsApp';
+    if (this.optout.blocked(to)) return 'esa persona pidió no ser contactada';
+    if (!/^[a-z0-9-]{3,48}$/.test(demoId)) return 'id de demo inválido';
+    try {
+      const media = await this.upload(image.buf, image.mime, `demo.${image.mime.split('/')[1]}`);
+      await this.post({ recipient_type: 'individual', to, type: 'template', template: { name: this.cfg.whatsappDemoTemplate, language: { code: this.cfg.whatsappDemoTemplateLang }, components: [
+        { type: 'header', parameters: [{ type: 'image', image: { id: media } }] },
+        { type: 'body', parameters: [{ type: 'text', text: (name.split(/\s+/)[0] || name).slice(0, 60) }, { type: 'text', text: business.slice(0, 80) }] },
+        { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: demoId }] },
+      ] } });
+      this.log.log('plantilla de la demo aceptada por Meta');
+      return '';
+    } catch (e) { const why = (e as Error).message; this.log.warn(`plantilla de la demo no enviada: ${why}`); return why; }
+  }
+
   // ---- Mensajes del chat (verificado con la documentacion de Meta el 2026-11-14 y el 2026-11-18) ----
   //  - GET /{media-id} -> {url, mime_type}; la url caduca a los 5 min y se descarga con el mismo Bearer.
   //  - POST /{phone-id}/media multipart (messaging_product, type, file) -> {id}. Audio: audio/ogg SOLO con Opus y mono.
