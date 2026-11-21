@@ -819,6 +819,7 @@ export class SessionGateway implements OnGatewayConnection {
             if (out.news && !turn.ctrl.signal.aborted) this.send(client, { type: 'news', ...out.news });
             if (out.markets && !turn.ctrl.signal.aborted) this.send(client, { type: 'markets', ...out.markets });
             if (out.panel && !turn.ctrl.signal.aborted) this.send(client, { type: 'panel', ...out.panel });
+            if (out.panel || out.tesla || out.news || out.markets) turn.sceneLocked = true; // el panel trae su propio fondo: una etiqueta [f:...] de la respuesta no lo cambia
           }
           this.log.log(`sesion #${s.n}: herramienta ${c.name} -> ${result.slice(0, 80)}`);
           s.history.push({ role: 'tool', tool_call_id: c.id, content: result });

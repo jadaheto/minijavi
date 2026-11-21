@@ -112,11 +112,12 @@ let work = null;
 // tiene el suyo (noticias: bandera o red neuronal; mercados y dolar: pantalla de bolsa; Tesla y trayecto: carretera;
 // cargadores y Tesla cargando: energia; tablero, servicios y consumo: los suyos). La musica de YouTube lleva ondas; la de
 // Spotify, su caratula desenfocada (otra capa). Las imagenes generadas y los bocetos no llevan fondo.
-let newsScene = null, sceneHold = 0;
+let newsScene = null, sceneHold = 0, hadPanelScene = false;
 const DATA_SCENES = { finance: 'mercado', status: 'radar', usage: 'flujo', board: 'tablero', route: 'carretera', chargers: 'energia' };
-const restScene = () => (activity ? ACTIVITIES[activity].scene : work ? 'codigo'
-  : news.active ? newsScene || 'neuronal' : markets.active ? 'mercado' : tesla.active ? (tesla.charging ? 'energia' : 'carretera')
-  : dataPanel.active ? DATA_SCENES[dataPanel.kind] || null : music.active && music.source === 'youtube' ? 'ondas' : null);
+/** Fondo del panel que esta en pantalla (null si no hay ninguno). Manda sobre el fondo que pida una respuesta. */
+const panelScene = () => (news.active ? newsScene || 'neuronal' : markets.active ? 'mercado' : tesla.active ? (tesla.charging ? 'energia' : 'carretera')
+  : dataPanel.active ? DATA_SCENES[dataPanel.kind] || null : null);
+const restScene = () => (activity ? ACTIVITIES[activity].scene : work ? 'codigo' : panelScene() ?? (music.active && music.source === 'youtube' ? 'ondas' : null));
 // Modo suspension: el avatar deja de responder (sigue oyendo solo su nombre) y se entretiene con una actividad que va
 // rotando. `dormant`: la suspension ya vencio en el servidor; el microfono no se envia y solo despierta con un toque.
 const ACTIVITIES = {
@@ -307,6 +308,7 @@ function onMessage(msg) {
     case 'reaction': // gesto del avatar + emojis
       avatar.react(msg.name); emojiBurst($('fx'), msg.name); break;
     case 'scene':
+      if (!activity && !work && panelScene()) break; // hay un panel en pantalla: su fondo manda
       sceneHold = performance.now() + 6000; backdrop.show(msg.name); break; // fondo pedido por la respuesta: manda mientras se dice
     case 'card':
       showCard(msg); break;
@@ -410,7 +412,13 @@ function frame(now) {
   if (wasPlaying !== playing) { wasPlaying = playing; socket?.send({ type: 'playback', playing }); } // el servidor sabe cuando termina de sonar
   if (state === 'speaking' && !playing) { lips.reset(); setState(restState()); if (state === 'away') setSub('sub-avatar', ''); sceneHold = now + 2500; } // el fondo que pidio la respuesta se queda un momento antes de volver al de reposo
   // En reposo, el fondo sigue a lo que haya en pantalla: aparece con el panel y se va cuando este se cierra (solo o a mano).
-  if ((state === 'listening' || state === 'idle' || state === 'away') && now > sceneHold) { const want = restScene(); if (backdrop.current !== want) backdrop.show(want); }
+  // Con un panel en pantalla, su fondo sale DE UNA VEZ, aunque el avatar este hablando (antes salia primero el fondo que
+  // pedia la respuesta, como la red neuronal, y el del panel llegaba al terminar de hablar).
+  const forced = !activity && !work ? panelScene() : null;
+  if (!forced && hadPanelScene) sceneHold = 0; // el panel se cerro: su fondo se va ya, sin esperar
+  hadPanelScene = !!forced;
+  if (forced) { if (backdrop.current !== forced) backdrop.show(forced); }
+  else if ((state === 'listening' || state === 'idle' || state === 'away') && now > sceneHold) { const want = restScene(); if (backdrop.current !== want) backdrop.show(want); }
   const t = playing ? player.time() : -1;
   const w = lips.update(state === 'speaking' ? t : -1, dt);
   for (const v of VISEMES) avatar.setMorph(v, Math.max(w[v], avatar.exprMouth[v] || 0));

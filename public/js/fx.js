@@ -357,7 +357,7 @@ export function createBackdrop(canvas) {
       if (name === 'matrix') name = 'neuronal'; // nombre anterior del fondo de tecnologia
       if (!draw[name]) name = null;
       if (name === current) return;
-      current = name; canvas.classList.toggle('on', !!name);
+      current = name; canvas.classList.toggle('on', !!name); canvas.dataset.scene = name || ''; // para saber desde fuera cual se ve
       if (name) { clearInterval(timer); resize(); ctx.clearRect(0, 0, W, H); timer = setInterval(draw[name], 55); }
       else setTimeout(() => { if (!current) { clearInterval(timer); timer = null; } }, 1400); // sigue animando durante el fundido
     },
