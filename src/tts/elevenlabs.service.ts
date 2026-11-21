@@ -23,9 +23,10 @@ export class ElevenLabsService {
   private readonly log = new Logger(ElevenLabsService.name);
   constructor(private readonly cfg: ConfigService, private readonly usage: UsageService) {}
 
-  async *stream(text: string, signal?: AbortSignal, lang = 'es'): AsyncGenerator<TtsChunk> {
+  /** `voice`: otra voz para esta conversacion (la demo de un negocio usa la suya); por defecto la de Javier. */
+  async *stream(text: string, signal?: AbortSignal, lang = 'es', voice = ''): AsyncGenerator<TtsChunk> {
     const url =
-      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(this.cfg.elevenVoiceId)}` +
+      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice || this.cfg.elevenVoiceId)}` +
       `/stream/with-timestamps?output_format=pcm_${TTS_SAMPLE_RATE}`;
     const res = await fetch(url, {
       method: 'POST',

@@ -485,3 +485,19 @@ body.panel:has(.pnl[data-kind="brief"]):not(.showing) #stage { transform: transl
 .dd-status[data-tone=busy] { color: #f0d07a; } .dd-status[data-tone=ok] { color: #7dffc0; } .dd-status[data-tone=bad] { color: #ffb4b0; }
 @media (max-aspect-ratio: 4/5) { .demo-doc { left: 16px; right: 16px; width: auto; } }
 @media (max-width: 600px) { .dd-qr { display: none; } } /* en un celular se sube con el boton; el QR es para el kiosco y el computador */
+
+/* Enlace de la demo de un negocio (/demo/<id>): franja con su marca arriba y contacto con Javier. */
+.brand { --brand: #d95926; position: fixed; left: 50%; top: 14px; transform: translateX(-50%); z-index: 25; width: min(720px, calc(100vw - 32px)); display: grid; gap: 8px; padding: 12px 16px; border-radius: 18px; background: rgba(15, 20, 32, .86); border-top: 4px solid var(--brand); color: #eef2f8; box-shadow: 0 14px 40px rgba(0, 0, 0, .35); backdrop-filter: blur(8px); }
+:root { --brand: #d95926; }
+.brand-head { display: grid; gap: 2px; }
+.brand-head strong { font-size: 19px; }
+.brand-head small { font-size: 12px; color: #9aa6b8; }
+.brand-tips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
+.brand-try { color: #9aa6b8; }
+.brand-q { padding: 3px 10px; border-radius: 999px; background: color-mix(in srgb, var(--brand) 22%, transparent); border: 1px solid color-mix(in srgb, var(--brand) 55%, transparent); }
+.brand-cta { justify-self: start; font-size: 13px; font-weight: 700; color: #fff; text-decoration: none; padding: 6px 12px; border-radius: 10px; background: var(--brand); }
+body.demo-page #owner, body.demo-page #demo { display: none; }
+body.demo-page .gate-card button { background: var(--brand); }
+@media (max-aspect-ratio: 4/5) { .brand { top: auto; bottom: 14px; } }
+.demo-doc[hidden], .brand[hidden] { display: none; } /* su display: grid no debe pisar el atributo hidden */
+.gate-hero { display: block; width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 14px; margin-bottom: 4px; }

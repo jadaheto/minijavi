@@ -21,7 +21,11 @@ const ERRORS = {
   codigo: 'Escribe el código de acceso.', ocupado: 'Estoy ocupado con otra persona. Intenta en un momento.',
   tiempo: 'Llegamos al tiempo máximo. Háblame para empezar otra conversación.', inactividad: '',
   escucha: 'Se perdió la conexión con el servicio de escucha. Háblame para reintentar.',
+  demo_tiempo: 'La charla de prueba llegó a su tiempo máximo. Toca para empezar otra.', demo_limite: 'Esta demostración llegó a su límite de uso de hoy. Vuelve mañana.',
+  demo_vencida: 'Esta demostración ya venció.', demo_no_existe: 'Esta demostración no existe.', demo_no_lista: 'Esta demostración todavía se está preparando. Intenta en un rato.',
 };
+// Enlace de la demo de un negocio (/demo/<id>): el servidor marca la pagina con su id; la conversacion es con ese asistente.
+const DEMO_PAGE = document.querySelector('meta[name="minijavi-demo"]')?.getAttribute('content') || '';
 
 const avatar = await createAvatar($('stage'));
 const missing = REQUIRED.filter((n) => !avatar.morphNames.includes(n));
@@ -288,6 +292,7 @@ function onMessage(msg) {
       if (msg.wake) wakeWord = msg.wake[0].toUpperCase() + msg.wake.slice(1);
       car = !!msg.car; if (car) setState('listening'); // modo carro: el letrero dice como llamarlo
       $('owner').hidden = !msg.owner; // aviso visible de que esta sesion tiene las herramientas privadas
+      if (msg.page) showBrand(msg.page);
       if (msg.tts === 'browser') { browserVoice.configure(msg.voice, msg.rate); player = browserVoice; } else player = serverPlayer;
       for (const b of prebuffer.splice(0)) socket.sendAudio(b);
       break;
@@ -295,7 +300,8 @@ function onMessage(msg) {
       closeReason = ERRORS[msg.reason] ?? 'Ocurrió un problema. Háblame para reintentar.';
       if (msg.reason === 'codigo') { $('code').hidden = false; armed = false; }
       if (msg.reason === 'ocupado') retryAt = performance.now() + 15000;
-      if (msg.reason === 'suspension') { closeReason = ''; dormant = true; } // sigue suspendido, ya sin oir: solo despierta con un toque
+      if (msg.reason === 'suspension') { closeReason = ''; dormant = true; }
+      if (String(msg.reason).startsWith('demo_')) armed = false; // en el enlace de una demo no se vuelve a abrir solo con la voz: hace falta un toque // sigue suspendido, ya sin oir: solo despierta con un toque
       break;
     case 'user_partial':
       if (state !== 'speaking') { setSub('sub-user', msg.text); }
@@ -373,7 +379,7 @@ function shutdown(message) {
   setSub('sub-user', ''); setSub('sub-avatar', '');
   $('mic').hidden = true; $('owner').hidden = true; $('demo').hidden = true; $('gate').hidden = false;
   $('gate').classList.toggle('standby', armed);
-  $('gate-text').textContent = dormant ? 'Estoy suspendido. Toca la pantalla para despertarme.' : armed ? (message || STANDBY_TEXT) : 'Toca para empezar a conversar. El navegador te pedirá permiso para usar el micrófono.';
+  $('gate-text').textContent = dormant ? 'Estoy suspendido. Toca la pantalla para despertarme.' : armed ? (message || STANDBY_TEXT) : DEMO_PAGE ? 'Toca para hablar con el asistente. El navegador te pedirá permiso para usar el micrófono.' : 'Toca para empezar a conversar. El navegador te pedirá permiso para usar el micrófono.';
   $('gate-error').textContent = armed ? '' : (message || '');
   if (armed && message && !dormant) setTimeout(() => { if (!live && !connecting && !dormant) $('gate-text').textContent = STANDBY_TEXT; }, 6000);
 }
@@ -382,7 +388,32 @@ function startSession() {
   if (live || connecting) return;
   connecting = true; closeReason = '';
   socket?.close();
-  socket = connect($('code').value, visitorId(), { onMessage, onClose: ({ wasReady }) => shutdown(closeReason || (wasReady ? '' : 'No pude conectar. Intenta de nuevo.')) }, CAR ? { car: true } : {});
+  socket = connect($('code').value, visitorId(), { onMessage, onClose: ({ wasReady }) => shutdown(closeReason || (wasReady ? '' : 'No pude conectar. Intenta de nuevo.')) }, DEMO_PAGE ? { demoPage: DEMO_PAGE } : CAR ? { car: true } : {});
+}
+
+/** Franja de marca del enlace de una demo: nombre del negocio, aviso de que es una demo con IA, preguntas sugeridas y contacto. */
+function showBrand(page) {
+  const box = $('brand'); if (!box) return;
+  box.replaceChildren();
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  if (/^#[0-9a-f]{6}$/i.test(page.color || '')) document.documentElement.style.setProperty('--brand', page.color);
+  const head = el('div', 'brand-head'); head.append(el('strong', '', page.business || 'Asistente'), el('small', '', `Asistente con IA · demostración hecha por Javier · charlas de hasta ${page.minutes || 5} min`));
+  box.append(head);
+  if (Array.isArray(page.questions) && page.questions.length) {
+    const tips = el('div', 'brand-tips'); tips.append(el('span', 'brand-try', 'Prueba preguntar:'));
+    for (const q of page.questions.slice(0, 3)) tips.append(el('span', 'brand-q', `«${q}»`));
+    box.append(tips);
+  }
+  if (/^https:\/\//.test(page.contact || '')) { const a = el('a', 'brand-cta', '¿Quieres uno así? Habla con Javier'); a.href = page.contact; a.target = '_blank'; a.rel = 'noopener'; box.append(a); }
+  box.hidden = false;
+}
+if (DEMO_PAGE) {
+  document.body.classList.add('demo-page');
+  $('gate').querySelector('h1').textContent = document.title;
+  $('btn-start').textContent = 'Hablar con el asistente';
+  $('gate-text').textContent = 'Toca para hablar con el asistente. El navegador te pedirá permiso para usar el micrófono.';
+  const pic = document.querySelector('meta[name="minijavi-demo-image"]')?.getAttribute('content') || '';
+  if (/^\/imagenes\/[A-Za-z0-9._-]+$/.test(pic)) { const img = document.createElement('img'); img.className = 'gate-hero'; img.src = pic; img.alt = ''; $('gate-form').prepend(img); }
 }
 
 function onMicChunk(buffer) {

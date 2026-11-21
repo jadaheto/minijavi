@@ -1,4 +1,6 @@
 import { Body, Controller, Delete, Get, HttpException, Param, Patch, Post, Query, Req, Res, StreamableFile } from '@nestjs/common';
+import { Optional } from '@nestjs/common';
+import { DemoDocsService } from '../demo/demo-docs.service';
 import { ConfigService } from '../config/config.service';
 import type { Request, Response } from 'express';
 import { LeadsService, STATUSES } from '../leads/leads.service';
@@ -32,7 +34,7 @@ const isHttps = (req: Request) => req.secure || String(req.headers['x-forwarded-
 /** Registro y administracion de los dispositivos del dueño. La pagina es public/owner.html. */
 @Controller('owner')
 export class OwnerController {
-  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService, private readonly optout: OptOutService, private readonly capable: CapableModelService, private readonly actions: ActionsService, private readonly approvals: ApprovalsService, private readonly telegram: TelegramService, private readonly policy: PolicyService, private readonly catalog: CatalogService) {}
+  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService, private readonly optout: OptOutService, private readonly capable: CapableModelService, private readonly actions: ActionsService, private readonly approvals: ApprovalsService, private readonly telegram: TelegramService, private readonly policy: PolicyService, private readonly catalog: CatalogService, @Optional() private readonly demos?: DemoDocsService) {}
   private get followDays() { return this.cfg.followupDays; }
 
   private cookie(req: Request, value: string, maxAge: number) {
@@ -254,6 +256,28 @@ export class OwnerController {
   }
 
   // ---- imagenes generadas con IA ----
+  // ---- Demos "Crea tu propio asistente" (B2): ver, alargar y borrar ----
+  @Get('demos')
+  async listDemos(@Req() req: Request) {
+    this.require(req);
+    if (!this.demos) return { enabled: false, demos: [] };
+    const rows = await this.demos.list();
+    return { enabled: this.demos.enabled, perDay: this.cfg.demoPageDailyMinutes, perChat: this.cfg.demoPageMinutes, demos: rows.map((d) => {
+      let p: any = {}; try { p = JSON.parse(d.profile || '{}'); } catch { /* fila con error */ }
+      return { id: d.id, business: d.business, status: d.status, error: d.error, created: d.created_at, expires: d.expires_at, pages: d.pages, kind: d.kind, chunks: d.chunks, lead: d.lead_id || null,
+        url: `/demo/${d.id}`, minutesToday: this.demos!.usedMinutes(d.id), ficha: String(p.ficha ?? '').slice(0, 1500), saludo: p.config?.saludo ?? '', preguntas: p.config?.preguntas ?? [], color: p.config?.color ?? '' };
+    }) };
+  }
+  @Post('demos/:id/alargar')
+  async extendDemo(@Req() req: Request, @Param('id') id: string) {
+    this.require(req);
+    const until = await this.demos?.extend(String(id), this.cfg.demoDocDays);
+    if (!until) throw new HttpException({ error: 'no_existe' }, 404);
+    return { ok: true, expires: until };
+  }
+  @Delete('demos/:id')
+  async removeDemo(@Req() req: Request, @Param('id') id: string) { this.require(req); return { ok: !!(await this.demos?.remove(String(id))) }; }
+
   @Get('images')
   async generatedImages(@Req() req: Request) {
     this.require(req);

@@ -1776,6 +1776,88 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     return 'tipo por bytes, páginas, autorización, un documento por conversación, tope por IP; lectura con el modelo capaz; inyección rechazada y avisada; Qdrant solo de esa demo; vence y se borra; la demo ofrece la subida, cuenta el documento, responde con sus fragmentos y no usa otras herramientas';
   });
 
+  await check('Enlace de la demo: /demo/<id> abre el asistente del negocio con su voz, sin herramientas, con topes y vencimiento', async () => {
+    const { DemoDocsService } = await import('../demo/demo-docs.service');
+    const { DemoPageController } = await import('../demo/demo-page.controller');
+    const { pagePrompt } = await import('../session/session.gateway');
+    const dcfg = new ConfigService(); Object.assign(dcfg as any, { demoDocs: true, demoPageMinutes: 5, demoPageDailyMinutes: 30, demoVoiceId: 'k1LcwPlB8fqtr2BOqzNo' });
+    let chatOut = '{"saludo":"¡Hola! Soy el asistente de Panadería Sol, mira https://malo.invalid","personalidad":"Cálido y breve.","preguntas":["¿Cuánto vale el pan?","¿Abren domingo?","¿Hacen domicilios?","sobra"],"color":"#F2A900"}';
+    const capable = { readsFiles: true, chat: async function* () { if (chatOut === 'falla') throw new Error('caído'); yield { type: 'text', delta: chatOut }; } } as any;
+    const kb = { enabled: true, deleteDemo: async () => undefined, searchDemo: async () => [] } as any;
+    const docs = new DemoDocsService(dcfg, P.db, capable, kb, { screen: () => ({ blocks: async () => false }) } as any, usage);
+    const id = 'panaderia-sol-b2b2b2', now = Date.now(), profile = { negocio: 'Panadería Sol', ficha: 'Pan francés $2.000', colores: ['#f2a900'] };
+    await P.db.query('INSERT INTO demos (id, business, created_at, expires_at, status, profile, consent_at) VALUES ($1, $2, $3, $4, $5, $6, $7)', [id, 'Panadería Sol', new Date(now).toISOString(), new Date(now + 7 * 86400_000).toISOString(), 'listo', JSON.stringify(profile), new Date(now).toISOString()]);
+    // Configuracion por el modelo capaz: sin enlaces, 3 preguntas, color valido; si falla, una por defecto.
+    const c = await docs.buildConfig(id, profile);
+    must(c.auto && !/https?:/.test(c.saludo) && c.preguntas.length === 3 && c.color === '#f2a900' && c.personalidad === 'Cálido y breve.', `configuración: ${JSON.stringify(c)}`);
+    chatOut = 'falla'; const c2 = await docs.buildConfig('otra', { ...profile, colores: [] });
+    must(!c2.auto && /asistente virtual de Panadería Sol/.test(c2.saludo) && c2.color === '#d95926', `por defecto: ${JSON.stringify(c2)}`);
+    // Imagen del negocio: estilo fijo con solo dos textos; nombre y escena limpios; si hay generador, se crea una vez.
+    const { demoImagePrompt } = await import('../demo/demo-docs.service');
+    const ip = demoImagePrompt('Panadería «Sol» {x}', 'Una panadería con vitrina de panes.', '#zzz');
+    must(/«Panadería Sol x»/.test(ip) && /«Tu asistente con IA»/.test(ip) && /de una panadería con vitrina de panes, sobre/.test(ip) && /#3987e5/.test(ip) && /sin ningún otro texto/.test(ip), `prompt de la imagen: ${ip.slice(0, 200)}`);
+    let gens = 0; const imgs = { canGenerate: true, reserveGeneration: () => '', generate: async (prompt: string) => { gens++; must(/«Panadería Sol»/.test(prompt), 'el prompt de la imagen lleva el nombre'); return { name: 'abc123.jpg', provider: 'OpenAI' }; } } as any;
+    chatOut = '{"saludo":"Hola","personalidad":"x","preguntas":[],"color":"#112233","escena":"panes"}';
+    const withImg = new DemoDocsService(dcfg, P.db, capable, kb, { screen: () => ({ blocks: async () => false }) } as any, usage, undefined, imgs);
+    const ci = await withImg.buildConfig(id, profile);
+    must(gens === 1 && ci.imagen === 'abc123.jpg' && ci.escena === 'panes', `imagen de la demo: ${JSON.stringify(ci)}`);
+    chatOut = '{"saludo":"¡Hola! Soy el asistente de Panadería Sol, mira https://malo.invalid","personalidad":"Cálido y breve.","preguntas":["¿Cuánto vale el pan?","¿Abren domingo?","¿Hacen domicilios?","sobra"],"color":"#F2A900"}';
+    await docs.buildConfig(id, profile);
+    const pg: any = await docs.page(id);
+    must(pg.business === 'Panadería Sol' && pg.config.preguntas.length === 3 && (await docs.page('no-existe-x') as any).error === 'no_existe' && (await docs.page('../etc') as any).error === 'no_existe', `página: ${JSON.stringify(pg).slice(0, 200)}`);
+    // Tope del dia y vencimiento.
+    docs.addUsage(id, 31 * 60); must((await docs.page(id) as any).error === 'limite', 'con 31 minutos hoy debía quedar en su límite');
+    (docs as any).used.clear();
+    await P.db.query('UPDATE demos SET expires_at = $1 WHERE id = $2', [new Date(now - 1000).toISOString(), id]);
+    must((await docs.page(id) as any).error === 'vencida', 'vencida');
+    const until = await docs.extend(id, 7); must(!!until && Date.parse(until) > now + 6 * 86400_000 && !('error' in (await docs.page(id))), 'alargar 7 días');
+    // La pagina: la del avatar con base, noindex y el id; si no se puede, un aviso corto.
+    const ctl = new DemoPageController(docs);
+    const res = () => { const r: any = { headers: {} as Record<string, string>, code: 200, body: '', setHeader(k: string, v: string) { r.headers[k] = v; }, status(n: number) { r.code = n; return r; }, type() { return r; }, send(b: string) { r.body = b; return r; } }; return r; };
+    const r1 = res(); await ctl.page(id, r1);
+    must(r1.code === 200 && r1.body.includes('<base href="/">') && r1.body.includes(`<meta name="minijavi-demo" content="${id}">`) && /<title>Asistente de Panadería Sol<\/title>/.test(r1.body) && /noindex/.test(r1.headers['X-Robots-Tag']), 'la página del enlace');
+    const r2 = res(); await ctl.page('no-existe-x', r2); must(r2.code === 404 && /no existe/.test(r2.body) && !r2.body.includes('main.js'), 'demo inexistente');
+    // El prompt: asistente del negocio, solo con su ficha, sin inventar, se identifica como IA y demo de Javier.
+    const pp = pagePrompt(pg);
+    must(/asistente virtual con IA de "Panadería Sol"/.test(pp) && /NUNCA inventes precios/.test(pp) && /demostración hecha por Javier/.test(pp) && /<<<DATOS de la ficha del negocio/.test(pp), 'prompt del enlace');
+    // La sesion: valida el id, no es del dueño aunque tenga cookie, sin herramientas, voz de la demo, topes.
+    const noop = () => undefined, b = noJev, sent: any[] = [], asked: { sys: string; tools: number; user: string }[] = []; let wrapped = 0;
+    const llm = { chat: async function* (messages: any[], defs: any[]) { asked.push({ sys: String(messages[0].content), tools: (defs ?? []).length, user: String(messages.filter((m) => m.role === 'user').at(-1)?.content ?? '') }); yield { type: 'text', delta: 'El pan francés vale dos mil pesos.' }; }, complete: async () => '{}' };
+    const ftools = { definitions: async () => [{ type: 'function', function: { name: 'clima' } }], run: async () => ({ text: 'no debía correr' }) } as any;
+    const docsFake = { enabled: true, page: docs.page.bind(docs), usedMinutes: docs.usedMinutes.bind(docs), addUsage: docs.addUsage.bind(docs), context: async () => '\n\nDel documento: <<<DATOS x>>> Pan francés - $2.000', forget: noop } as any;
+    const gw = new (SessionGateway as any)(b.cfg, {}, { open: () => ({ send: noop, close: noop }) }, llm, ftools, { verify: () => ({ id: 'dispositivo' }) }, { get: noop, ids: () => [] }, { get: async () => null, valid: () => true, save: async () => undefined },
+      { enabled: false }, { enabled: false, onDone: noop, onAudit: noop, onProgress: noop, busy: () => undefined, unseen: () => [], pendingAudits: () => [], defaultModel: { label: '' } }, { enabled: false }, usage, { get: async () => undefined, logConversation: noop }, { enabled: false, canGenerate: false, newState: () => ({ title: '', kind: '', items: [], index: 0 }) },
+      alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard, b.capable, b.catalog, undefined, docsFake);
+    (gw as any).wrapUp = async () => { wrapped++; };
+    let sess: any; const origStart = gw.start.bind(gw); gw.start = (c: any, x: any, k: any, f: any) => { sess = x; return origStart(c, x, k, f); };
+    const handlers: Record<string, (...a: any[]) => void> = {};
+    const client = { readyState: 1, OPEN: 1, send: (raw: string) => sent.push(JSON.parse(raw)), on: (ev: string, fn: any) => { handlers[ev] = fn; }, close: (code: number) => { sent.push({ type: 'closed', code }); handlers.close?.(); } };
+    gw.handleConnection(client, { headers: { cookie: 'minijavi_owner=algo' } });
+    handlers.message(Buffer.from(JSON.stringify({ type: 'hello', demoPage: id, code: '' })), false); await wait(300);
+    const ready = sent.find((m) => m.type === 'ready');
+    must(ready && ready.owner === false && sess?.owner === false && sess.page?.id === id && ready.page?.business === 'Panadería Sol' && ready.page.questions.length === 3, `ready (aunque traiga cookie de dueño no es sesión del dueño): ${JSON.stringify(ready)}`);
+    const said = sent.filter((m) => m.type === 'say').map((m) => m.text).join(' ');
+    must(/asistente de Panadería Sol/i.test(said), `saludo del negocio: «${said}»`);
+    sess.clientPlaying = false; gw.onTranscript(client, sess, '¿cuánto vale el pan francés?', true, true, 'es'); await wait(500);
+    const q = asked.at(-1)!;
+    must(q && q.tools === 0 && /asistente virtual con IA de "Panadería Sol"/.test(q.sys) && !/Javier\. /.test(q.sys.slice(0, 40)) && /Pan francés - \$2\.000/.test(q.user), `pregunta: ${JSON.stringify(q).slice(0, 300)}`);
+    // La voz de la demo: el turno pide a ElevenLabs la voz del negocio (aqui se mira el codigo: la prueba usa la voz del navegador).
+    const gwSrc = (await import('node:fs')).readFileSync(join(__dirname, '..', 'session', 'session.gateway.' + (__filename.endsWith('.ts') ? 'ts' : 'js')), 'utf8');
+    must(/s\.page \? this\.cfg\.demoVoiceId/.test(gwSrc), 'la voz de la demo no se usa al hablar');
+    // Tope por charla: pasados 5 minutos se cierra con su aviso; al cerrar, cuenta para el tope del dia y no es una visita.
+    sess.startedAt = Date.now() - 5.1 * 60_000; await wait(5300);
+    must(sent.some((m) => m.type === 'error' && m.reason === 'demo_tiempo') && sent.some((m) => m.type === 'closed'), `tope de la charla: ${JSON.stringify(sent.slice(-3))}`);
+    must(docs.usedMinutes(id) >= 5 && wrapped === 0, `tras cerrar: ${docs.usedMinutes(id)} min usados, resúmenes de visita ${wrapped}`);
+    // Una demo vencida no abre.
+    const sent2: any[] = [], h2: Record<string, any> = {};
+    await P.db.query('UPDATE demos SET expires_at = $1 WHERE id = $2', [new Date(Date.now() - 1000).toISOString(), id]);
+    gw.handleConnection({ readyState: 1, OPEN: 1, send: (raw: string) => sent2.push(JSON.parse(raw)), on: (ev: string, fn: any) => { h2[ev] = fn; }, close: () => sent2.push({ type: 'closed' }) }, { headers: {} });
+    h2.message(Buffer.from(JSON.stringify({ type: 'hello', demoPage: id })), false); await wait(200);
+    must(sent2.some((m) => m.reason === 'demo_vencida') && !sent2.some((m) => m.type === 'ready'), `vencida: ${JSON.stringify(sent2)}`);
+    await docs.remove(id); must(!(await docs.get(id)), 'borrar desde el panel');
+    return 'configuración por el modelo capaz (sin enlaces) o por defecto; página con base y noindex; vencida, inexistente y tope del día; sin herramientas, ficha y fragmentos, saludo del negocio, no es sesión del dueño; 5 minutos por charla; cuenta el uso y no es visita; alargar y borrar';
+  });
+
   rmSync(dir, { recursive: true, force: true });
   const icon = { ok: '✓', FALLA: '✗', omitida: '–' };
   console.log('\nVERIFICACIÓN DE MINIJAVI (simulación: no se envió nada a nadie)\n');

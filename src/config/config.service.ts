@@ -154,6 +154,10 @@ export class ConfigService {
   readonly demoDocPerIpHour: number;
   readonly demoDocDaily: number;
   readonly demoDocDays: number;
+  /** Enlace /demo/<id> (B2): voz del asistente del negocio, minutos por conversacion y minutos por dia de cada demo. */
+  readonly demoVoiceId: string;
+  readonly demoPageMinutes: number;
+  readonly demoPageDailyMinutes: number;
   /** Al cerrar una conversacion publica: analizarla con el modelo y avisar por Telegram si mostro interes. */
   readonly visitReports: boolean;
   /** Guardar tambien las conversaciones del sitio (no solo las llamadas). Apagado por defecto: implica avisar a los visitantes. */
@@ -394,6 +398,9 @@ export class ConfigService {
     this.demoDocPerIpHour = int('DEMO_DOC_POR_IP_HORA', 3, 1);
     this.demoDocDaily = int('DEMO_DOC_DIA', 30, 1);
     this.demoDocDays = int('DEMO_DOC_DIAS', 7, 1);
+    this.demoVoiceId = /^[A-Za-z0-9]{10,40}$/.test(str('DEMO_VOZ_ID', 'k1LcwPlB8fqtr2BOqzNo')) ? str('DEMO_VOZ_ID', 'k1LcwPlB8fqtr2BOqzNo') : '';
+    this.demoPageMinutes = int('DEMO_MIN_CHARLA', 5, 1);
+    this.demoPageDailyMinutes = int('DEMO_MIN_DIA', 30, 1);
     this.visitReports = process.env.VISIT_REPORTS !== '0';
     this.usagePrices = {};
     try { for (const [k, v] of Object.entries(JSON.parse(process.env.USAGE_PRICES || '{}'))) if (Number(v) > 0) this.usagePrices[k] = Number(v); }

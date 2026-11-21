@@ -68,7 +68,7 @@ const pretty = (k) => String(k).replace(/_/g, ' ').replace(/^formulario:/, 'form
 const SOURCE = (k) => (k === 'sin dato' ? 'Sin dato (anteriores)' : k === 'voz' ? 'Conversación en el sitio' : k === 'llamada' ? 'Llamada de WhatsApp' : pretty(k));
 
 // ---------- pestañas ----------
-const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
+const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, demos: loadDemos, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
   for (const b of $('tabs').children) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
@@ -449,6 +449,32 @@ $('dec-test').addEventListener('submit', async (ev) => {
   out.textContent = `${n(d.ms)} ms${d.shadow ? ' · en modo sombra: esto es lo que Jev decidió, pero el código sigue usando el valor por defecto' : ''}\n` + Object.entries(d.shadow ? logged : d.answers).map(([id, a]) => answerLine(id, a)).join('\n');
   loadDecisions();
 });
+
+async function loadDemos() {
+  const { enabled, demos, perChat, perDay } = await json('demos');
+  $('demo-count').textContent = `(${demos.length})`;
+  $('demo-note').textContent = demos.length ? `Cada enlace dura 7 días (puedes alargarlo). Charlas de hasta ${perChat} min y ${perDay} min al día por demo. Se borran solas al vencer, con su documento.`
+    : enabled ? 'Todavía no hay ninguna. Aparecen cuando un visitante sube el documento de su negocio durante una demostración.' : 'La subida de documentos no está activa (hace falta el modelo capaz de OpenAI).';
+  const estado = { listo: 'Lista', leyendo: 'Leyendo el documento', error: 'Con error' };
+  $('demo-list').replaceChildren(...demos.map((d) => {
+    const vence = Date.parse(d.expires), dias = Math.max(0, Math.ceil((vence - Date.now()) / 86400000));
+    const title = el('strong', {}, ...(d.color ? [el('span', { className: 'swatch', style: `background:${/^#[0-9a-f]{6}$/i.test(d.color) ? d.color : '#888'}` })] : []), document.createTextNode(d.business));
+    const meta = el('small', { className: 'muted', textContent: [estado[d.status] || d.status, `creada ${fecha(d.created)}`, `vence en ${dias} día${dias === 1 ? '' : 's'}`, `${d.kind.toUpperCase()}${d.kind === 'pdf' ? ` · ${d.pages} pág.` : ''}`, `${d.chunks} fragmentos`, `hoy ${d.minutesToday} min`, d.lead ? `interesado #${d.lead}` : 'sin datos de contacto'].join(' · ') });
+    const kids = [title, meta];
+    if (d.error) kids.push(el('small', { className: 'danger-text', textContent: `Error: ${d.error}` }));
+    if (d.saludo) kids.push(el('small', { textContent: `Saludo: «${d.saludo}»${d.preguntas.length ? ` · Preguntas: ${d.preguntas.join(' / ')}` : ''}` }));
+    if (d.ficha) kids.push(el('pre', { textContent: d.ficha }));
+    const open = el('a', { href: d.url, target: '_blank', rel: 'noopener', textContent: 'Abrir la demo' });
+    const copy = el('button', { type: 'button', className: 'small', textContent: 'Copiar enlace' });
+    copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(new URL(d.url, location.href).href); copy.textContent = 'Copiado'; } catch { copy.textContent = 'No se pudo copiar'; } });
+    const more = el('button', { type: 'button', className: 'small', textContent: 'Alargar 7 días' });
+    more.addEventListener('click', async () => { await api(`demos/${encodeURIComponent(d.id)}/alargar`, { method: 'POST' }); loadDemos(); });
+    const del = el('button', { type: 'button', className: 'small danger', textContent: 'Borrar' });
+    del.addEventListener('click', async () => { if (del.dataset.sure) { await api(`demos/${encodeURIComponent(d.id)}`, { method: 'DELETE' }); loadDemos(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Borra también su documento'; } });
+    kids.push(el('div', { className: 'row' }, ...(d.status === 'listo' ? [open, copy] : []), more, del));
+    return el('li', { className: 'demo-row' }, ...kids);
+  }));
+}
 
 async function loadImages() {
   const { enabled, images } = await json('images');
