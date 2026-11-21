@@ -33,11 +33,12 @@ async function main() {
   let imageFetch: ((url: string, init: any) => Response) | undefined; // OpenAI Images y Magnific simulados
   let musicFetch: ((url: string, init: any) => Response) | undefined; // Spotify y YouTube simulados
   let newsFetch: (() => Response | Promise<Response>) | undefined; // webhook de noticias simulado
+  let panelFetch: ((url: string) => Response) | undefined; // datos.gov.co y CoinGecko simulados
   let marketFetch: ((url: string, init: any) => Response) | undefined; // API de mercados simulada
   let teslaFetch: ((url: string, init: any) => Response) | undefined; // Tesla simulado
   let githubFetch: ((url: string, init: any) => Response) | undefined; // GitHub simulado (cada prueba pone el suyo)
   globalThis.fetch = (async (url: any, init?: any) => { sent.push(String(url));
-    if (String(url).includes('api.telegram.org')) { const method = String(url).split('/').pop()!, body = JSON.parse(String(init?.body ?? '{}')); tg.push({ method, body }); return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: tgWebhook } : method === 'getUpdates' ? [] : { message_id: 9000 + tg.length } }), { status: 200 }); } if (githubFetch && String(url).includes('api.github.invalid')) return githubFetch(String(url), init); if (newsFetch && String(url).includes('noticias.invalid')) return newsFetch(); if (marketFetch && String(url).includes('gamma-api.polymarket.com')) return marketFetch(String(url), init); if (teslaFetch && /tesla\.com/.test(String(url))) return teslaFetch(String(url), init); if (musicFetch && /spotify\.com|googleapis\.com\/youtube/.test(String(url))) return musicFetch(String(url), init); if (imageFetch && /api\.openai\.com\/v1\/images|magnific/.test(String(url))) return imageFetch(String(url), init); if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
+    if (String(url).includes('api.telegram.org')) { const method = String(url).split('/').pop()!, body = JSON.parse(String(init?.body ?? '{}')); tg.push({ method, body }); return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: tgWebhook } : method === 'getUpdates' ? [] : { message_id: 9000 + tg.length } }), { status: 200 }); } if (githubFetch && String(url).includes('api.github.invalid')) return githubFetch(String(url), init); if (newsFetch && String(url).includes('noticias.invalid')) return newsFetch(); if (panelFetch && /datos\.gov\.co|coingecko\.com/.test(String(url))) return panelFetch(String(url)); if (marketFetch && String(url).includes('gamma-api.polymarket.com')) return marketFetch(String(url), init); if (teslaFetch && /tesla\.com/.test(String(url))) return teslaFetch(String(url), init); if (musicFetch && /spotify\.com|googleapis\.com\/youtube/.test(String(url))) return musicFetch(String(url), init); if (imageFetch && /api\.openai\.com\/v1\/images|magnific/.test(String(url))) return imageFetch(String(url), init); if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
 
   const { ConfigService } = await import('../config/config.service');
   const { DbService } = await import('../db/db.service');
@@ -1351,6 +1352,48 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     marketFetch = undefined; process.env.POLYMARKET = '0'; delete process.env.POLYMARKET_TEMAS;
     must(!new PolymarketService(new ConfigService(), usage, llm).enabled, 'sin POLYMARKET=1 debe quedar apagado');
     return 'visitante sin acceso; tendencias por temas y búsqueda de abiertos; probabilidades del dato; caché; traducción; fuente caída sin inventar; solo lecturas';
+  });
+
+  await check('Paneles: dólar y Bitcoin, estado de los servicios y consumo salen del dato, con caché y sin inventar', async () => {
+    const { PanelsService } = await import('../panels/panels.service');
+    const pcfg = new ConfigService(), today = new Intl.DateTimeFormat('en-CA', { timeZone: pcfg.timezone }).format(new Date());
+    const dayAgo = (i: number) => new Date(Date.parse(today) - i * 86400_000).toISOString().slice(0, 10);
+    const calls: string[] = []; let btcOk = true;
+    panelFetch = (url) => {
+      calls.push(url.includes('datos.gov.co') ? 'trm' : url.includes('market_chart') ? 'btc-grafica' : 'btc-precio');
+      if (url.includes('datos.gov.co')) return new Response(JSON.stringify([{ valor: '9999', vigenciadesde: `${dayAgo(-1)}T00:00:00.000` }, { valor: '3415.10', vigenciadesde: `${dayAgo(0)}T00:00:00.000` }, { valor: '3415.10', vigenciadesde: `${dayAgo(0)}T00:00:00.000` }, { valor: '3326.96', vigenciadesde: `${dayAgo(1)}T00:00:00.000` }, { valor: '3300', vigenciadesde: `${dayAgo(4)}T00:00:00.000` }, { valor: 'x', vigenciadesde: 'roto' }]), { status: 200 });
+      if (!btcOk) return new Response('{}', { status: 429 });
+      if (url.includes('market_chart')) return new Response(JSON.stringify({ prices: Array.from({ length: 169 }, (_, i) => [Date.now() - (168 - i) * 3600_000, 60000 + i * 10]) }), { status: 200 });
+      return new Response(JSON.stringify({ bitcoin: { usd: 57195.4, cop: 196_000_000, usd_24h_change: -7.71 } }), { status: 200 });
+    };
+    const usageFake = { add() {}, days: async () => [{ day: dayAgo(0), sesiones: 4, deepgram_s: 900, deepseek_in: 1000, deepseek_out: 200, eleven_chars: 500 }, { day: dayAgo(1), sesiones: 9, deepgram_s: 1800, deepgram_pre_s: 60, deepseek_in: 5000, eleven_chars: 100 }], describe: (d: any) => `${d.day}: ${d.sesiones} conversaciones` } as any;
+    const states: Record<string, any> = { 'La base de datos': { ok: true, detail: 'sqlite', since: '' }, 'El saldo de DeepSeek': { ok: false, detail: '0.84 USD (por debajo de 2)', since: '' } };
+    const panels = new PanelsService(pcfg, usageFake, { status: () => states } as any, { configured: true, connected: false, status: { error: '' } } as any, { configured: true, connected: false, status: { error: 'La conexión venció' } } as any, { enabled: false } as any);
+    const f = await panels.finance('ambos'), trm = f.items.find((i) => i.id === 'trm')!, btc = f.items.find((i) => i.id === 'btc')!;
+    must(trm.value === 3415.1 && trm.change === 88.14 && trm.points.length === 3 && trm.points.at(-1)!.t === dayAgo(0) && !trm.points.some((p) => p.v === 9999), `TRM (la de mañana no es la de hoy; sin repetidas ni filas rotas): ${JSON.stringify(trm)}`);
+    must(btc.value === 57195 && btc.change === -7.7 && /196 millones/.test(btc.extra ?? '') && btc.points.length > 40 && btc.points.length < 70 && btc.points.at(-1)!.v === 61680, `Bitcoin: ${JSON.stringify({ ...btc, points: btc.points.length })}`);
+    const n0 = calls.length; await panels.finance('ambos'); must(calls.length === n0, 'la segunda consulta debía salir de la caché');
+    // Una fuente caida: se muestra la otra y se dice cual fallo.
+    (panels as any).btc = undefined; btcOk = false;
+    const half = await panels.finance('ambos');
+    must(half.items.length === 1 && half.items[0].id === 'trm' && /Bitcoin: respondió 429/.test(half.errors.join()), `con Bitcoin caído: ${JSON.stringify(half.errors)}`);
+    // Semaforo: lo vigilado + las cuentas; sin conectar no es falla, vencida si.
+    const st = panels.status();
+    must(st.bad === 2 && st.checked && st.rows.find((r) => r.name === 'Saldo de DeepSeek')!.ok === false && st.rows.find((r) => r.name === 'Spotify')!.ok === null && st.rows.find((r) => r.name === 'Tesla')!.ok === false && !st.rows.some((r) => r.name === 'Noticias'), `estado: ${JSON.stringify(st.rows)}`);
+    const c = await panels.consumption(7);
+    must(c.days.length === 2 && c.days[0].day === dayAgo(1) && c.days[0].escucha_min === 31 && c.days[1].tokens === 1200 && c.priced === false && c.days[1].usd === undefined, `consumo: ${JSON.stringify(c)}`);
+    // Las herramientas: el dolar es publico; servicios y consumo, solo del dueño; el costo no se inventa.
+    btcOk = true;
+    const tools = new ToolsService(pcfg, { definitions: async () => [] } as any, P.leads, { enabled: false, defaultModel: { label: '' } } as any, { enabled: false } as any, usageFake, { enabled: false, canGenerate: false } as any, { visible: () => [], list: () => [] } as any, {} as any, P.actions, P.approvals, undefined, undefined, undefined, panels);
+    const d = await tools.run('dolar_bitcoin', '{"que":"dolar"}', false);
+    must((d.panel as any)?.kind === 'finance' && (d.panel as any).items.length === 1 && /3\.415,1 pesos/.test(d.text) && /subió 88,14 pesos/.test(d.text) && /no un consejo/.test(d.text), `dólar para un visitante: ${d.text}`);
+    must(/no existe/.test((await tools.run('estado_servicios', '{}', false)).text) && /no existe/.test((await tools.run('consumo', '{}', false)).text), 'servicios y consumo son solo del dueño');
+    const sv = await tools.run('estado_servicios', '{}', true);
+    must((sv.panel as any)?.kind === 'status' && /Saldo de DeepSeek \(0\.84 USD/.test(sv.text) && /Tesla \(La conexión venció\)/.test(sv.text) && !/Spotify \(/.test(sv.text), `servicios: ${sv.text}`);
+    const cs = await tools.run('consumo', '{"dias":2}', true);
+    must((cs.panel as any)?.kind === 'usage' && (cs.panel as any).days.length === 2 && /no inventes un costo/.test(cs.text), `consumo: ${cs.text.slice(0, 200)}`);
+    panelFetch = undefined;
+    return 'TRM de hoy y su cambio; Bitcoin con gráfica reducida; caché; una fuente caída no tumba la otra; semáforo; consumo sin costo inventado; permisos';
   });
 
   rmSync(dir, { recursive: true, force: true });

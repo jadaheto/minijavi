@@ -6,6 +6,7 @@ import { MODELS, WorkshopService } from '../workshop/workshop.service';
 import { MusicService, MusicState } from '../music/music.service';
 import { NewsService } from '../news/news.service';
 import { MarketEvent, PolymarketService } from '../markets/polymarket.service';
+import { PanelsService } from '../panels/panels.service';
 import { describeTesla, teslaCard, TeslaFocus, TeslaService } from '../tesla/tesla.service';
 import { UsageService } from '../usage/usage.service';
 import { GalleryItem, GalleryState, ImagesService } from '../images/images.service';
@@ -16,6 +17,8 @@ import { ApprovalsService } from '../policy/approvals.service';
 
 /** Resultado de una herramienta: el texto para el modelo y, si aplica, un efecto visual para el navegador. */
 export interface ToolResult { text: string; scene?: string; reaction?: string; card?: { title: string; lines: string[]; qr?: string; caption?: string }; music?: Record<string, unknown>;
+  /** Panel animado generico (dolar y Bitcoin, estado de los servicios, consumo): `kind` dice cual. */
+  panel?: Record<string, unknown>;
   /** Panel de mercados de prediccion: lista numerada con las probabilidades, o quitarlo. */
   markets?: Record<string, unknown>;
   /** Panel de noticias: la lista numerada, una noticia abierta o quitarlo. */
@@ -117,7 +120,7 @@ export class ToolsService {
   private readonly tools: Record<string, Tool>;
   /** Herramientas locales que solo existen en sesiones del dueño. */
   private readonly ownerTools: Record<string, Tool>;
-  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService, news?: NewsService, markets?: PolymarketService) {
+  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService, news?: NewsService, markets?: PolymarketService, panels?: PanelsService) {
     this.tools = {
       hora_actual: {
         description: 'Devuelve la fecha y la hora actuales. Usala cuando pregunten que hora es o que dia es hoy.',
@@ -289,6 +292,21 @@ export class ToolsService {
         else g.index = (g.index + (args.accion === 'anterior' ? g.items.length - 1 : 1)) % g.items.length;
         if (g.kind === 'generadas') return { text: `Ahora se ve en grande la imagen ${g.index + 1} de ${g.items.length}. Confírmalo en pocas palabras y pregúntale si le quiere hacer algún cambio a esa imagen; si pide cambios, usa generar_imagen con cambiar en ${g.index + 1} y solo los cambios en la descripción.`, gallery: 'select' };
         return { text: `Ahora se ve ${g.kind === 'bocetos' ? 'el boceto' : 'la foto'} ${g.index + 1} de ${g.items.length}. Confírmalo en pocas palabras.`, gallery: 'select' };
+      },
+    };
+    // Dolar y Bitcoin con su grafica en pantalla. Publica (como precio_dolar): datos publicos, con cache en el servicio.
+    if (panels) this.tools.dolar_bitcoin = {
+      description: 'Muestra en pantalla un panel con el dólar (TRM oficial y su gráfica de los últimos 30 valores) y/o Bitcoin (precio en dólares y pesos, cambio de 24 horas y gráfica de 7 días). Úsala cuando pregunten cómo está o cómo va el dólar, la TRM o Bitcoin, o pidan ver su gráfica. Para convertir a otra moneda sigue usando precio_dolar.',
+      parameters: { type: 'object', properties: { que: { type: 'string', enum: ['dolar', 'bitcoin', 'ambos'], description: 'Qué mostrar. Por defecto ambos.' } }, required: [] },
+      run: async (args) => {
+        const what = args.que === 'dolar' || args.que === 'bitcoin' ? args.que : 'ambos';
+        const { items, errors } = await panels.finance(what);
+        if (!items.length) return `No se pudieron consultar los precios (${errors.join('; ')}). Díselo tal cual, sin inventar cifras.`;
+        const say = items.map((s) => s.id === 'trm'
+          ? `Dólar (TRM oficial): ${s.value.toLocaleString('es-CO')} pesos; ${s.change! > 0 ? 'subió' : s.change! < 0 ? 'bajó' : 'igual que'} ${Math.abs(s.change!).toLocaleString('es-CO')} pesos frente al valor anterior; ${s.extra}.`
+          : `Bitcoin: ${s.value.toLocaleString('es-CO')} dólares${s.extra ? ` (unos ${s.extra})` : ''}${s.change !== undefined ? `; ${s.change >= 0 ? 'subió' : 'bajó'} ${Math.abs(s.change).toLocaleString('es-CO')} % en 24 horas` : ''}.`);
+        return { panel: { kind: 'finance', title: what === 'dolar' ? 'Dólar' : what === 'bitcoin' ? 'Bitcoin' : 'Dólar y Bitcoin', items },
+          text: `En pantalla está el panel con ${items.length === 2 ? 'las gráficas' : 'la gráfica'}.\n${say.join('\n')}${errors.length ? `\nNo se pudo consultar ${errors.join('; ')}: díselo.` : ''}\nDíselo en una o dos frases, con las cifras redondeadas. Es información, no un consejo de compra o venta.` };
       },
     };
     // Noticias de inteligencia artificial: titulares que el servidor trae una vez al dia de un webhook de Javier. Publica.
@@ -464,9 +482,24 @@ export class ToolsService {
       description: 'Dice cuánto ha consumido el avatar por día: minutos de escucha, tokens del modelo, caracteres de voz, búsquedas y encargos de Claude Code. Úsala cuando Javier pregunte por el consumo, el gasto o cuánto ha usado.',
       parameters: { type: 'object', properties: { dias: { type: 'number', description: 'Cuántos días hacia atrás (por defecto 7).' } }, required: [] },
       run: async (args) => {
-        const rows = await usage.days(Math.min(30, Math.max(1, Number(args.dias) || 7)));
+        const days = Math.min(30, Math.max(1, Number(args.dias) || 7)), rows = await usage.days(days);
         if (!rows.length) return 'Todavía no hay consumo registrado.';
-        return rows.map((d) => usage.describe(d)).join('\n') + '\nSon medidas propias del avatar, no la factura de cada proveedor. Resúmelo en dos o tres frases: qué día pesó más y en qué; no leas todas las cifras. El detalle está en la página del dueño.';
+        const text = rows.map((d) => usage.describe(d)).join('\n') + '\nSon medidas propias del avatar, no la factura de cada proveedor. Resúmelo en dos o tres frases: qué día pesó más y en qué; no leas todas las cifras. El detalle está en la página del dueño.';
+        if (!panels) return text;
+        const c = await panels.consumption(Math.max(7, days));
+        return { text: `En pantalla está el panel de consumo de los últimos ${c.days.length} días.${c.priced ? '' : ' No hay precios configurados (USAGE_PRICES), así que se ve en unidades, sin costo en dólares: no inventes un costo.'}\n${text}`, panel: { kind: 'usage', title: 'Consumo', ...c } };
+      },
+    };
+    // Semaforo de los servicios: lo que el servidor ya vigila cada pocos minutos, mas las cuentas conectadas.
+    if (panels) this.ownerTools.estado_servicios = {
+      description: 'Muestra en pantalla el estado de los servicios del avatar (base de datos, escucha, modelo, voz, saldo, respaldo, Spotify, Tesla, noticias) como un semáforo. Úsala cuando Javier pregunte si todo está funcionando, si hay algo caído o cómo están los servicios.',
+      parameters: { type: 'object', properties: {}, required: [] },
+      run: () => {
+        const st = panels.status();
+        if (!st.rows.length) return 'Todavía no hay comprobaciones de los servicios (se hacen cada pocos minutos después de arrancar). Dile que pregunte de nuevo en un rato.';
+        const down = st.rows.filter((r) => r.ok === false);
+        return { panel: { kind: 'status', title: 'Estado de los servicios', ...st },
+          text: `En pantalla está el semáforo de ${st.rows.length} servicios. ${down.length ? `Con problemas: ${down.map((r) => `${r.name} (${r.detail || 'sin detalle'})`).join('; ')}.` : 'Todos están bien.'}${st.checked ? '' : ' Las comprobaciones automáticas aún no han corrido desde el último arranque.'}\nDíselo en una o dos frases; si algo falla, di qué y qué puede hacer.` };
       },
     };
     // Resumen del dia para Javier: junta lo que el avatar sabe sin que tenga que preguntarlo por partes.

@@ -26,6 +26,7 @@ import { TeslaService } from './tesla/tesla.service';
 import { TeslaController } from './tesla/tesla.controller';
 import { NewsService } from './news/news.service';
 import { PolymarketService } from './markets/polymarket.service';
+import { PanelsService } from './panels/panels.service';
 import { SitesController } from './workshop/sites.controller';
 import { WhatsAppService } from './whatsapp/whatsapp.service';
 import { WaChatService } from './whatsapp/wa-chat.service';
@@ -57,6 +58,6 @@ import { VisitsService } from './visits/visits.service';
     }),
   ],
   controllers: [HealthController, OwnerController, CallsController, KnowledgeController, N8nController, SitesController, WorkshopBackupController, SpotifyController, TeslaController],
-  providers: [ConfigService, DbService, AlertsService, OpsService, UsageService, ImagesService, PortfolioService, WorkshopService, WorkshopBackupService, SpotifyService, TeslaService, NewsService, PolymarketService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, PolicyService, ActionsService, ApprovalsService, CatalogService, TelegramService, OptOutService, InjectionGuard],
+  providers: [ConfigService, DbService, AlertsService, OpsService, UsageService, ImagesService, PortfolioService, WorkshopService, WorkshopBackupService, SpotifyService, TeslaService, NewsService, PolymarketService, PanelsService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, PolicyService, ActionsService, ApprovalsService, CatalogService, TelegramService, OptOutService, InjectionGuard],
 })
 export class AppModule {}

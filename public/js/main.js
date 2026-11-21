@@ -8,6 +8,7 @@ import { createMusic, imageColor } from './music.js';
 import { createTeslaPanel } from './tesla.js';
 import { createNewsPanel } from './news.js';
 import { createMarketsPanel } from './markets.js';
+import { createDataPanel } from './panels.js';
 import { BrowserVoice } from './browser-voice.js';
 import { createGate } from './mic-gate.js';
 
@@ -40,6 +41,8 @@ const tesla = createTeslaPanel($('tesla'));
 const news = createNewsPanel($('news'), (index) => socket?.send({ type: 'news', index }));
 // Mercados de prediccion (modo dueño, solo consulta): lista numerada con las probabilidades de cada opcion.
 const markets = createMarketsPanel($('markets'));
+// Paneles de datos: dolar y Bitcoin, estado de los servicios y consumo.
+const dataPanel = createDataPanel($('panel'));
 // Vista previa de los mercados con datos de EJEMPLO (no consulta nada): abrir con ?demo=mercados.
 if (new URLSearchParams(location.search).get('demo') === 'mercados') {
   const o = (label, pct, d1, trend) => ({ label, pct, d1, trend });
@@ -295,11 +298,13 @@ function onMessage(msg) {
     case 'music': // musica de fondo
       onMusic(msg); break;
     case 'tesla': // estado del carro
-      hideCard(); if (gallery) hideGallery(); news.hide(); markets.hide(); tesla.show(msg); break;
+      hideCard(); if (gallery) hideGallery(); news.hide(); markets.hide(); dataPanel.hide(); tesla.show(msg); break;
     case 'news': // noticias de inteligencia artificial
-      hideCard(); if (gallery) hideGallery(); tesla.hide(); markets.hide(); news.show(msg); break;
+      hideCard(); if (gallery) hideGallery(); tesla.hide(); markets.hide(); dataPanel.hide(); news.show(msg); break;
     case 'markets': // mercados de prediccion
-      hideCard(); if (gallery) hideGallery(); tesla.hide(); news.hide(); markets.show(msg); break;
+      hideCard(); if (gallery) hideGallery(); tesla.hide(); news.hide(); dataPanel.hide(); markets.show(msg); break;
+    case 'panel': // dolar y Bitcoin, servicios, consumo
+      hideCard(); if (gallery) hideGallery(); tesla.hide(); news.hide(); markets.hide(); dataPanel.show(msg); break;
     case 'spotify_token': { // respuesta al token pedido por el reproductor de Spotify
       const w = tokenWaiters; tokenWaiters = [];
       for (const x of w) msg.token ? x.resolve(msg.token) : x.reject(new Error(msg.error || 'sin token'));
@@ -318,7 +323,7 @@ function shutdown(message) {
   live = false; connecting = false; prebuffer.length = 0; loud = 0;
   retryAt = Math.max(retryAt, performance.now() + 2500);
   suspended = false; awayNotice = ''; $('away').hidden = true;
-  setWork(null); music.stop(); tesla.hide(); news.hide(); markets.hide(); stopSpeech(); hideCard(); hideGallery(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
+  setWork(null); music.stop(); tesla.hide(); news.hide(); markets.hide(); dataPanel.hide(); stopSpeech(); hideCard(); hideGallery(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
   setSub('sub-user', ''); setSub('sub-avatar', '');
   $('mic').hidden = true; $('owner').hidden = true; $('demo').hidden = true; $('gate').hidden = false;
   $('gate').classList.toggle('standby', armed);
@@ -396,7 +401,7 @@ window.addEventListener('pointerdown', () => { if (live && suspended) socket?.se
 // Con imagenes en pantalla el avatar esta pequeño en la esquina: tocarlo las quita y lo devuelve a su tamaño.
 $('stage').addEventListener('click', () => { if (gallery) { hideGallery(); socket?.send({ type: 'gallery', hide: true }); } });
 window.__avatarDebug = {
-  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, gallery: showGallery, work: setWork, music: onMusic, tesla: (d) => tesla.show(d), news: (d) => news.show(d), markets: (d) => markets.show(d), message: onMessage,
+  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, gallery: showGallery, work: setWork, music: onMusic, tesla: (d) => tesla.show(d), news: (d) => news.show(d), markets: (d) => markets.show(d), panel: (d) => dataPanel.show(d), message: onMessage,
   standby: () => { armed = true; shutdown(''); }, suspend: setSuspended, activity: (n) => { setActivity(n); actUntil = performance.now() + 600000; },
   get weights() { return { ...lips.weights }; }, get state() { return state; }, get time() { return player ? player.time() : -1; }, morphNames: avatar.morphNames, missing,
 };

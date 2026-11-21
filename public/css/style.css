@@ -330,3 +330,51 @@ body.markets:not(.showing) #stage { transform: translateX(-21vw); }
 body.markets .cover-art, body.showing .mkt { display: none; }
 @media (max-aspect-ratio: 4/5) { .mkt { width: min(540px, 94vw); } body.markets:not(.showing) #stage { transform: translateY(30vh) scale(.5); transform-origin: 50% 50%; } .mkt-trend:not(.big) { display: none; } }
 @media (prefers-reduced-motion: reduce) { .mkt-item, .mkt-opt, .mkt-dot, .mkt-val { opacity: 1; animation: none; } .mkt-line { stroke-dashoffset: 0; animation: none; } .mkt-area { opacity: .13; animation: none; } .mkt-opt::before { animation: none; } }
+
+/* Paneles de datos (dolar y Bitcoin, servicios, consumo): la caja de noticias (.nws) con graficas y semaforo animados. */
+.pnl { --up: #34d17f; --down: #ef5350; --flat: #6fb2ff; width: min(520px, 44vw); }
+body.panel:not(.showing) #stage { transform: translateX(-21vw); }
+body.panel .cover-art, body.showing .pnl { display: none; }
+.pnl-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.pnl-name { display: grid; gap: 2px; min-width: 0; }
+.pnl-name strong { font-size: 16px; }
+.pnl-name small { font-size: 12px; color: #8f9aac; }
+.pnl-source, .pnl-range { font-size: 11px; color: #7f8a9c; }
+.pnl-finance, .pnl-usage, .pnl-status { display: grid; gap: 10px; }
+.pnl-card, .pnl-metric { display: grid; gap: 8px; padding: 13px 14px 10px; border-radius: 16px; background: rgba(255, 255, 255, .045); opacity: 0; animation: tsl-row .5s ease forwards; }
+.pnl-card .mkt-chg { justify-self: start; }
+.pnl-big { flex: none; display: flex; align-items: baseline; gap: 6px; }
+.pnl-value { font-size: clamp(26px, 2.6vw, 34px); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+.pnl-big small { font-size: 12px; color: #9aa6b8; }
+.pnl-chart { display: block; width: 100%; height: 132px; overflow: visible; --c: var(--flat); }
+.pnl-chart.up { --c: var(--up); } .pnl-chart.down { --c: var(--down); }
+.pnl-grid { stroke: rgba(255, 255, 255, .06); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.pnl-line { fill: none; stroke: var(--c); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; stroke-dasharray: 1; stroke-dashoffset: 1; animation: mkt-draw 1.6s cubic-bezier(.3, .7, .2, 1) forwards; }
+.pnl-area { fill: var(--c); opacity: 0; animation: mkt-fade 1s ease forwards; }
+.pnl-dot { fill: var(--c); opacity: 0; animation: mkt-pop .4s ease forwards, pnl-pulse 1.8s ease-in-out 1.8s infinite; filter: drop-shadow(0 0 5px var(--c)); }
+@keyframes pnl-pulse { 50% { filter: drop-shadow(0 0 11px var(--c)); } }
+.pnl-axis { fill: #7f8a9c; font-size: 10px; }
+/* Semaforo */
+.pnl-light { display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: 16px; background: rgba(255, 255, 255, .045); --c: var(--up); }
+.pnl-light.bad { --c: var(--down); }
+.pnl-lamp { flex: none; width: 42px; height: 42px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff, var(--c) 45%); box-shadow: 0 0 0 6px color-mix(in srgb, var(--c) 18%, transparent), 0 0 26px var(--c); animation: pnl-lamp 2.2s ease-in-out infinite; }
+@keyframes pnl-lamp { 50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--c) 10%, transparent), 0 0 40px var(--c); } }
+.pnl-light strong { font-size: 19px; }
+.pnl-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 5px; }
+.pnl-svc { display: flex; align-items: center; gap: 10px; padding: 8px 11px; border-radius: 12px; background: rgba(255, 255, 255, .04); opacity: 0; animation: tsl-row .4s ease forwards; --c: var(--up); }
+.pnl-svc.bad { --c: var(--down); background: rgba(239, 83, 80, .1); } .pnl-svc.idle { --c: #7f8a9c; }
+.pnl-pip { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--c); box-shadow: 0 0 8px var(--c); }
+.pnl-svc-text { flex: 1; min-width: 0; display: grid; }
+.pnl-svc-text b { font-size: 14px; font-weight: 600; }
+.pnl-svc-text small { font-size: 11.5px; color: #8f9aac; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pnl-tag { flex: none; font-size: 11px; font-weight: 600; color: var(--c); }
+/* Consumo */
+.pnl-metric { padding: 10px 14px; gap: 6px; }
+.pnl-total { font-size: 17px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pnl-bars { display: flex; align-items: flex-end; gap: 4px; height: 42px; }
+.pnl-bar { flex: 1; height: 100%; display: flex; align-items: flex-end; }
+.pnl-bar i { display: block; width: 100%; border-radius: 4px 4px 2px 2px; background: linear-gradient(180deg, #6fb2ff, rgba(79, 141, 255, .45)); transform-origin: 50% 100%; animation: pnl-grow .7s cubic-bezier(.2, .8, .2, 1) backwards; }
+.pnl-bar.now i { background: linear-gradient(180deg, #7dffc0, rgba(52, 209, 127, .5)); }
+@keyframes pnl-grow { from { transform: scaleY(0); } }
+@media (max-aspect-ratio: 4/5) { .pnl { width: min(520px, 94vw); } body.panel:not(.showing) #stage { transform: translateY(30vh) scale(.5); transform-origin: 50% 50%; } .pnl-chart { height: 100px; } }
+@media (prefers-reduced-motion: reduce) { .pnl-card, .pnl-metric, .pnl-svc, .pnl-dot { opacity: 1; animation: none; } .pnl-line { stroke-dashoffset: 0; animation: none; } .pnl-area { opacity: .13; animation: none; } .pnl-bar i, .pnl-lamp { animation: none; } }
