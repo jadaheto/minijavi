@@ -43,6 +43,19 @@ const news = createNewsPanel($('news'), (index) => { socket?.send({ type: 'news'
 const markets = createMarketsPanel($('markets'), () => { if (!markets.active && state !== 'speaking') backdrop.show(restScene()); }); // al cerrarlos se va su fondo
 // Paneles de datos: dolar y Bitcoin, estado de los servicios y consumo.
 const dataPanel = createDataPanel($('panel'));
+// Vista previa del resumen del dia con datos de EJEMPLO (no consulta nada): abrir con ?demo=resumen.
+if (new URLSearchParams(location.search).get('demo') === 'resumen') {
+  const cards = [
+    { id: 'clima', icon: '🌤', label: 'Ciudad de ejemplo', value: 29, unit: '°C', note: 'parcialmente nublado · máx 33 · lluvia 20 %' },
+    { id: 'tesla', icon: '🔋', label: 'Carro de ejemplo', value: 78, unit: '%', meter: 78, note: '312 km' },
+    { id: 'interesados', icon: '👤', label: 'Interesados nuevos', value: 2, alert: true, note: 'Persona Uno, Persona Dos', list: ['Persona Uno · bot whatsapp', 'Persona Dos · agente voz'] },
+    { id: 'aprobaciones', icon: '✅', label: 'Por aprobar', value: 1, alert: true, note: 'en la bandeja' },
+    { id: 'tareas', icon: '📋', label: 'Plane · Proyecto de ejemplo', value: 3, alert: true, note: '1 atrasadas · 2 hoy · 9 abiertas', list: ['Tarea de ejemplo A', 'Tarea de ejemplo B'] },
+    { id: 'trm', icon: '💵', label: 'Dólar (TRM)', value: 3415.1, unit: 'COP', decimals: 2, change: -12.4, changeUnit: 'pesos' },
+    { id: 'btc', icon: '₿', label: 'Bitcoin', value: 57195, unit: 'USD', change: 1.8, changeUnit: '%' },
+  ];
+  setTimeout(() => { $('gate').hidden = true; dataPanel.show({ kind: 'brief', title: 'Buenos días, Javier', subtitle: 'Sábado, 21 de noviembre (ejemplo)', scene: 'soleado', cards, headlines: ['Titular de ejemplo de Colombia', 'Titular de ejemplo de inteligencia artificial'], failed: [] }); }, 1500);
+}
 // Vista previa de los mercados con datos de EJEMPLO (no consulta nada): abrir con ?demo=mercados.
 if (new URLSearchParams(location.search).get('demo') === 'mercados') {
   const o = (label, pct, d1, trend) => ({ label, pct, d1, trend });
@@ -113,10 +126,10 @@ let work = null;
 // cargadores y Tesla cargando: energia; tablero, servicios y consumo: los suyos). La musica de YouTube lleva ondas; la de
 // Spotify, su caratula desenfocada (otra capa). Las imagenes generadas y los bocetos no llevan fondo.
 let newsScene = null, sceneHold = 0, hadPanelScene = false;
-const DATA_SCENES = { finance: 'mercado', status: 'radar', usage: 'flujo', board: 'tablero', route: 'carretera', chargers: 'energia' };
+const DATA_SCENES = { finance: 'mercado', status: 'radar', usage: 'flujo', board: 'tablero', route: 'carretera', chargers: 'energia', brief: 'soleado' };
 /** Fondo del panel que esta en pantalla (null si no hay ninguno). Manda sobre el fondo que pida una respuesta. */
 const panelScene = () => (news.active ? newsScene || 'neuronal' : markets.active ? 'mercado' : tesla.active ? (tesla.charging ? 'energia' : 'carretera')
-  : dataPanel.active ? DATA_SCENES[dataPanel.kind] || null : null);
+  : dataPanel.active ? dataPanel.scene || DATA_SCENES[dataPanel.kind] || null : null);
 const restScene = () => (activity ? ACTIVITIES[activity].scene : work ? 'codigo' : panelScene() ?? (music.active && music.source === 'youtube' ? 'ondas' : null));
 // Modo suspension: el avatar deja de responder (sigue oyendo solo su nombre) y se entretiene con una actividad que va
 // rotando. `dormant`: la suspension ya vencio en el servidor; el microfono no se envia y solo despierta con un toque.

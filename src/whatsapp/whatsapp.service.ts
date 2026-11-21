@@ -1,3 +1,4 @@
+import { elevenOgg } from '../tts/ogg';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
 import { DeepSeekService } from '../llm/deepseek.service';
@@ -120,12 +121,8 @@ export class WhatsAppService {
   async sendVoice(to: string, text: string): Promise<string> {
     if (!this.canVoice) throw new WaError('no hay voz configurada (ElevenLabs)', 503);
     const say = voiceText(text);
-    const tts = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${this.cfg.elevenVoiceId}?output_format=opus_48000_32`, {
-      method: 'POST', headers: { 'xi-api-key': this.cfg.elevenApiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: say, model_id: this.cfg.elevenModelId, language_code: 'es' }), signal: AbortSignal.timeout(30_000),
-    });
-    if (!tts.ok) throw new WaError(`ElevenLabs respondió ${tts.status}`, 502);
-    const audio = Buffer.from(await tts.arrayBuffer());
+let audio: Buffer;
+    try { audio = await elevenOgg(this.cfg, say); } catch (e) { throw new WaError((e as Error).message, 502); }
     this.usage.add('eleven_calls'); this.usage.add('eleven_chars', say.length);
     const id = await this.upload(audio, 'audio/ogg', 'respuesta.ogg');
     return this.post({ recipient_type: 'individual', to, type: 'audio', audio: { id } });

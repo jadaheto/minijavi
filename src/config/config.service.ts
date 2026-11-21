@@ -143,6 +143,10 @@ export class ConfigService {
   readonly backupTelegram: boolean;
   readonly followupHour: number;
   readonly followupDays: number;
+  /** Resumen de la mañana por Telegram (pedido por Javier el 2026-11-21): hora local (-1 = apagado), dias (1 = lunes ... 7 = domingo) y si va tambien como nota de voz. */
+  readonly briefHour: number;
+  readonly briefDays: number[];
+  readonly briefVoice: boolean;
   /** Al cerrar una conversacion publica: analizarla con el modelo y avisar por Telegram si mostro interes. */
   readonly visitReports: boolean;
   /** Guardar tambien las conversaciones del sitio (no solo las llamadas). Apagado por defecto: implica avisar a los visitantes. */
@@ -374,6 +378,9 @@ export class ConfigService {
     this.backupTelegram = process.env.BACKUP_TELEGRAM !== '0';
     this.followupHour = hour('FOLLOWUP_HOUR', 8);
     this.followupDays = int('FOLLOWUP_DAYS', 2, 1);
+    this.briefHour = hour('RESUMEN_HORA', 7);
+    this.briefDays = [...new Set(str('RESUMEN_DIAS', '1,2,3,4,5').split(',').map((d) => Number(d.trim())).filter((d) => Number.isInteger(d) && d >= 1 && d <= 7))];
+    this.briefVoice = str('RESUMEN_VOZ', '1') !== '0';
     this.visitReports = process.env.VISIT_REPORTS !== '0';
     this.usagePrices = {};
     try { for (const [k, v] of Object.entries(JSON.parse(process.env.USAGE_PRICES || '{}'))) if (Number(v) > 0) this.usagePrices[k] = Number(v); }

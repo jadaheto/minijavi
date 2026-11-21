@@ -65,4 +65,16 @@ export class AlertsService {
       return res.ok ? '' : `Telegram respondió ${res.status}`;
     } catch (e) { return (e as Error).name; }
   }
+
+  /** Nota de voz (Ogg/Opus) al chat de Javier, con pie opcional. Devuelve '' si salio o el motivo si no. */
+  async sendVoice(audio: Buffer, caption = ''): Promise<string> {
+    if (!this.enabled) return 'Telegram no está configurado';
+    try {
+      const form = new FormData();
+      form.append('chat_id', this.cfg.telegramChatId); if (caption) form.append('caption', caption.slice(0, 1000));
+      form.append('voice', new Blob([new Uint8Array(audio)], { type: 'audio/ogg' }), 'resumen.ogg');
+      const res = await fetch(`https://api.telegram.org/bot${this.cfg.telegramBotToken}/sendVoice`, { method: 'POST', body: form, signal: AbortSignal.timeout(60_000) });
+      return res.ok ? '' : `Telegram respondió ${res.status}`;
+    } catch (e) { return (e as Error).name; }
+  }
 }

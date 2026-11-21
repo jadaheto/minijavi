@@ -171,7 +171,37 @@ function chargers(msg) {
   return wrap;
 }
 
-const KINDS = { finance, status, usage, board, route, chargers };
+
+/** Resumen del dia: fecha, mosaico de tarjetas (lo que pide accion resaltado) y unos titulares. */
+function brief(msg) {
+  const wrap = el('div', 'pnl-brief');
+  if (msg.subtitle) wrap.append(el('p', 'pnl-date', msg.subtitle));
+  const grid = el('div', 'pnl-tiles');
+  (msg.cards || []).forEach((c, i) => {
+    const t = el('section', `pnl-tile${c.alert ? ' alert' : ''}`); t.dataset.id = c.id || ''; t.style.animationDelay = `${0.1 + i * 0.09}s`;
+    const head = el('div', 'pnl-tile-head'); head.append(el('span', 'pnl-tile-icon', c.icon || '•'), el('span', 'pnl-tile-label', c.label || ''));
+    t.append(head);
+    if (Number.isFinite(c.value)) {
+      const big = el('div', 'pnl-big'), val = el('b', 'pnl-value'); big.append(val); if (c.unit) big.append(el('small', '', c.unit));
+      countUp(val, Number(c.value), Number(c.decimals) || 0, 250 + i * 90); t.append(big);
+    }
+    if (Number.isFinite(c.meter)) { const m = el('div', 'pnl-track'), f = el('i'); const v = Math.max(0, Math.min(100, c.meter)); f.style.width = `${v}%`; f.style.background = v < 20 ? '#ef5350' : v < 50 ? '#f0b429' : ''; m.append(f); t.append(m); }
+    if (Number.isFinite(c.change) && c.change !== 0) t.append(el('span', `mkt-chg ${c.change > 0 ? 'up' : 'down'}`, `${c.change > 0 ? '▲' : '▼'} ${num(Math.abs(c.change), c.changeUnit === '%' ? 1 : 2)} ${c.changeUnit || ''}`.trim()));
+    if (c.note) t.append(el('small', 'pnl-tile-note', c.note));
+    if (Array.isArray(c.list) && c.list.length && c.alert) { const ul = el('ul', 'pnl-tile-list'); c.list.slice(0, 3).forEach((x) => ul.append(el('li', '', x))); t.append(ul); }
+    grid.append(t);
+  });
+  wrap.append(grid);
+  if (Array.isArray(msg.headlines) && msg.headlines.length) {
+    const news = el('section', 'pnl-heads'); news.style.animationDelay = `${0.2 + (msg.cards || []).length * 0.09}s`;
+    news.append(el('small', 'pnl-tile-label', '📰 Titulares'));
+    msg.headlines.slice(0, 3).forEach((h) => news.append(el('span', 'pnl-head', h)));
+    wrap.append(news);
+  }
+  if (Array.isArray(msg.failed) && msg.failed.length) wrap.append(el('small', 'pnl-source', `No se pudo consultar: ${msg.failed.join(', ')}`));
+  return wrap;
+}
+const KINDS = { finance, status, usage, board, route, chargers, brief };
 export function createDataPanel(box) {
   let timer = 0;
   const hide = () => { clearTimeout(timer); box.hidden = true; box.replaceChildren(); document.body.classList.remove('panel'); };
@@ -179,17 +209,19 @@ export function createDataPanel(box) {
     show(msg) {
       const render = KINDS[msg.kind];
       if (msg.action === 'hide' || !render) return hide();
-      clearTimeout(timer); box.replaceChildren(); box.dataset.kind = msg.kind;
+      clearTimeout(timer); box.replaceChildren(); box.dataset.kind = msg.kind; box.dataset.scene = typeof msg.scene === 'string' && /^[a-z]{3,20}$/.test(msg.scene) ? msg.scene : '';
       const head = el('header', 'nws-head'); head.append(el('strong', 'nws-title', msg.title || ''));
       const x = el('button', 'nws-close', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Quitar el panel'); x.addEventListener('click', hide); head.append(x);
       box.append(head, render(msg));
       box.hidden = false; document.body.classList.add('panel');
       box.classList.remove('in'); void box.offsetWidth; box.classList.add('in');
-      timer = setTimeout(hide, ['board', 'route', 'chargers'].includes(msg.kind) ? 120000 : 45000); // son consultas puntuales: se van solas (el tablero dura mas)
+      timer = setTimeout(hide, ['board', 'route', 'chargers', 'brief'].includes(msg.kind) ? 120000 : 45000); // son consultas puntuales: se van solas (el tablero dura mas)
     },
     hide,
     get active() { return !box.hidden; },
     /** Que panel esta en pantalla (finance, status, usage, board, route, chargers). */
     get kind() { return box.hidden ? '' : box.dataset.kind || ''; },
+    /** Fondo que pide el propio panel (el resumen del dia lleva el del clima). */
+    get scene() { return box.hidden ? '' : box.dataset.scene || ''; },
   };
 }

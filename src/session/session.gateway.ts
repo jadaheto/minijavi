@@ -1,4 +1,5 @@
-import { Logger } from '@nestjs/common';
+import { BriefService } from '../brief/brief.service';
+import { Logger, Optional } from '@nestjs/common';
 import { OnGatewayConnection, WebSocketGateway } from '@nestjs/websockets';
 import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
@@ -286,6 +287,7 @@ export class SessionGateway implements OnGatewayConnection {
     private readonly knowledge: KnowledgeService, private readonly workshop: WorkshopService, private readonly music: MusicService, private readonly usage: UsageService, private readonly leads: LeadsService, private readonly images: ImagesService, private readonly alerts: AlertsService,
     private readonly portfolio: PortfolioService, private readonly visits: VisitsService,
     private readonly optout: OptOutService, private readonly guard: InjectionGuard, private readonly capable: CapableModelService, private readonly catalog: CatalogService,
+    @Optional() private readonly brief?: BriefService,
   ) {
     // Cuando Claude Code termina un encargo, se le cuenta a Javier en las sesiones de dueño abiertas.
     this.workshop.onDone((d) => { for (const [s, client] of this.owners) void this.workshopNote(client, s, d.project.slug); });
@@ -396,7 +398,10 @@ export class SessionGateway implements OnGatewayConnection {
         clearTimeout(authTimer);
         if (s.starting) return; s.starting = true;
         // La memoria del visitante se consulta en la base antes de saludar; si falla, se saluda como a alguien nuevo.
-        void (s.visitor ? this.memory.get(s.visitor) : Promise.resolve(null)).catch(() => null).then((known) => { if (client.readyState === client.OPEN) this.start(client, s, known); });
+        // Para el dueño se mira tambien si es la primera sesion del dia (guardado en la base): entonces el avatar le muestra el resumen.
+        const first = s.owner && !s.car && !s.callerPhone && this.brief ? this.brief.firstToday() : Promise.resolve(false);
+        void Promise.all([(s.visitor ? this.memory.get(s.visitor) : Promise.resolve(null)).catch(() => null), first.catch(() => false)])
+          .then(([known, firstToday]) => { if (client.readyState === client.OPEN) this.start(client, s, known, firstToday); });
         return;
       }
       // El navegador avisa cuando la musica cambia sola de cancion o se detiene (fin de la cola, error del reproductor).
@@ -423,7 +428,7 @@ export class SessionGateway implements OnGatewayConnection {
     client.on('error', () => this.end(s));
   }
 
-  private start(client: WebSocket, s: Session, known: VisitorMemory | null) {
+  private start(client: WebSocket, s: Session, known: VisitorMemory | null, firstToday = false) {
     s.ready = true; this.active++; this.usage.add('sesiones'); if (s.owner) this.usage.add('sesiones_dueno');
     if (s.owner && !s.callerPhone && this.music.enabled) s.music = this.music.newState();
     if (!s.callerPhone) s.gallery = this.images.newState(); // en una llamada no hay pantalla
@@ -470,7 +475,7 @@ export class SessionGateway implements OnGatewayConnection {
     }, 5000));
     this.send(client, { type: 'ready', owner: s.owner, gate: this.cfg.micGateRms, wake: this.cfg.wakeWords[0], tts: s.browserTts ? 'browser' : 'server', voice: this.cfg.browserVoice, rate: this.cfg.browserVoiceRate, car: !!s.car });
     // En modo carro no saluda: la sesion se abre sola con cualquier ruido y solo debe hablar cuando lo llaman.
-    const greeting = s.car ? '' : s.owner ? this.ownerGreeting() : known?.name ? `¡Hola de nuevo, ${known.name}! ¿En qué te ayudo hoy?` : this.cfg.greeting;
+    const greeting = s.car ? '' : s.owner ? this.ownerGreeting(firstToday) : known?.name ? `¡Hola de nuevo, ${known.name}! ¿En qué te ayudo hoy?` : this.cfg.greeting;
     if (greeting) {
       const turn = this.newTurn(s);
       this.send(client, { type: 'speech_start', id: turn.id, sampleRate: TTS_SAMPLE_RATE });
@@ -480,21 +485,19 @@ export class SessionGateway implements OnGatewayConnection {
     if (s.owner) {
       this.owners.set(s, client);
       if (this.workshop.busy()) this.send(client, { type: 'work', ...this.workshop.state(), spoken: undefined });
+      // Primera sesion del dia: despues del saludo, el resumen en pantalla y contado en voz (antes de los avisos del taller).
+      if (firstToday && this.brief) { s.notes.push({ text: '(Aviso del sistema: es la primera vez que Javier abre el avatar hoy. Llama ya a resumen_del_dia y cuéntale el resumen; no le preguntes si lo quiere.)' }); this.pumpNotes(client, s); }
       // Encargos que terminaron cuando no habia una sesion abierta: se cuentan despues del saludo.
       for (const p of this.workshop.unseen()) void this.workshopNote(client, s, p.slug);
       for (const p of this.workshop.pendingAudits()) this.auditNote(client, s, p.slug);
     }
   }
 
-  /** Saludo del dueño segun la hora; en la primera sesion de cada dia ofrece el resumen. */
-  private lastOwnerDay = '';
-  private ownerGreeting(): string {
-    const now = new Date();
-    const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: this.cfg.timezone, hour: '2-digit', hour12: false }).format(now));
-    const day = new Intl.DateTimeFormat('en-CA', { timeZone: this.cfg.timezone }).format(now);
+  /** Saludo del dueño segun la hora. En la primera sesion del dia solo saluda: enseguida viene el resumen en pantalla. */
+  private ownerGreeting(firstToday: boolean): string {
+    const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: this.cfg.timezone, hour: '2-digit', hour12: false }).format(new Date())) % 24;
     const hello = hour >= 5 && hour < 12 ? 'Buenos días' : hour >= 12 && hour < 19 ? 'Buenas tardes' : 'Buenas noches';
-    if (day !== this.lastOwnerDay) { this.lastOwnerDay = day; return `${hello}, Javier. ¿Te cuento el resumen de hoy?`; }
-    return `${hello}, Javier, aquí estoy. ¿Qué revisamos?`;
+    return firstToday && this.brief ? `${hello}, Javier.` : `${hello}, Javier, aquí estoy. ¿Qué revisamos?`;
   }
 
   private end(s: Session) {
