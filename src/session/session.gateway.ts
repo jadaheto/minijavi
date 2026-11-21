@@ -62,6 +62,7 @@ interface Session {
   userTurns: number;
   langs: string[];       // idiomas detectados en la frase en curso
   lastLang: string;      // idioma del ultimo texto reconocido (tambien en resultados parciales)
+  convLang?: string;     // idioma en que va la conversacion (lo fijan las frases de 3 palabras o mas)
   spec?: Spec;
   ctxCache?: { key: string; ctx: Promise<string> }; // contexto de la base de conocimiento para la frase en curso
   specTimer?: NodeJS.Timeout;
@@ -122,24 +123,63 @@ No insistas si no quiere dejar sus datos, y no prometas precios, plazos ni resul
 Si la persona pide que no la llamen o no le escriban más, confírmale con amabilidad que no la volverán a contactar y no insistas.`;
 
 /** Frase que se dice mientras una herramienta consulta su dato (evita el silencio de la espera). */
-const FILLERS: Record<string, string> = {
+/**
+ * Frase corta que el avatar dice mientras consulta una herramienta, para no quedarse callado. Cada herramienta tiene la
+ * suya; las que no, rotan entre varias genericas (antes era siempre "Dame un segundo" y se repetia mucho). Las acciones
+ * que responden al instante no llevan frase. OJO con las abreviaturas: "Va." la voz lo leia como "Virginia".
+ */
+const FILLERS: Record<string, string | Record<string, string>> = {
   plane_: 'Déjame revisar en Plane.',
   clima: 'Déjame mirar cómo está el clima.',
   precio_dolar: 'Ya te digo a cómo está.',
+  dolar_bitcoin: 'Ya te muestro cómo va.',
   registrar_interesado: 'Listo, ya lo anoto.',
   ver_interesados: 'Déjame mirar la lista.',
+  actualizar_interesado: 'Listo, lo actualizo.',
   programar: 'Listo, se lo paso a Claude Code.',
+  bocetos: 'Listo, pido las propuestas.',
   estado_taller: 'Déjame ver cómo va el taller.',
   auditar_proyecto: 'Voy a mandarlo a revisar a fondo.',
   cancelar_encargo: 'Ya lo detengo.',
   mostrar_proyecto: 'Ya te lo muestro.',
-  musica: 'Va.',
+  musica: { poner: 'Ya te la pongo.' },
+  buscar_imagenes: 'Déjame buscar fotos.',
+  generar_imagen: 'Listo, ya la mando a crear.',
   resumen_del_dia: 'Déjame revisar qué hay de nuevo.',
   pedir_cotizacion: 'Listo, lo dejo anotado.',
   que_hiciste: 'Déjame revisar la bitácora.',
   portafolio: 'Te cuento un caso.',
   guardar_caso: 'Listo, lo anoto en el portafolio.',
+  noticias: { ver: 'Déjame traer las noticias.', leer_completa: 'Voy a abrir la nota.', actualizar: 'Ya las actualizo.' },
+  mercados: { tendencias: 'Déjame mirar los mercados.', buscar: 'Déjame buscar ese mercado.' },
+  tesla: 'Déjame preguntarle al carro.',
+  trayecto: 'Déjame calcular la ruta.',
+  cargadores: 'Déjame buscar cargadores.',
+  tablero_tareas: 'Déjame abrir el tablero.',
+  estado_servicios: 'Déjame revisar los servicios.',
+  consumo: 'Déjame mirar el consumo.',
+  // Responden al instante: sin frase.
+  galeria: {}, hora_actual: {}, demo: {},
 };
+const FILLER_GENERIC = ['Dame un segundo.', 'Ya te digo.', 'Un momento.', 'Déjame ver.', 'Ya lo reviso.'];
+/** La frase para esta llamada ('' = ninguna). `turnNumber` hace rotar las genericas dentro de la conversacion. */
+export function fillerFor(name: string, rawArgs: string, turnNumber: number): string {
+  const f = FILLERS[name] ?? (name.startsWith('plane_') ? FILLERS.plane_ : undefined);
+  if (typeof f === 'string') return f;
+  if (f) { let action = ''; try { action = String(JSON.parse(rawArgs || '{}')?.accion ?? ''); } catch { /* argumentos incompletos */ } return f[action] ?? ''; }
+  return FILLER_GENERIC[Math.abs(turnNumber) % FILLER_GENERIC.length];
+}
+
+/**
+ * Idioma del turno. Con una o dos palabras el detector se equivoca mucho ("no", "ok", "normal" los marca como ingles):
+ * esas frases NO cambian el idioma; se responde en el que ya venia la conversacion (español si aun no hay ninguno).
+ * Solo una frase de tres palabras o mas lo fija (`confirm`: al cerrar la frase, no en los adelantos).
+ */
+export function settleLang(s: { convLang?: string }, text: string, detected: string, confirm: boolean): string {
+  if (plainWords(text).length <= 2) return s.convLang ?? 'es';
+  if (confirm) s.convLang = detected;
+  return detected;
+}
 
 /** Reacciones y fondos que el navegador sabe mostrar. El modelo los pide con etiquetas al inicio de su respuesta. */
 const REACTIONS = new Set(['sorpresa', 'alegria', 'risa', 'pena', 'pensativo', 'celebracion', 'despedida']);
@@ -520,7 +560,7 @@ export class SessionGateway implements OnGatewayConnection {
 
   private commit(client: WebSocket, s: Session) {
     const text = s.finals.join(' ').trim();
-    const lang = s.langs.sort((a, b) => s.langs.filter((v) => v === b).length - s.langs.filter((v) => v === a).length)[0] ?? 'es';
+    const lang = settleLang(s, s.finals.join(' '), s.langs.sort((a, b) => s.langs.filter((v) => v === b).length - s.langs.filter((v) => v === a).length)[0] ?? 'es', true);
     s.finals = []; s.langs = []; clearTimeout(s.specTimer);
     const carHeard = !!s.carHeard; s.carHeard = false;
     if (!text || s.suspended) return;
@@ -647,7 +687,7 @@ export class SessionGateway implements OnGatewayConnection {
   /** Pide por adelantado la respuesta a `text` (primera ronda del modelo) y la va guardando. */
   private speculate(s: Session, text: string) {
     if (!s.ready || s.turn || s.clientPlaying || s.demo.on) return; // en una demostracion cada frase lleva una nota del sistema: no se adelanta
-    const lang = s.lastLang;
+    const lang = settleLang(s, text, s.lastLang, false);
     if (s.spec && norm(s.spec.text) === norm(text) && s.spec.lang === lang) return;
     s.spec?.ctrl.abort();
     const spec: Spec = { text, lang, ctrl: new AbortController(), events: [], done: false };
@@ -749,7 +789,7 @@ export class SessionGateway implements OnGatewayConnection {
         if (!toolCalls.length) break;
         s.history.push({ role: 'assistant', content: text || null, tool_calls: toolCalls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments || '{}' } })) });
         // Mientras se consulta la herramienta, el avatar dice una frase corta para no quedarse callado.
-        if (!turn.spoken) this.say(client, s, turn, turn.lang !== 'es' ? (FILLER_OTHER[turn.lang] ?? 'One moment.') : FILLERS[toolCalls[0].name] ?? (toolCalls[0].name.startsWith('plane_') ? FILLERS.plane_ : 'Dame un segundo.'));
+        if (!turn.spoken) { const filler = turn.lang !== 'es' ? (FILLER_OTHER[turn.lang] ?? 'One moment.') : fillerFor(toolCalls[0].name, toolCalls[0].arguments, turn.id); if (filler) this.say(client, s, turn, filler); }
         for (const c of toolCalls) {
           toolsUsed.push(c.name);
           let result: string;

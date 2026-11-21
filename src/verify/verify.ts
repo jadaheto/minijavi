@@ -1553,6 +1553,56 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     return 'lee RSS y listados; fuera deportes, opinión, lotería, viejas y enlaces ajenos; un titular por hecho, los cuatro medios y economía aunque el modelo elija mal; guardado y respaldo; lectura completa';
   });
 
+  await check('Frases de espera: cada herramienta la suya, las genéricas rotan y lo instantáneo va en silencio', async () => {
+    const { fillerFor } = await import('../session/session.gateway');
+    const musica = fillerFor('musica', '{"accion":"poner","busqueda":"Joe Arroyo"}', 1);
+    must(musica === 'Ya te la pongo.' && !/^Va\b/.test(musica), `al poner música: «${musica}» (antes era "Va.", que la voz leía como "Virginia")`);
+    must(fillerFor('musica', '{"accion":"volumen","volumen":"subir"}', 2) === '' && fillerFor('musica', '{"accion":"siguiente"}', 3) === '' && fillerFor('galeria', '{"accion":"ver","numero":2}', 4) === '' && fillerFor('noticias', '{"accion":"abrir","numero":3}', 5) === '' && fillerFor('mercados', '{"accion":"abrir","numero":1}', 6) === '', 'lo que responde al instante no debe llevar frase');
+    const named = ['tesla', 'trayecto', 'cargadores', 'tablero_tareas', 'estado_servicios', 'consumo', 'dolar_bitcoin', 'clima', 'generar_imagen', 'bocetos', 'programar'].map((t) => fillerFor(t, '{}', 1));
+    must(new Set(named).size === named.length && !named.includes('Dame un segundo.') && !named.includes('') && fillerFor('noticias', '{"accion":"ver","tema":"colombia"}', 1) === 'Déjame traer las noticias.' && fillerFor('plane_list_projects', '{}', 1) === 'Déjame revisar en Plane.', `cada herramienta con su frase: ${named.join(' | ')}`);
+    const generic = [1, 2, 3, 4, 5, 6].map((n) => fillerFor('herramienta_nueva_sin_frase', '{}', n));
+    must(new Set(generic).size === 5 && generic.every((g, i) => i === 0 || g !== generic[i - 1]) && fillerFor('herramienta_nueva_sin_frase', 'no es json', 9) !== '', `las genéricas deben rotar: ${generic.join(' | ')}`);
+    const all = [...named, ...generic, musica];
+    must(all.every((f) => !/(^|\s)[A-ZÁÉÍÓÚ][a-z]{0,2}\.$/.test(f)), `ninguna frase debe ser una abreviatura que la voz pueda leer como otra palabra: ${all.filter((f) => /(^|\s)[A-ZÁÉÍÓÚ][a-z]{0,2}\.$/.test(f)).join(' | ')}`);
+    return 'música: "Ya te la pongo."; volumen, siguiente, abrir y galería sin frase; once herramientas con frase propia; cinco genéricas que rotan';
+  });
+
+  await check('Idioma, logos y fondo: una frase corta no cambia el idioma; el logo del medio es una imagen comprobada; Colombia trae su bandera', async () => {
+    const { settleLang } = await import('../session/session.gateway');
+    const { sourceLogo, logosFor } = await import('../news/news.service');
+    const { ColombiaNewsService } = await import('../news/colombia.service');
+    // Idioma: "no" marcado como ingles no cambia nada; una frase larga en ingles si; y despues un "ok" sigue en ingles.
+    const conv: { convLang?: string } = {};
+    must(settleLang(conv, 'No.', 'en', true) === 'es' && conv.convLang === undefined && settleLang(conv, 'no, gracias', 'en', true) === 'es', 'un "no" suelto no debe pasar la conversación a inglés');
+    must(settleLang(conv, 'quiero saber cuánto cuesta un bot', 'es', true) === 'es' && settleLang(conv, 'No', 'en', true) === 'es' && settleLang(conv, 'hello can you help me please', 'en', false) === 'en' && conv.convLang === 'es', 'un adelanto de frase no fija el idioma');
+    must(settleLang(conv, 'hello can you help me please', 'en', true) === 'en' && settleLang(conv, 'ok', 'es', true) === 'en' && settleLang(conv, 'sí', 'pt', true) === 'en', 'tras una frase larga en inglés, las cortas siguen en inglés');
+    // Logo: se elige una imagen de verdad (por sus bytes), nitida y liviana; lo que no es imagen o pesa demasiado se descarta.
+    const png = (px: number, bytes: number) => { const b = Buffer.alloc(bytes, 1); Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b); b.writeUInt32BE(px, 16); b.writeUInt32BE(px, 20); return b; };
+    const prev = globalThis.fetch, asked: string[] = [];
+    globalThis.fetch = (async (url: any) => { const u = String(url); asked.push(u.replace('https://medio.invalid', ''));
+      if (!u.startsWith('https://medio.invalid/')) return new Response('', { status: 404 });
+      if (u === 'https://medio.invalid/') return new Response('<html><head><link rel="apple-touch-icon" href="/grande.png"><link rel="icon" href="/chico.png"><link rel="icon" href="http://inseguro.invalid/x.png"><link rel="icon" href="/falso.png"></head></html>', { status: 200 });
+      if (u.endsWith('/grande.png')) return new Response(png(180, 30_000), { status: 200 });
+      if (u.endsWith('/chico.png')) return new Response(png(16, 400), { status: 200 });
+      if (u.endsWith('/apple-touch-icon.png')) return new Response(png(120, 9000), { status: 200 });
+      if (u.endsWith('/falso.png')) return new Response('<script>alert(1)</script>', { status: 200, headers: { 'content-type': 'image/png' } });
+      if (u.endsWith('/favicon.ico')) return new Response(png(512, 90_000), { status: 200 });
+      return new Response('', { status: 404 }); }) as any;
+    const logo = await sourceLogo('https://medio.invalid/nacion/nota-1');
+    must(logo.startsWith('data:image/png;base64,') && Buffer.from(logo.split(',')[1], 'base64').length === 9000 && !asked.some((a) => a.includes('inseguro')), `debía elegir el icono nítido más liviano (120 px, 9 KB): ${logo.slice(0, 30)} ${Buffer.from(logo.split(',')[1] ?? '', 'base64').length} bytes`);
+    const n0 = asked.length; must((await sourceLogo('https://medio.invalid/otra')) === logo && asked.length === n0, 'el logo de un medio se pide una sola vez');
+    must((await sourceLogo('http://medio.invalid/x')) === '' && (await sourceLogo('no es una dirección')) === '', 'solo https');
+    const map = await logosFor([{ source: 'Medio', link: 'https://medio.invalid/a' }, { source: 'Medio', link: 'https://medio.invalid/b' }, { source: 'Sin logo', link: 'https://vacio.invalid/x' }]);
+    must(map.Medio === logo && map['Sin logo'] === undefined, `mapa de logos: ${Object.keys(map)}`);
+    globalThis.fetch = prev;
+    // El panel de Colombia pide su fondo (bandera) y lleva los logos; el de IA no pide fondo.
+    process.env.NOTICIAS_COLOMBIA = '1'; const co = new ColombiaNewsService(new ConfigService(), P.db, usage); delete process.env.NOTICIAS_COLOMBIA;
+    must(co.panel().scene === 'colombia' && typeof co.panel().logos === 'object' && co.panel().title === 'Noticias de Colombia', `panel de Colombia: ${JSON.stringify(Object.keys(co.panel()))}`);
+    const fx = (await import('node:fs')).readFileSync(join(__dirname, '..', '..', 'public', 'js', 'fx.js'), 'utf8');
+    must(/colombia\(\) \{/.test(fx) && /#FCD116/.test(fx) && /#003893/.test(fx) && /#CE1126/.test(fx), 'falta el fondo de la bandera en el navegador');
+    return '"no" no cambia el idioma; logo nítido y liviano, comprobado por sus bytes y pedido una vez; Colombia con bandera y logos';
+  });
+
   rmSync(dir, { recursive: true, force: true });
   const icon = { ok: '✓', FALLA: '✗', omitida: '–' };
   console.log('\nVERIFICACIÓN DE MINIJAVI (simulación: no se envió nada a nadie)\n');

@@ -4,7 +4,7 @@ import { ConfigService } from '../config/config.service';
 import { DbService } from '../db/db.service';
 import { DeepSeekService } from '../llm/deepseek.service';
 import { UsageService } from '../usage/usage.service';
-import { articleParagraphs, fetchArticle, NewsItem, plain, readingParts } from './news.service';
+import { articleParagraphs, fetchArticle, logosFor, NewsItem, plain, readingParts } from './news.service';
 
 /**
  * Noticias de Colombia (pedido por Javier el 2026-11-20), leidas por el servidor directamente de cuatro medios que el
@@ -33,7 +33,7 @@ const SECTIONS = new Set(['colombia', 'politica', 'judicial', 'nacion', 'regione
 const META_KEY = 'news_co_cache';
 export interface Candidate { title: string; source: string; link: string; at: number; summary: string; html?: string; economy?: boolean; }
 const ECONOMY = new Set(['economia', 'economia-y-finanzas', 'negocios', 'emprendedores']);
-interface Stored { at: string; items: NewsItem[]; texts: Record<string, string[]>; }
+interface Stored { at: string; items: NewsItem[]; texts: Record<string, string[]>; logos?: Record<string, string>; }
 
 const cdata = (s: string) => s.replace(/<!\[CDATA\[|\]\]>/g, '');
 const tag = (x: string, t: string) => cdata(x.match(new RegExp(`<${t}[^>]*>([\\s\\S]*?)</${t}>`, 'i'))?.[1] ?? '');
@@ -146,6 +146,7 @@ export class ColombiaNewsService implements OnModuleInit {
         this.log.log(`noticias de Colombia: candidatas por medio: ${[...new Set(pool.map((c) => c.source))].map((src) => `${src} ${pool.filter((c) => c.source === src).length}`).join(', ')}`);
         // A las de Forbes y Blu (sin texto en su listado) se les lee la pagina: de ahi sale el resumen y queda lista la lectura completa.
         const texts: Record<string, string[]> = {};
+        const logos = logosFor(chosen); // en paralelo con la lectura de las paginas
         await Promise.all(chosen.map(async (c) => {
           try {
             const paragraphs = c.html ? articleParagraphs(`<article>${c.html}</article>`) : await fetchArticle(c.link, DOMAINS);
@@ -156,7 +157,7 @@ export class ColombiaNewsService implements OnModuleInit {
         const when = new Intl.DateTimeFormat('es-CO', { timeZone: this.cfg.timezone, day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit', hour12: true });
         const items: NewsItem[] = [];
         for (const [i, c] of chosen.entries()) items.push({ n: i + 1, title: c.title, source: c.source, date: when.format(new Date(c.at)), summary: c.summary, link: c.link, qr: await QRCode.toDataURL(c.link, { margin: 1, width: 360, errorCorrectionLevel: 'L' }).catch(() => '') });
-        this.stored = { at: new Date().toISOString(), items, texts };
+        this.stored = { at: new Date().toISOString(), items, texts, logos: { ...(this.stored?.logos ?? {}), ...(await logos) } };
         await this.db.query('INSERT INTO meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = excluded.value', [META_KEY, JSON.stringify(this.stored)]);
         this.lastError = failed.length ? `no respondieron: ${failed.join(', ')}` : '';
         this.log.log(`noticias de Colombia: ${items.length} elegidas entre ${pool.length}${failed.length ? ` (sin ${failed.join(', ')})` : ''}`);
@@ -200,6 +201,6 @@ export class ColombiaNewsService implements OnModuleInit {
 
   panel(open?: number): Record<string, unknown> {
     const it = open ? this.items[open - 1] : undefined;
-    return { action: it ? 'open' : 'list', title: 'Noticias de Colombia', day: this.day, items: this.items, index: it ? it.n : 0 };
+    return { action: it ? 'open' : 'list', title: 'Noticias de Colombia', day: this.day, items: this.items, index: it ? it.n : 0, logos: this.stored?.logos ?? {}, scene: 'colombia' };
   }
 }

@@ -38,10 +38,10 @@ export function floatEmoji(layer, set) {
   layer.appendChild(el);
 }
 
-/** Fondo animado detras del avatar. show('neuronal' | 'estrellas' | 'atardecer' | 'soleado' | 'nublado' | 'lluvia' | 'tormenta' | 'codigo' | null). */
+/** Fondo animado detras del avatar. show('neuronal' | 'colombia' | 'mercado' | 'estrellas' | 'atardecer' | 'soleado' | 'nublado' | 'lluvia' | 'tormenta' | 'codigo' | null). */
 export function createBackdrop(canvas) {
   const ctx = canvas.getContext('2d');
-  let current = null, timer = null, W = 0, H = 0, size = 18, stars = [], t = 0, drops = [], clouds = [], flash = 0, nodes = [], pulses = [];
+  let current = null, timer = null, W = 0, H = 0, size = 18, stars = [], t = 0, drops = [], clouds = [], flash = 0, nodes = [], pulses = [], series = [];
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = canvas.width = Math.floor(window.innerWidth * dpr); H = canvas.height = Math.floor(window.innerHeight * dpr);
@@ -86,6 +86,55 @@ export function createBackdrop(canvas) {
         ctx.fillStyle = `rgba(${n.hue ? '185, 160, 255' : '140, 200, 255'}, ${0.55 + n.glow * 0.45})`;
         ctx.beginPath(); ctx.arc(n.x * W, n.y * H, r, 0, 6.283); ctx.fill();
       }
+    },
+    // Bandera de Colombia ondeando en su asta (fondo de las noticias de Colombia). Javier pidio que no ocupara toda la
+    // pantalla: es una bandera de proporcion 3:2, arriba a la izquierda. La tela son tiras verticales que suben y bajan
+    // con una onda que avanza desde el asta, con luz y sombra segun la pendiente.
+    colombia() {
+      t += 0.06;
+      const bg = ctx.createLinearGradient(0, 0, 0, H); bg.addColorStop(0, '#101726'); bg.addColorStop(1, '#090c13');
+      ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+      const tall = H > W, fw = W * (tall ? 0.46 : 0.25), fh = (fw * 2) / 3, x0 = W * (tall ? 0.08 : 0.045), y0 = H * (tall ? 0.07 : 0.13);
+      const strip = Math.max(2, Math.round(size / 6)), amp = fh * 0.06;
+      ctx.fillStyle = 'rgba(0, 0, 0, .28)'; ctx.beginPath(); ctx.ellipse(x0 + fw * 0.55, y0 + fh * 1.08, fw * 0.5, fh * 0.07, 0, 0, 6.283); ctx.fill(); // sombra suave
+      for (let x = 0; x < fw; x += strip) {
+        const k = x / fw, phase = k * 6.2 - t, wave = Math.sin(phase) * 0.75 + Math.sin(phase * 2.1 + 1) * 0.25, slope = Math.cos(phase);
+        const y = y0 + wave * amp * k * 1.6, h = fh * (1 - 0.03 * k * Math.abs(wave)); // el borde libre se mueve mas que el del asta
+        ctx.fillStyle = '#FCD116'; ctx.fillRect(x0 + x, y, strip + 1, h * 0.5);
+        ctx.fillStyle = '#003893'; ctx.fillRect(x0 + x, y + h * 0.5, strip + 1, h * 0.25);
+        ctx.fillStyle = '#CE1126'; ctx.fillRect(x0 + x, y + h * 0.75, strip + 1, h * 0.25);
+        ctx.fillStyle = slope > 0 ? `rgba(255, 255, 255, ${slope * 0.16 * k})` : `rgba(0, 0, 0, ${-slope * 0.3 * k})`; ctx.fillRect(x0 + x, y, strip + 1, h);
+      }
+      const pole = ctx.createLinearGradient(x0 - size * 0.3, 0, x0, 0); pole.addColorStop(0, '#8d97a8'); pole.addColorStop(0.5, '#e6ebf2'); pole.addColorStop(1, '#6f7889');
+      ctx.fillStyle = pole; ctx.fillRect(x0 - size * 0.3, y0 - fh * 0.06, size * 0.3, tall ? fh * 2.2 : H);
+      ctx.beginPath(); ctx.arc(x0 - size * 0.15, y0 - fh * 0.06, size * 0.28, 0, 6.283); ctx.fill();
+    },
+    // Mercados (fondo de los mercados de prediccion): cuadricula tenue y tres lineas de precio que avanzan como en una
+    // pantalla de bolsa, con su resplandor; abajo, barras de volumen. Colores apagados: es fondo.
+    mercado() {
+      t += 1;
+      const bg = ctx.createLinearGradient(0, 0, 0, H); bg.addColorStop(0, '#0a1020'); bg.addColorStop(1, '#070a12');
+      ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+      const step = Math.max(8, Math.round(W / 90)), n = Math.ceil(W / step) + 2, cell = Math.round(H / 9);
+      ctx.strokeStyle = 'rgba(120, 160, 255, .07)'; ctx.lineWidth = 1; ctx.beginPath();
+      for (let y = cell; y < H; y += cell) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+      for (let x = W - ((t * 2) % (cell * 2)); x > 0; x -= cell * 2) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+      ctx.stroke();
+      if (!series.length) series = [['#34d17f', 0.3], ['#5aa8ff', 0.5], ['#ef5350', 0.7]].map(([color, base]) => ({ color, base, pts: [], v: 0, drift: 0 }));
+      for (const s of series) {
+        if (t % 2 === 0 || s.pts.length < n) { // un punto nuevo: paseo al azar que vuelve despacio a su linea
+          do { s.drift = s.drift * 0.72 + (Math.random() - 0.5) * 0.011; s.v = Math.max(-0.085, Math.min(0.085, (s.v + s.drift) * 0.965)); s.pts.push(s.v); } while (s.pts.length < n); // movimientos cortos y nerviosos, sin salirse de su franja
+          if (s.pts.length > n) s.pts.shift();
+        }
+        const y = (i) => H * (s.base - s.pts[i]), x = (i) => W - (s.pts.length - 1 - i) * step;
+        const fill = ctx.createLinearGradient(0, H * (s.base - 0.25), 0, H * (s.base + 0.3)); fill.addColorStop(0, s.color + '2e'); fill.addColorStop(1, s.color + '00');
+        ctx.beginPath(); ctx.moveTo(x(0), y(0)); for (let i = 1; i < s.pts.length; i++) ctx.lineTo(x(i), y(i));
+        ctx.strokeStyle = s.color + 'b0'; ctx.lineWidth = Math.max(1.5, size / 9); ctx.lineJoin = 'round'; ctx.shadowColor = s.color; ctx.shadowBlur = size * 0.7; ctx.stroke(); ctx.shadowBlur = 0;
+        ctx.lineTo(W, H); ctx.lineTo(x(0), H); ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
+        ctx.fillStyle = s.color; ctx.beginPath(); ctx.arc(W - size * 0.4, y(s.pts.length - 1), size * (0.22 + 0.08 * Math.sin(t / 5)), 0, 6.283); ctx.fill(); // el precio de ahora, latiendo
+      }
+      const ref = series[1].pts;
+      for (let i = 1; i < ref.length; i += 2) { const up = ref[i] >= ref[i - 1], h = H * (0.015 + Math.min(0.09, Math.abs(ref[i] - ref[i - 1]) * 9)); ctx.fillStyle = up ? 'rgba(52, 209, 127, .22)' : 'rgba(239, 83, 80, .22)'; ctx.fillRect(W - (ref.length - 1 - i) * step - step * 0.7, H - h, step * 1.4, h); }
     },
     estrellas() { // campo de estrellas que se acercan
       ctx.fillStyle = 'rgba(6, 8, 22, 0.35)'; ctx.fillRect(0, 0, W, H);

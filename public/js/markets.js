@@ -70,7 +70,7 @@ function bar(o, delay) {
 
 export function createMarketsPanel(box, onPick) {
   let items = [], title = '', index = 0;
-  const hide = () => { box.hidden = true; box.replaceChildren(); document.body.classList.remove('markets'); items = []; index = 0; };
+  const hide = () => { const was = !box.hidden; box.hidden = true; box.replaceChildren(); document.body.classList.remove('markets'); items = []; index = 0; if (was) onPick?.(0); };
 
   function head(text, back) {
     const h = el('header', 'nws-head');

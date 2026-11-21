@@ -38,9 +38,9 @@ let serverPlayer = null; // reproductor del audio que manda el servidor (ElevenL
 // Panel animado del Tesla (modo dueño): aparece cuando el avatar consulta el carro.
 const tesla = createTeslaPanel($('tesla'));
 // Noticias de inteligencia artificial: lista numerada o una noticia abierta con su QR. Al tocar una se le avisa al servidor.
-const news = createNewsPanel($('news'), (index) => socket?.send({ type: 'news', index }));
+const news = createNewsPanel($('news'), (index) => { socket?.send({ type: 'news', index }); if (!news.active && state !== 'speaking') backdrop.show(restScene()); }); // al cerrarlas se va tambien su fondo
 // Mercados de prediccion (modo dueño, solo consulta): lista numerada con las probabilidades de cada opcion.
-const markets = createMarketsPanel($('markets'));
+const markets = createMarketsPanel($('markets'), () => { if (!markets.active && state !== 'speaking') backdrop.show(restScene()); }); // al cerrarlos se va su fondo
 // Paneles de datos: dolar y Bitcoin, estado de los servicios y consumo.
 const dataPanel = createDataPanel($('panel'));
 // Vista previa de los mercados con datos de EJEMPLO (no consulta nada): abrir con ?demo=mercados.
@@ -52,7 +52,7 @@ if (new URLSearchParams(location.search).get('demo') === 'mercados') {
     { n: 3, title: 'Ejemplo: ¿qué precio alcanzará Bitcoin este año?', ends: '2027-01-01', volume24: 1357487, more: 20, options: [o('↓ 55,000', 63.5, -4.2, { m: 41, w: 70, d: 67.7 }), o('↓ 50,000', 39.9, -2, { m: 22, w: 44, d: 41.9 }), o('↑ 70,000', 12, 1.1, { m: 30, w: 9, d: 10.9 })] },
     { n: 4, title: 'Ejemplo: próximas elecciones presidenciales', ends: '2027-04-19', volume24: 870556, more: 40, options: [o('Candidata A', 45.7, 0.3, { m: 44, w: 46.5, d: 45.4 }), o('Candidato B', 17.3, -0.8, { m: 12, w: 18, d: 18.1 }), o('Candidato C', 14.5, 0, { m: 15 })] },
   ];
-  let step = 0; const next = () => { const k = step++ % 3; markets.show(k === 0 ? { action: 'list', title: 'Mercados que más se mueven hoy (ejemplo)', items } : { action: 'open', title: 'Ejemplo', items, index: k }); };
+  let step = 0; const next = () => { const k = step++ % 3; showMarkets(k === 0 ? { action: 'list', title: 'Mercados que más se mueven hoy (ejemplo)', items } : { action: 'open', title: 'Ejemplo', items, index: k }); };
   setTimeout(() => { $('gate').hidden = true; next(); setInterval(next, 9000); }, 1500);
 }
 // Vista previa del panel con datos de EJEMPLO (no consulta el carro): abrir con ?demo=tesla. Se repite para ver la animacion.
@@ -100,7 +100,9 @@ function onMusic(msg) {
 // Taller de programacion (modo dueño): mientras Claude Code trabaja, el fondo es un editor, las gafas reflejan el
 // codigo y arriba se ve en que va. Los fondos que pide una respuesta mandan mientras el avatar habla.
 let work = null;
-const restScene = () => (activity ? ACTIVITIES[activity].scene : work ? 'codigo' : null);
+// Fondo de reposo: la actividad de la suspension, el editor del taller o el que pidan las noticias en pantalla (bandera).
+let newsScene = null;
+const restScene = () => (activity ? ACTIVITIES[activity].scene : work ? 'codigo' : news.active && newsScene ? newsScene : markets.active ? 'mercado' : null);
 // Modo suspension: el avatar deja de responder (sigue oyendo solo su nombre) y se entretiene con una actividad que va
 // rotando. `dormant`: la suspension ya vencio en el servidor; el microfono no se envia y solo despierta con un toque.
 const ACTIVITIES = {
@@ -243,6 +245,9 @@ function setSub(id, text) {
   if (text) subTimers[id] = setTimeout(() => { el.classList.add('fade'); subTimers[id] = setTimeout(() => { el.textContent = ''; el.classList.remove('fade'); }, 700); }, SUB_MS[id]);
 }
 
+/** Mercados en pantalla, con su fondo de pantalla de bolsa mientras se ven (lo demas que comparta ese lugar se quita). */
+function showMarkets(msg) { hideCard(); if (gallery) hideGallery(); tesla.hide(); news.hide(); dataPanel.hide(); markets.show(msg); if (state !== 'speaking' || markets.active) backdrop.show(restScene()); }
+
 function stopSpeech() { player?.stop(); lips.reset(); speechId = -1; subChars = []; }
 
 function onMessage(msg) {
@@ -300,9 +305,10 @@ function onMessage(msg) {
     case 'tesla': // estado del carro
       hideCard(); if (gallery) hideGallery(); news.hide(); markets.hide(); dataPanel.hide(); tesla.show(msg); break;
     case 'news': // noticias de inteligencia artificial
-      hideCard(); if (gallery) hideGallery(); tesla.hide(); markets.hide(); dataPanel.hide(); news.show(msg); break;
+      hideCard(); if (gallery) hideGallery(); tesla.hide(); markets.hide(); dataPanel.hide(); news.show(msg);
+      newsScene = news.active && typeof msg.scene === 'string' ? msg.scene : null; if (state !== 'speaking' || newsScene) backdrop.show(restScene()); break;
     case 'markets': // mercados de prediccion
-      hideCard(); if (gallery) hideGallery(); tesla.hide(); news.hide(); dataPanel.hide(); markets.show(msg); break;
+      showMarkets(msg); break;
     case 'locate': // el servidor necesita la ubicacion (trayecto o cargadores): el navegador pide permiso una vez
       if (!navigator.geolocation) { socket?.send({ type: 'location', error: 'sin soporte' }); break; }
       navigator.geolocation.getCurrentPosition(
@@ -408,7 +414,7 @@ window.addEventListener('pointerdown', () => { if (live && suspended) socket?.se
 // Con imagenes en pantalla el avatar esta pequeño en la esquina: tocarlo las quita y lo devuelve a su tamaño.
 $('stage').addEventListener('click', () => { if (gallery) { hideGallery(); socket?.send({ type: 'gallery', hide: true }); } });
 window.__avatarDebug = {
-  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, gallery: showGallery, work: setWork, music: onMusic, tesla: (d) => tesla.show(d), news: (d) => news.show(d), markets: (d) => markets.show(d), panel: (d) => dataPanel.show(d), message: onMessage,
+  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, gallery: showGallery, work: setWork, music: onMusic, tesla: (d) => tesla.show(d), news: (d) => news.show(d), markets: showMarkets, panel: (d) => dataPanel.show(d), message: onMessage,
   standby: () => { armed = true; shutdown(''); }, suspend: setSuspended, activity: (n) => { setActivity(n); actUntil = performance.now() + 600000; },
   get weights() { return { ...lips.weights }; }, get state() { return state; }, get time() { return player ? player.time() : -1; }, morphNames: avatar.morphNames, missing,
 };

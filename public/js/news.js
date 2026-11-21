@@ -3,9 +3,15 @@
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 
 export function createNewsPanel(box, onPick) {
-  let items = [], index = 0, day = '', title = '';
+  let items = [], index = 0, day = '', title = '', logos = {};
   const hide = () => { box.hidden = true; box.replaceChildren(); document.body.classList.remove('news'); items = []; index = 0; };
-  const meta = (it) => [it.source, it.date].filter(Boolean).join(' · ');
+  /** Medio y fecha, con el icono del medio delante si llego (solo imagenes incrustadas, nunca una direccion externa). */
+  const meta = (it, cls) => {
+    const row = el(cls === 'p' ? 'p' : 'small', 'nws-meta'), src = logos[it.source];
+    if (typeof src === 'string' && /^data:image\/(png|webp|jpeg|x-icon);base64,[A-Za-z0-9+/=]+$/.test(src)) { const img = el('img', 'nws-logo'); img.src = src; img.alt = ''; row.append(img); }
+    row.append(el('span', '', [it.source, it.date].filter(Boolean).join(' · ')));
+    return row;
+  };
 
   function head(title, back) {
     const h = el('header', 'nws-head');
@@ -25,7 +31,7 @@ export function createNewsPanel(box, onPick) {
       for (const it of items) {
         const li = el('li', 'nws-item'); li.style.animationDelay = `${0.08 * it.n}s`;
         const btn = el('button', 'nws-row'); btn.type = 'button';
-        const text = el('span', 'nws-text'); text.append(el('span', 'nws-h', it.title), el('small', 'nws-meta', meta(it)));
+        const text = el('span', 'nws-text'); text.append(el('span', 'nws-h', it.title), meta(it));
         btn.append(el('span', 'nws-n', String(it.n)), text);
         btn.addEventListener('click', () => { index = it.n; draw(); onPick?.(it.n); });
         li.append(btn); list.append(li);
@@ -36,7 +42,7 @@ export function createNewsPanel(box, onPick) {
     const it = items[index - 1];
     box.append(head(`Noticia ${it.n} de ${items.length}`, true));
     const art = el('article', 'nws-open');
-    art.append(el('span', 'nws-n big', String(it.n)), el('h2', 'nws-h big', it.title), el('p', 'nws-meta', meta(it)));
+    art.append(el('span', 'nws-n big', String(it.n)), el('h2', 'nws-h big', it.title), meta(it, 'p'));
     if (it.summary) art.append(el('p', 'nws-sum', it.summary));
     if (it.qr && /^data:image\/png;base64,/.test(it.qr)) {
       const qr = el('div', 'nws-qr'), img = el('img'); img.src = it.qr; img.alt = 'Código QR para leer la noticia completa';
@@ -53,7 +59,7 @@ export function createNewsPanel(box, onPick) {
   return {
     show(msg) {
       if (msg.action === 'hide' || !Array.isArray(msg.items) || !msg.items.length) return hide();
-      items = msg.items.slice(0, 8); day = msg.day || ''; title = msg.title || ''; index = Math.max(0, Math.min(items.length, Number(msg.index) || 0));
+      items = msg.items.slice(0, 8); day = msg.day || ''; title = msg.title || ''; logos = msg.logos && typeof msg.logos === 'object' ? msg.logos : {}; index = Math.max(0, Math.min(items.length, Number(msg.index) || 0));
       draw();
       box.hidden = false; document.body.classList.add('news');
       box.classList.remove('in'); void box.offsetWidth; box.classList.add('in');

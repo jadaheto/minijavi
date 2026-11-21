@@ -256,7 +256,10 @@ body.news .cover-art, body.showing .nws { display: none; }
 .nws-n { flex: none; width: 38px; height: 38px; display: grid; place-content: center; border-radius: 12px; font-size: 18px; font-weight: 700; color: #0b1220; background: linear-gradient(140deg, #7cc4ff, #4f8dff); }
 .nws-text { display: grid; gap: 3px; min-width: 0; }
 .nws-h { font-size: 15.5px; line-height: 1.3; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.nws-meta { margin: 0; font-size: 12px; color: #8f9aac; }
+.nws-meta { margin: 0; font-size: 12px; color: #8f9aac; display: flex; align-items: center; gap: 6px; }
+.nws-logo { flex: none; width: 16px; height: 16px; border-radius: 4px; object-fit: contain; background: #fff; }
+.nws-open .nws-meta { font-size: 13.5px; }
+.nws-open .nws-logo { width: 24px; height: 24px; border-radius: 6px; }
 .nws-hint { margin: 0; text-align: center; font-size: 12px; color: #7f8a9c; }
 .nws-open { display: grid; gap: 10px; justify-items: start; padding: 6px 4px 2px; animation: tsl-row .5s ease; }
 .nws-n.big { width: 46px; height: 46px; font-size: 22px; border-radius: 14px; }
