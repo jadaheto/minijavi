@@ -55,6 +55,15 @@ export class PlaneMcpService {
     }));
   }
 
+  /** Lectura con el resultado ya interpretado (para armar el tablero). Solo herramientas de consulta; lanza si falla. */
+  async read(tool: string, args: Record<string, unknown>): Promise<any> {
+    if (!this.enabled || !READ_ONLY.has(tool)) throw new Error('esa consulta de Plane no está permitida');
+    const out = await this.rpc('tools/call', { name: tool, arguments: args });
+    const text = (out?.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n');
+    if (out?.isError) throw new Error(`Plane respondió un error: ${text.slice(0, 160)}`);
+    try { return JSON.parse(text); } catch { if (out?.structuredContent) return out.structuredContent; throw new Error('Plane respondió algo que no se pudo leer'); }
+  }
+
   async call(name: string, rawArgs: string): Promise<string> {
     const tool = name.slice(PLANE_PREFIX.length);
     if (!this.enabled || !READ_ONLY.has(tool)) return 'Error: esa herramienta no está permitida.';

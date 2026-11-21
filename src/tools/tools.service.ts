@@ -7,6 +7,7 @@ import { MusicService, MusicState } from '../music/music.service';
 import { NewsService } from '../news/news.service';
 import { MarketEvent, PolymarketService } from '../markets/polymarket.service';
 import { PanelsService } from '../panels/panels.service';
+import { buildBoard } from '../mcp/plane-board';
 import { describeTesla, teslaCard, TeslaFocus, TeslaService } from '../tesla/tesla.service';
 import { UsageService } from '../usage/usage.service';
 import { GalleryItem, GalleryState, ImagesService } from '../images/images.service';
@@ -488,6 +489,24 @@ export class ToolsService {
         if (!panels) return text;
         const c = await panels.consumption(Math.max(7, days));
         return { text: `En pantalla está el panel de consumo de los últimos ${c.days.length} días.${c.priced ? '' : ' No hay precios configurados (USAGE_PRICES), así que se ve en unidades, sin costo en dólares: no inventes un costo.'}\n${text}`, panel: { kind: 'usage', title: 'Consumo', ...c } };
+      },
+    };
+    // Tablero de tareas de Plane en pantalla. Solo lectura (el MCP solo deja pasar herramientas de consulta).
+    if (plane.enabled) this.ownerTools.tablero_tareas = {
+      description: 'Muestra en pantalla el tablero de tareas de un proyecto de Plane: columnas Por hacer, En curso, Hechas y Pendientes, con lo atrasado y lo que vence hoy arriba. Úsala cuando Javier pida ver sus tareas, su tablero, "qué tengo pendiente en Plane" o cómo va un proyecto. Para buscar una tarea concreta o leer su detalle siguen las herramientas plane_.',
+      parameters: { type: 'object', properties: {
+        proyecto: { type: 'string', description: 'Nombre o identificador del proyecto tal como lo dijo Javier. Omítelo si no dijo ninguno.' },
+        todas: { type: 'boolean', description: 'true para ver las tareas de todo el equipo. Por defecto solo las asignadas a Javier.' },
+      }, required: [] },
+      run: async (args) => {
+        const today = new Intl.DateTimeFormat('en-CA', { timeZone: cfg.timezone }).format(new Date());
+        const out = await buildBoard(plane, String(args.proyecto || cfg.planeBoardProject || ''), args.todas !== true, today);
+        if ('error' in out) return `No se pudo armar el tablero de Plane: ${out.error}. Díselo tal cual.`;
+        if ('choose' in out) return { untrusted: true, text: `${args.proyecto ? 'No quedó claro cuál proyecto es' : 'Javier no dijo de qué proyecto'}. Proyectos de Plane:\n${asData('Plane (nombres de proyectos)', out.choose.map((p) => `- ${p.name} (${p.identifier})`).join('\n'))}\nPregúntale cuál quiere ver, nombrando solo tres o cuatro de los más parecidos a lo que dijo; no leas toda la lista.` };
+        const b = out.board, top = b.columns.filter((c) => c.group !== 'completed').flatMap((c) => c.cards.filter((k) => k.late || k.today).map((k) => `- ${k.name} (${k.late ? `atrasada desde ${k.due}` : 'vence hoy'}; ${c.name})`)).slice(0, 8);
+        return { untrusted: true, panel: { kind: 'board', title: `${b.project} · ${b.mine ? 'mis tareas' : 'todo el equipo'}`, ...b },
+          text: `En pantalla está el tablero de ${b.mine ? 'las tareas de Javier' : 'todo el equipo'}${!b.mine && args.todas !== true ? ' (no se pudo saber cuál es su usuario en Plane, así que van las de todos: díselo)' : ''}.\n${asData('Plane (proyecto y tareas)', `Proyecto: ${b.project}\n${b.columns.map((c) => `${c.name}: ${c.count}`).join(' · ')}\nAtrasadas: ${b.late} · vencen hoy: ${b.dueToday}${top.length ? `\n${top.join('\n')}` : ''}`)}\n` +
+            `Cuéntale en dos o tres frases cómo va: cuántas tiene por hacer y en curso, y lo atrasado o lo que vence hoy por su nombre.${b.truncated ? ' Solo se leyeron las 400 de cambio más reciente: menciónalo si pregunta por totales.' : ''}` };
       },
     };
     // Semaforo de los servicios: lo que el servidor ya vigila cada pocos minutos, mas las cuentas conectadas.

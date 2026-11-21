@@ -92,7 +92,38 @@ function usage(msg) {
   return wrap;
 }
 
-const KINDS = { finance, status, usage };
+/** Tablero de tareas: resumen arriba (avance, atrasadas, hoy) y columnas por estado con sus tarjetas. */
+function board(msg) {
+  const wrap = el('div', 'pnl-board'), total = Math.max(1, Number(msg.total) || 0), pct = Math.round(((Number(msg.done) || 0) / total) * 100);
+  const hero = el('div', 'pnl-progress'), top = el('div', 'pnl-row'), left = el('div', 'pnl-name'), val = el('b', 'pnl-total');
+  left.append(el('strong', '', `${num(msg.open)} abiertas · ${num(msg.done)} hechas`), el('small', '', `${msg.identifier || ''}${msg.truncated ? ' · las 400 más recientes' : ''}`));
+  val.textContent = '0 %'; top.append(left, val);
+  const track = el('div', 'pnl-track'), fill = el('i'); fill.style.width = `${pct}%`; track.append(fill);
+  const t0 = performance.now() + 200; const step = (now) => { if (!val.isConnected) return; const p = Math.max(0, Math.min(1, (now - t0) / 1100)); val.textContent = `${Math.round(pct * (1 - Math.pow(1 - p, 3)))} %`; if (p < 1) requestAnimationFrame(step); }; requestAnimationFrame(step);
+  const chips = el('div', 'pnl-chips');
+  if (msg.late) chips.append(el('span', 'mkt-chg down', `${num(msg.late)} atrasada${msg.late > 1 ? 's' : ''}`));
+  if (msg.dueToday) chips.append(el('span', 'mkt-chg warn', `${num(msg.dueToday)} vence${msg.dueToday > 1 ? 'n' : ''} hoy`));
+  if (!msg.late && !msg.dueToday) chips.append(el('span', 'mkt-chg up', 'nada atrasado'));
+  hero.append(top, track, chips); wrap.append(hero);
+  const cols = el('div', 'pnl-cols');
+  (msg.columns || []).filter((c) => c.group !== 'backlog' || c.count).forEach((c, i) => {
+    const col = el('section', 'pnl-col'); col.style.animationDelay = `${0.15 + i * 0.12}s`; col.style.setProperty('--c', c.color || '#6fb2ff'); col.dataset.group = c.group;
+    const head = el('header', 'pnl-col-head'); head.append(el('span', 'pnl-pip'), el('b', '', c.name), el('span', 'pnl-count', num(c.count)));
+    col.append(head);
+    (c.cards || []).forEach((k, j) => {
+      const card = el('article', `pnl-task${k.late ? ' late' : k.today ? ' today' : ''}`); card.style.animationDelay = `${0.35 + i * 0.12 + j * 0.06}s`;
+      const meta = el('small', '', [k.key, k.priority && k.priority !== 'none' ? ({ urgent: 'urgente', high: 'alta', medium: 'media', low: 'baja' }[k.priority] || '') : '', k.due ? (k.late ? `venció ${dia(k.due)}` : k.today ? 'vence hoy' : dia(k.due)) : ''].filter(Boolean).join(' · '));
+      card.append(el('span', 'pnl-task-name', k.name), meta); col.append(card);
+    });
+    if (c.count > (c.cards || []).length) col.append(el('small', 'pnl-more', `+${num(c.count - c.cards.length)} más`));
+    if (!c.count) col.append(el('small', 'pnl-more', 'vacía'));
+    cols.append(col);
+  });
+  wrap.append(cols);
+  return wrap;
+}
+
+const KINDS = { finance, status, usage, board };
 export function createDataPanel(box) {
   let timer = 0;
   const hide = () => { clearTimeout(timer); box.hidden = true; box.replaceChildren(); document.body.classList.remove('panel'); };
@@ -106,7 +137,7 @@ export function createDataPanel(box) {
       box.append(head, render(msg));
       box.hidden = false; document.body.classList.add('panel');
       box.classList.remove('in'); void box.offsetWidth; box.classList.add('in');
-      timer = setTimeout(hide, 45000); // son consultas puntuales: se van solas
+      timer = setTimeout(hide, msg.kind === 'board' ? 120000 : 45000); // son consultas puntuales: se van solas (el tablero dura mas)
     },
     hide,
     get active() { return !box.hidden; },

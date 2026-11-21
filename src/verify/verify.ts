@@ -33,12 +33,13 @@ async function main() {
   let imageFetch: ((url: string, init: any) => Response) | undefined; // OpenAI Images y Magnific simulados
   let musicFetch: ((url: string, init: any) => Response) | undefined; // Spotify y YouTube simulados
   let newsFetch: (() => Response | Promise<Response>) | undefined; // webhook de noticias simulado
+  let planeFetch: ((body: any, init: any) => unknown) | undefined; // MCP de Plane simulado: devuelve el resultado de cada herramienta
   let panelFetch: ((url: string) => Response) | undefined; // datos.gov.co y CoinGecko simulados
   let marketFetch: ((url: string, init: any) => Response) | undefined; // API de mercados simulada
   let teslaFetch: ((url: string, init: any) => Response) | undefined; // Tesla simulado
   let githubFetch: ((url: string, init: any) => Response) | undefined; // GitHub simulado (cada prueba pone el suyo)
   globalThis.fetch = (async (url: any, init?: any) => { sent.push(String(url));
-    if (String(url).includes('api.telegram.org')) { const method = String(url).split('/').pop()!, body = JSON.parse(String(init?.body ?? '{}')); tg.push({ method, body }); return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: tgWebhook } : method === 'getUpdates' ? [] : { message_id: 9000 + tg.length } }), { status: 200 }); } if (githubFetch && String(url).includes('api.github.invalid')) return githubFetch(String(url), init); if (newsFetch && String(url).includes('noticias.invalid')) return newsFetch(); if (panelFetch && /datos\.gov\.co|coingecko\.com/.test(String(url))) return panelFetch(String(url)); if (marketFetch && String(url).includes('gamma-api.polymarket.com')) return marketFetch(String(url), init); if (teslaFetch && /tesla\.com/.test(String(url))) return teslaFetch(String(url), init); if (musicFetch && /spotify\.com|googleapis\.com\/youtube/.test(String(url))) return musicFetch(String(url), init); if (imageFetch && /api\.openai\.com\/v1\/images|magnific/.test(String(url))) return imageFetch(String(url), init); if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
+    if (String(url).includes('api.telegram.org')) { const method = String(url).split('/').pop()!, body = JSON.parse(String(init?.body ?? '{}')); tg.push({ method, body }); return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: tgWebhook } : method === 'getUpdates' ? [] : { message_id: 9000 + tg.length } }), { status: 200 }); } if (githubFetch && String(url).includes('api.github.invalid')) return githubFetch(String(url), init); if (newsFetch && String(url).includes('noticias.invalid')) return newsFetch(); if (planeFetch && String(url).includes('plane.invalid')) { const b = JSON.parse(String(init?.body ?? '{}')); const out = planeFetch(b, init); return new Response(JSON.stringify({ jsonrpc: '2.0', id: b.id, result: { content: [{ type: 'text', text: typeof out === 'string' ? out : JSON.stringify(out) }], isError: typeof out === 'string' } }), { status: 200 }); } if (panelFetch && /datos\.gov\.co|coingecko\.com/.test(String(url))) return panelFetch(String(url)); if (marketFetch && String(url).includes('gamma-api.polymarket.com')) return marketFetch(String(url), init); if (teslaFetch && /tesla\.com/.test(String(url))) return teslaFetch(String(url), init); if (musicFetch && /spotify\.com|googleapis\.com\/youtube/.test(String(url))) return musicFetch(String(url), init); if (imageFetch && /api\.openai\.com\/v1\/images|magnific/.test(String(url))) return imageFetch(String(url), init); if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
 
   const { ConfigService } = await import('../config/config.service');
   const { DbService } = await import('../db/db.service');
@@ -1394,6 +1395,54 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     must((cs.panel as any)?.kind === 'usage' && (cs.panel as any).days.length === 2 && /no inventes un costo/.test(cs.text), `consumo: ${cs.text.slice(0, 200)}`);
     panelFetch = undefined;
     return 'TRM de hoy y su cambio; Bitcoin con gráfica reducida; caché; una fuente caída no tumba la otra; semáforo; consumo sin costo inventado; permisos';
+  });
+
+  await check('Tablero de Plane: solo lectura, mis tareas por estado, lo atrasado primero y sin adivinar el proyecto', async () => {
+    const { PlaneMcpService } = await import('../mcp/plane-mcp.service');
+    const { buildBoard } = await import('../mcp/plane-board');
+    Object.assign(process.env, { PLANE_MCP_URL: 'https://plane.invalid/mcp', PLANE_API_KEY: 'clave-plane' });
+    const bcfg = new ConfigService(), plane = new PlaneMcpService(bcfg), today = '2026-11-20', ME = 'yo-1', calls: string[] = []; let key = '';
+    const item = (n: number, name: string, state: string, o: object = {}) => ({ id: `i${n}`, sequence_id: n, name, state, priority: 'none', assignees: [ME], target_date: null, ...o });
+    const ITEMS = [item(1, 'Informe mensual', 's-todo', { target_date: '2026-11-18', priority: 'low' }), item(2, 'Revisar contrato', 's-todo', { target_date: '2026-11-20' }), item(3, 'Tarea urgente sin fecha', 's-todo', { priority: 'urgent' }), item(4, 'Diseño <b>nuevo</b>', 's-doing', { target_date: '2026-12-01' }),
+      item(5, 'Ya entregada', 's-done', { target_date: '2026-11-01' }), item(6, 'De otra persona', 's-todo', { assignees: ['otro'] }), item(7, 'Cancelada', 's-cancel'), ...Array.from({ length: 8 }, (_, i) => item(20 + i, `Pendiente ${i}`, 's-back'))];
+    planeFetch = (b, init) => {
+      key = init.headers['X-Plane-Api-Key']; const { name, arguments: a } = b.params; calls.push(name);
+      if (name === 'list_projects') return { results: [{ id: 'p1', name: 'Comercial V1', identifier: 'COMERCIAL' }, { id: 'p2', name: 'CUN360', identifier: 'CUN360' }, { id: 'p3', name: 'Archivado', identifier: 'OLD', archived_at: '2026-01-01' }] };
+      if (name === 'list_states') return a.project_id === 'p1' ? { results: [{ id: 's-back', name: 'Backlog', group: 'backlog', color: '#60646C' }, { id: 's-todo', name: 'Por hacer', group: 'unstarted', color: '#60646C' }, { id: 's-doing', name: 'Ejecutando', group: 'started', color: '#F59E0B' }, { id: 's-done', name: 'Completado', group: 'completed', color: '#46A758' }, { id: 's-cancel', name: 'Cancelado', group: 'cancelled', color: 'rojo' }] } : 'proyecto sin acceso';
+      if (name === 'get_me') return { id: ME, display_name: 'Javier' };
+      if (name === 'list_work_items') return { total_count: ITEMS.length, results: ITEMS };
+      return 'herramienta inesperada';
+    };
+    const noName = await buildBoard(plane, '', true, today);
+    must('choose' in noName && noName.choose.length === 2 && !noName.choose.some((p) => p.identifier === 'OLD'), `sin proyecto debía ofrecer los abiertos: ${JSON.stringify(noName)}`);
+    const out = await buildBoard(plane, 'comercial', true, today);
+    must('board' in out, `tablero: ${JSON.stringify(out)}`);
+    const b = (out as any).board, col = (g: string) => b.columns.find((c: any) => c.group === g);
+    must(key === 'clave-plane' && b.mine && b.open === 12 && b.done === 1 && b.late === 1 && b.dueToday === 1 && b.columns.map((c: any) => c.group).join() === 'unstarted,started,completed,backlog', `resumen: ${JSON.stringify({ ...b, columns: b.columns.map((c: any) => `${c.group}:${c.count}`) })}`);
+    must(col('unstarted').cards.map((k: any) => k.key).join() === 'COMERCIAL-1,COMERCIAL-2,COMERCIAL-3' && col('unstarted').cards[0].late && col('unstarted').cards[1].today && !col('unstarted').cards.some((k: any) => /otra persona/.test(k.name)), `orden de "Por hacer": ${JSON.stringify(col('unstarted').cards)}`);
+    must(col('backlog').count === 8 && col('backlog').cards.length === 6 && !/[<>]/.test(col('started').cards[0].name) && !col('completed').cards[0].late && !b.columns.some((c: any) => c.group === 'cancelled'), 'columnas: tope de 6 tarjetas, sin etiquetas, una hecha no cuenta como atrasada y las canceladas no salen');
+    // El proyecto tambien se puede dar por su codigo o por su direccion en Plane.
+    const PID = '468c2d92-86b1-489f-8484-91dca95db94c', prevPlane = planeFetch!;
+    planeFetch = (b2, init2) => (b2.params.name === 'list_projects' ? { results: [{ id: PID, name: 'Comercial V1', identifier: 'COMERCIAL' }, { id: 'p2', name: 'CUN360', identifier: 'CUN360' }] } : prevPlane({ ...b2, params: { ...b2.params, arguments: { ...b2.params.arguments, project_id: b2.params.arguments?.project_id === PID ? 'p1' : b2.params.arguments?.project_id } } }, init2));
+    const byUrl = await buildBoard(plane, `https://proyectos.ejemplo.invalid/vsd/projects/${PID}/issues`, true, today), byId = await buildBoard(plane, PID.toUpperCase(), true, today);
+    must('board' in byUrl && byUrl.board.identifier === 'COMERCIAL' && 'board' in byId && byId.board.open === 12, `por dirección o código: ${JSON.stringify(byUrl).slice(0, 160)}`);
+    const unknown = await buildBoard(plane, '11111111-2222-3333-4444-555555555555', true, today);
+    must('error' in unknown && /no está entre los que la clave/.test(unknown.error), 'un código que no existe debe decirse, no abrir otro proyecto');
+    planeFetch = prevPlane;
+    const all = await buildBoard(plane, 'COMERCIAL', false, today);
+    must((all as any).board.open === 13 && !(all as any).board.mine && !calls.slice(-3).includes('get_me'), 'con "todas" debía incluir las de otras personas');
+    const bad = await buildBoard(plane, 'cun360', true, today);
+    must('error' in bad && /proyecto sin acceso/.test(bad.error), `un error de Plane debe decirse: ${JSON.stringify(bad)}`);
+    // Solo se usaron lecturas, y la herramienta: solo dueño, pregunta el proyecto si no se dijo, texto como dato.
+    must(calls.every((c) => ['list_projects', 'list_states', 'list_work_items', 'get_me'].includes(c)) && await plane.read('create_work_item', {}).then(() => false, () => true), 'el tablero solo puede usar consultas');
+    const tools = new ToolsService(bcfg, plane, P.leads, { enabled: false, defaultModel: { label: '' } } as any, { enabled: false } as any, usage, { enabled: false, canGenerate: false } as any, { visible: () => [], list: () => [] } as any, {} as any, P.actions, P.approvals);
+    must(/no existe/.test((await tools.run('tablero_tareas', '{"proyecto":"comercial"}', false)).text), 'un visitante no puede ver el tablero');
+    const ask = await tools.run('tablero_tareas', '{}', true);
+    must(!ask.panel && /Pregúntale cuál/.test(ask.text) && /Comercial V1 \(COMERCIAL\)/.test(ask.text) && ask.untrusted === true, `sin proyecto: ${ask.text.slice(0, 200)}`);
+    const tb = await tools.run('tablero_tareas', '{"proyecto":"comercial"}', true);
+    must((tb.panel as any)?.kind === 'board' && /mis tareas/.test((tb.panel as any).title) && /Atrasadas: 1 · vencen hoy: 1/.test(tb.text) && /Informe mensual \(atrasada desde 2026-11-18/.test(tb.text) && /<<<DATOS/.test(tb.text) && tb.untrusted === true, `tablero por voz: ${tb.text.slice(0, 300)}`);
+    planeFetch = undefined; Object.assign(process.env, { PLANE_MCP_URL: '', PLANE_API_KEY: '' });
+    return 'sin proyecto pregunta; solo mis tareas (o todas); atrasadas y de hoy primero; canceladas fuera; error de Plane dicho; solo consultas; solo dueño';
   });
 
   rmSync(dir, { recursive: true, force: true });

@@ -113,6 +113,8 @@ export class ConfigService {
   /** Mercados de prediccion (Polymarket), solo consulta y solo modo dueño. Apagado salvo POLYMARKET=1. */
   readonly polymarket: boolean;
   readonly polymarketTopics: string[];
+  /** Proyecto de Plane que abre el tablero cuando Javier no dice cual (nombre o identificador). */
+  readonly planeBoardProject: string;
   readonly musicDefaultQuery: string;
   readonly musicVolume: number;
   readonly musicDailySearches: number;
@@ -301,6 +303,7 @@ export class ConfigService {
     this.newsUrl = /^https:\/\/[^\s]+$/.test(str('NOTICIAS_URL')) ? str('NOTICIAS_URL') : '';
     this.newsHour = Math.min(23, int('NOTICIAS_HORA', 6, 0));
     this.newsDomains = str('NOTICIAS_DOMINIOS', 'theguardian.com,technologyreview.com,arstechnica.com,theverge.com,techcrunch.com,xataka.com').toLowerCase().split(',').map((d) => d.trim().replace(/^www\./, '')).filter((d) => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d));
+    this.planeBoardProject = str('PLANE_TABLERO_PROYECTO');
     this.polymarket = str('POLYMARKET', '0') === '1';
     this.polymarketTopics = str('POLYMARKET_TEMAS', 'ai,tech,crypto,economy,politics,geopolitics').toLowerCase().split(',').map((t) => t.trim()).filter((t) => /^[a-z0-9-]{2,40}$/.test(t)).slice(0, 8);
     const teslaOn = str('TESLA', '1') !== '0';
