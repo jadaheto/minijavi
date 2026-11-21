@@ -80,11 +80,19 @@ let coverFor = '';
 function setCover(track) {
   const bg = $('cover-bg'), art = $('cover-art'), img = art.querySelector('img'), url = track?.image || '';
   art.hidden = !url; document.body.classList.toggle('cover', !!url);
-  if (!url) { coverFor = ''; bg.classList.remove('on'); return; }
+  if (!url) { coverFor = ''; bg.classList.remove('on'); for (const l of bg.querySelectorAll('.cover-blur')) l.classList.remove('on'); return; }
   img.alt = `Carátula de ${track.album || track.title}`; art.href = track.url || 'https://open.spotify.com/'; art.title = 'Abrir en Spotify';
   if (coverFor === url) return;
   coverFor = url;
-  const paint = (ok) => { if (coverFor !== url) return; const c = ok ? imageColor(img) : null; bg.style.backgroundColor = c ? `rgb(${c.join(',')})` : '#191414'; bg.classList.add('on'); }; // sin poder leerla: el color de Spotify
+  const paint = (ok) => {
+    if (coverFor !== url) return;
+    const c = ok ? imageColor(img) : null; bg.style.backgroundColor = c ? `rgb(${c.join(',')})` : '#191414'; // debajo, su color (y el de Spotify si no se pudo leer)
+    // Encima, la caratula desenfocada: se pinta en la capa que esta oculta y se funde con la anterior.
+    const [a, b] = bg.querySelectorAll('.cover-blur'), next = a.classList.contains('on') ? b : a, prev = next === a ? b : a;
+    if (ok && /^https:\/\/[a-z0-9.-]+\/[\w\-./]+$/i.test(url)) { next.style.backgroundImage = `url("${url}")`; next.classList.add('on'); }
+    prev.classList.remove('on');
+    bg.classList.add('on');
+  };
   img.onload = () => paint(true); img.onerror = () => paint(false);
   img.src = url;
 }
@@ -100,16 +108,22 @@ function onMusic(msg) {
 // Taller de programacion (modo dueño): mientras Claude Code trabaja, el fondo es un editor, las gafas reflejan el
 // codigo y arriba se ve en que va. Los fondos que pide una respuesta mandan mientras el avatar habla.
 let work = null;
-// Fondo de reposo: la actividad de la suspension, el editor del taller o el que pidan las noticias en pantalla (bandera).
-let newsScene = null;
-const restScene = () => (activity ? ACTIVITIES[activity].scene : work ? 'codigo' : news.active && newsScene ? newsScene : markets.active ? 'mercado' : null);
+// Fondo de reposo: la actividad de la suspension, el editor del taller o el del panel que este en pantalla. Cada panel
+// tiene el suyo (noticias: bandera o red neuronal; mercados y dolar: pantalla de bolsa; Tesla y trayecto: carretera;
+// cargadores y Tesla cargando: energia; tablero, servicios y consumo: los suyos). La musica de YouTube lleva ondas; la de
+// Spotify, su caratula desenfocada (otra capa). Las imagenes generadas y los bocetos no llevan fondo.
+let newsScene = null, sceneHold = 0;
+const DATA_SCENES = { finance: 'mercado', status: 'radar', usage: 'flujo', board: 'tablero', route: 'carretera', chargers: 'energia' };
+const restScene = () => (activity ? ACTIVITIES[activity].scene : work ? 'codigo'
+  : news.active ? newsScene || 'neuronal' : markets.active ? 'mercado' : tesla.active ? (tesla.charging ? 'energia' : 'carretera')
+  : dataPanel.active ? DATA_SCENES[dataPanel.kind] || null : music.active && music.source === 'youtube' ? 'ondas' : null);
 // Modo suspension: el avatar deja de responder (sigue oyendo solo su nombre) y se entretiene con una actividad que va
 // rotando. `dormant`: la suspension ya vencio en el servidor; el microfono no se envia y solo despierta con un toque.
 const ACTIVITIES = {
   juego: { scene: 'pong', label: '🏓 Jugando ping-pong' },
   dormir: { scene: 'noche', label: '😴 Durmiendo', emoji: ['💤'], every: 1.5 },
   leer: { scene: 'codigo', label: '📖 Leyendo código' },
-  musica: { scene: 'ecualizador', label: '🎧 Oyendo música', emoji: ['🎵', '🎶'], every: 0.9 },
+  musica: { scene: 'ondas', label: '🎧 Oyendo música', emoji: ['🎵', '🎶'], every: 0.9 },
 };
 let suspended = false, dormant = false, wakeWord = 'Javi', activity = null, actUntil = 0, actQueue = [], floatAt = 0, startleAt = 0, awayNotice = '';
 function setActivity(name) {
@@ -293,7 +307,7 @@ function onMessage(msg) {
     case 'reaction': // gesto del avatar + emojis
       avatar.react(msg.name); emojiBurst($('fx'), msg.name); break;
     case 'scene':
-      backdrop.show(msg.name); break;
+      sceneHold = performance.now() + 6000; backdrop.show(msg.name); break; // fondo pedido por la respuesta: manda mientras se dice
     case 'card':
       showCard(msg); break;
     case 'demo': // demostracion en vivo: el avatar esta haciendo de asistente de otro negocio
@@ -394,7 +408,9 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   const playing = !!player && player.active;
   if (wasPlaying !== playing) { wasPlaying = playing; socket?.send({ type: 'playback', playing }); } // el servidor sabe cuando termina de sonar
-  if (state === 'speaking' && !playing) { lips.reset(); setState(restState()); if (state === 'away') setSub('sub-avatar', ''); setTimeout(() => { if (state !== 'speaking') backdrop.show(restScene()); }, 2500); }
+  if (state === 'speaking' && !playing) { lips.reset(); setState(restState()); if (state === 'away') setSub('sub-avatar', ''); sceneHold = now + 2500; } // el fondo que pidio la respuesta se queda un momento antes de volver al de reposo
+  // En reposo, el fondo sigue a lo que haya en pantalla: aparece con el panel y se va cuando este se cierra (solo o a mano).
+  if ((state === 'listening' || state === 'idle' || state === 'away') && now > sceneHold) { const want = restScene(); if (backdrop.current !== want) backdrop.show(want); }
   const t = playing ? player.time() : -1;
   const w = lips.update(state === 'speaking' ? t : -1, dt);
   for (const v of VISEMES) avatar.setMorph(v, Math.max(w[v], avatar.exprMouth[v] || 0));

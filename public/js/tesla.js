@@ -36,7 +36,7 @@ const TEMPLATE = `
   <footer class="tsl-foot" data-sec="todo"></footer>`;
 
 export function createTeslaPanel(box) {
-  let timer = 0, raf = 0;
+  let timer = 0, raf = 0, charging = false;
   const $ = (s) => box.querySelector(s);
   const hide = () => { clearTimeout(timer); cancelAnimationFrame(raf); box.hidden = true; document.body.classList.remove('tesla'); };
   box.addEventListener('click', hide);
@@ -50,7 +50,7 @@ export function createTeslaPanel(box) {
   function item(parent, text, state) { const li = document.createElement('li'); li.textContent = text; li.dataset.state = state; parent.append(li); }
 
   function show(d) {
-    cancelAnimationFrame(raf); clearTimeout(timer);
+    cancelAnimationFrame(raf); clearTimeout(timer); charging = d.charging === 'Charging';
     box.innerHTML = TEMPLATE; // plantilla fija, sin datos; los valores se ponen abajo con textContent
     box.dataset.focus = d.focus || 'todo';
     $('.tsl-name').textContent = d.name || 'Tesla';
@@ -113,5 +113,5 @@ export function createTeslaPanel(box) {
     box.classList.remove('in'); void box.offsetWidth; box.classList.add('in'); // reinicia la animacion de entrada
     timer = setTimeout(hide, SHOW_MS);
   }
-  return { show, hide, get active() { return !box.hidden; } };
+  return { show, hide, get active() { return !box.hidden; }, /** Esta cargando (para el fondo). */ get charging() { return charging; } };
 }

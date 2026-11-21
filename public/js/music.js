@@ -159,5 +159,7 @@ export function createMusic(box, onChange, { getToken, onCover } = {}) {
     /** Baja la musica mientras alguien habla (el avatar o la persona) y la devuelve a su volumen despues. */
     duck(on) { if (on !== ducked) { ducked = on; if (queue.length) applyVolume(); } },
     get active() { return queue.length > 0; },
+    /** 'spotify' | 'youtube' | '' (para elegir el fondo). */
+    get source() { return source; },
   };
 }

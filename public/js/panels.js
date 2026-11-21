@@ -177,5 +177,7 @@ export function createDataPanel(box) {
     },
     hide,
     get active() { return !box.hidden; },
+    /** Que panel esta en pantalla (finance, status, usage, board, route, chargers). */
+    get kind() { return box.hidden ? '' : box.dataset.kind || ''; },
   };
 }

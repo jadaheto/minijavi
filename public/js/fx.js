@@ -38,7 +38,7 @@ export function floatEmoji(layer, set) {
   layer.appendChild(el);
 }
 
-/** Fondo animado detras del avatar. show('neuronal' | 'colombia' | 'mercado' | 'estrellas' | 'atardecer' | 'soleado' | 'nublado' | 'lluvia' | 'tormenta' | 'codigo' | null). */
+/** Fondo animado detras del avatar. show('neuronal' | 'colombia' | 'mercado' | 'carretera' | 'energia' | 'tablero' | 'radar' | 'flujo' | 'ondas' | 'estrellas' | 'atardecer' | 'soleado' | 'nublado' | 'lluvia' | 'tormenta' | 'codigo' | null). */
 export function createBackdrop(canvas) {
   const ctx = canvas.getContext('2d');
   let current = null, timer = null, W = 0, H = 0, size = 18, stars = [], t = 0, drops = [], clouds = [], flash = 0, nodes = [], pulses = [], series = [];
@@ -235,6 +235,85 @@ export function createBackdrop(canvas) {
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#fdf3c4'; ctx.beginPath(); ctx.arc(mx, my, r, 0, 6.283); ctx.fill();
     ctx.fillStyle = '#0a1024'; ctx.beginPath(); ctx.arc(mx + r * 0.42, my - r * 0.18, r * 0.86, 0, 6.283); ctx.fill(); // media luna
+  };
+  // ---- Fondos de los paneles (pedidos por Javier el 2026-11-20). Todos van apagados de color: lo de adelante se debe leer. ----
+  const rr = (x, y, w, h, r) => { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); };
+  let cards = [], streaks = [], blips = [];
+  // Carretera de noche en perspectiva, con las lineas pasando (Tesla y trayecto).
+  draw.carretera = () => {
+    t += 1;
+    const hy = H * 0.5, cx = W * 0.5;
+    const skyG = ctx.createLinearGradient(0, 0, 0, hy); skyG.addColorStop(0, '#05070f'); skyG.addColorStop(1, '#141c3a'); ctx.fillStyle = skyG; ctx.fillRect(0, 0, W, hy);
+    for (const st of stars.slice(0, 70)) { ctx.fillStyle = `rgba(210, 225, 255, ${0.25 + 0.3 * Math.abs(Math.sin(t * 0.03 + st.z * 40))})`; ctx.fillRect((st.x * 0.5 + 0.5) * W, (st.y * 0.5 + 0.5) * hy * 0.9, size * 0.07, size * 0.07); }
+    const glow = ctx.createRadialGradient(cx, hy, 0, cx, hy, W * 0.42); glow.addColorStop(0, 'rgba(110, 150, 255, .42)'); glow.addColorStop(1, 'rgba(90, 140, 255, 0)'); ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+    const ground = ctx.createLinearGradient(0, hy, 0, H); ground.addColorStop(0, '#080b14'); ground.addColorStop(1, '#04060a'); ctx.fillStyle = ground; ctx.fillRect(0, hy, W, H - hy);
+    ctx.fillStyle = '#171d30'; ctx.beginPath(); ctx.moveTo(cx - W * 0.012, hy); ctx.lineTo(cx + W * 0.012, hy); ctx.lineTo(W * 1.25, H); ctx.lineTo(-W * 0.25, H); ctx.closePath(); ctx.fill();
+    const edge = (side) => { ctx.strokeStyle = 'rgba(210, 222, 255, .38)'; ctx.lineWidth = size * 0.12; ctx.beginPath(); ctx.moveTo(cx + side * W * 0.012, hy); ctx.lineTo(cx + side * W * 0.75, H); ctx.stroke(); };
+    edge(-1); edge(1);
+    for (let k = 0; k < 14; k++) { // rayas del centro y luces de los bordes: nacen en el horizonte y se agrandan al acercarse
+      const z = ((k + (t * 0.045) % 1) / 14), p = z * z * z, y = hy + (H - hy) * p, w = W * 0.003 + W * 0.011 * p, len = (H - hy) * 0.11 * p + 2;
+      ctx.fillStyle = `rgba(245, 247, 255, ${0.15 + 0.6 * p})`; ctx.fillRect(cx - w / 2, y, w, len);
+      for (const side of [-1, 1]) { ctx.fillStyle = `rgba(255, 190, 90, ${0.2 + 0.6 * p})`; ctx.beginPath(); ctx.arc(cx + side * (W * 0.014 + W * 0.74 * p), y, size * (0.04 + 0.22 * p), 0, 6.283); ctx.fill(); }
+    }
+  };
+  // Energia: pulsos que suben por lineas verticales (cargadores, y el Tesla cuando esta cargando).
+  draw.energia = () => {
+    t += 1; sky('#06101a', '#040810');
+    const n = Math.max(8, Math.round(W / (size * 4.2))), gap = W / n;
+    for (let i = 0; i < n; i++) {
+      const x = gap * (i + 0.5), speed = 2.2 + ((i * 7) % 5) * 0.9, tail = H * 0.22, y = H + tail - ((t * speed * (size / 18) + i * 137) % (H + tail * 2));
+      ctx.strokeStyle = 'rgba(80, 220, 170, .07)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+      const g = ctx.createLinearGradient(0, y, 0, y + tail); g.addColorStop(0, i % 3 ? 'rgba(80, 230, 170, .85)' : 'rgba(120, 200, 255, .85)'); g.addColorStop(1, 'rgba(80, 230, 170, 0)');
+      ctx.strokeStyle = g; ctx.lineWidth = size * 0.11; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + tail); ctx.stroke();
+      ctx.fillStyle = 'rgba(220, 255, 240, .9)'; ctx.shadowColor = '#50e6aa'; ctx.shadowBlur = size * 0.9; ctx.beginPath(); ctx.arc(x, y, size * 0.13, 0, 6.283); ctx.fill(); ctx.shadowBlur = 0;
+    }
+    const vg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, W * 0.7); vg.addColorStop(0, 'rgba(0, 0, 0, 0)'); vg.addColorStop(1, 'rgba(0, 0, 0, .55)'); ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+  };
+  // Tablero: tarjetas tenues que suben despacio por columnas (tareas de Plane).
+  draw.tablero = () => {
+    t += 1; sky('#0b1020', '#070a14');
+    const cols = 6, cw = W / cols;
+    if (cards.length !== 24) cards = Array.from({ length: 24 }, (_, i) => ({ c: i % cols, y: Math.random() * 1.4, h: 0.07 + Math.random() * 0.08, v: 0.0007 + Math.random() * 0.0009, hue: ['#8b93a7', '#f59e0b', '#46a758', '#5aa8ff'][i % 4] }));
+    for (const k of cards) {
+      k.y -= k.v; if (k.y < -0.25) { k.y = 1.1 + Math.random() * 0.2; k.h = 0.07 + Math.random() * 0.08; }
+      const x = k.c * cw + cw * 0.12, y = k.y * H, w = cw * 0.76, h = k.h * H;
+      ctx.fillStyle = 'rgba(255, 255, 255, .045)'; rr(x, y, w, h, size * 0.5); ctx.fill();
+      ctx.fillStyle = k.hue + '55'; rr(x, y, size * 0.22, h, size * 0.11); ctx.fill();
+      ctx.fillStyle = 'rgba(255, 255, 255, .09)'; rr(x + size * 0.7, y + h * 0.26, w * 0.62, size * 0.28, size * 0.14); ctx.fill(); rr(x + size * 0.7, y + h * 0.58, w * 0.4, size * 0.22, size * 0.11); ctx.fill();
+    }
+  };
+  // Radar: un barrido que gira y enciende puntos al pasar (estado de los servicios).
+  draw.radar = () => {
+    t += 1; sky('#06120f', '#04090b');
+    const cx = W * 0.3, cy = H * 0.52, R = Math.min(W, H) * 0.62, a = (t * 0.028) % 6.283;
+    if (blips.length !== 9) blips = Array.from({ length: 9 }, () => ({ a: Math.random() * 6.283, r: 0.2 + Math.random() * 0.75 }));
+    ctx.strokeStyle = 'rgba(80, 230, 170, .13)'; ctx.lineWidth = 1;
+    for (let i = 1; i <= 4; i++) { ctx.beginPath(); ctx.arc(cx, cy, (R * i) / 4, 0, 6.283); ctx.stroke(); }
+    for (let i = 0; i < 6; i++) { ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos((i * Math.PI) / 3) * R, cy + Math.sin((i * Math.PI) / 3) * R); ctx.stroke(); }
+    for (let i = 0; i < 26; i++) { ctx.fillStyle = `rgba(80, 230, 170, ${0.2 * (1 - i / 26)})`; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, a - i * 0.035 - 0.035, a - i * 0.035); ctx.closePath(); ctx.fill(); }
+    for (const b of blips) { const d = (a - b.a + 6.283 * 2) % 6.283, glow = Math.max(0, 1 - d / 2.4); if (glow <= 0) continue; ctx.fillStyle = `rgba(150, 255, 210, ${glow})`; ctx.shadowColor = '#50e6aa'; ctx.shadowBlur = size * glow; ctx.beginPath(); ctx.arc(cx + Math.cos(b.a) * R * b.r, cy + Math.sin(b.a) * R * b.r, size * 0.16, 0, 6.283); ctx.fill(); ctx.shadowBlur = 0; }
+  };
+  // Flujo: trazos de luz que cruzan de izquierda a derecha, como datos pasando (consumo).
+  draw.flujo = () => {
+    t += 1; ctx.fillStyle = 'rgba(7, 10, 20, .28)'; ctx.fillRect(0, 0, W, H); // deja una estela corta
+    if (streaks.length !== 46) streaks = Array.from({ length: 46 }, (_, i) => ({ y: Math.random(), x: Math.random() * 1.4 - 0.2, v: 0.002 + Math.random() * 0.006, l: 0.05 + Math.random() * 0.16, hue: i % 5 ? '111, 178, 255' : '125, 255, 192' }));
+    for (const k of streaks) {
+      k.x += k.v; if (k.x - k.l > 1.05) { k.x = -0.05; k.y = Math.random(); }
+      const x1 = (k.x - k.l) * W, x2 = k.x * W, y = k.y * H, g = ctx.createLinearGradient(x1, 0, x2, 0); g.addColorStop(0, `rgba(${k.hue}, 0)`); g.addColorStop(1, `rgba(${k.hue}, .55)`);
+      ctx.strokeStyle = g; ctx.lineWidth = Math.max(1, size * 0.07); ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke();
+    }
+  };
+  // Ondas: capas de ondas suaves que se cruzan (musica; reemplaza al ecualizador de barras, que a Javier no le gusto).
+  draw.ondas = () => {
+    t += 0.02; sky('#120b26', '#070610');
+    const layers = [['#7a5cff', 0.62, 0.11, 1.0, 0.9], ['#ff7ad9', 0.7, 0.085, 1.5, -1.3], ['#5aa8ff', 0.78, 0.07, 2.1, 1.7], ['#34d1c0', 0.86, 0.05, 2.9, -2.2]];
+    for (const [color, base, amp, freq, speed] of layers) {
+      ctx.beginPath(); ctx.moveTo(0, H);
+      for (let x = 0; x <= W; x += Math.max(6, size / 2)) { const k = x / W; ctx.lineTo(x, H * (base + amp * Math.sin(k * 6.283 * freq + t * speed) + amp * 0.4 * Math.sin(k * 6.283 * freq * 2.3 - t * speed * 1.6))); }
+      ctx.lineTo(W, H); ctx.closePath();
+      const g = ctx.createLinearGradient(0, H * (base - amp), 0, H); g.addColorStop(0, color + '66'); g.addColorStop(1, color + '08'); ctx.fillStyle = g; ctx.fill();
+      ctx.strokeStyle = color + 'aa'; ctx.lineWidth = Math.max(1, size * 0.07); ctx.stroke();
+    }
   };
   draw.ecualizador = () => { // barras que suben y bajan, para cuando oye musica
     t += 0.09; sky('#1a1033', '#3b1d5e');
