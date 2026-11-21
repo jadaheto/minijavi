@@ -81,6 +81,9 @@ interface Session {
   suspendedAt: number;
   waking: boolean;       // acaba de despertar: la frase en curso empieza por la palabra para despertar
   canSuspend: boolean;   // las llamadas de WhatsApp no se suspenden
+  location?: { lat: number; lng: number; at: number }; // ubicacion que entrego el navegador (solo se pide en sesiones del dueño)
+  locating?: ((p?: { lat: number; lng: number }) => void)[];
+  places?: { chargers: any[]; from?: any }; // cargadores mostrados por ultima vez
   marketList?: { items: any[]; title: string }; // mercados de prediccion mostrados por ultima vez (para abrir uno por su numero)
   news?: { index: number; part?: number }; // noticia que se esta viendo (0 = la lista) y parte de la lectura completa
   car?: boolean;         // modo carro: solo atiende las frases que traen su nombre (o las que siguen a una respuesta)
@@ -364,6 +367,14 @@ export class SessionGateway implements OnGatewayConnection {
       if (msg?.type === 'gallery' && s.gallery && msg.hide === true) { Object.assign(s.gallery, { title: '', kind: '', items: [], index: 0 }); return; } // toco al avatar: se quitan las imagenes
       if (msg?.type === 'gallery' && s.gallery) { if (Number.isInteger(msg.index) && msg.index >= 0 && msg.index < s.gallery.items.length) s.gallery.index = msg.index; return; }
       if (msg?.type === 'news') { if (Number.isInteger(msg.index) && msg.index >= 0 && msg.index <= 20) (s.news ??= { index: 0 }).index = msg.index; return; } // toco una noticia en la pantalla
+      // Respuesta del navegador a una peticion de ubicacion (o que no la dio). Solo cuenta en sesiones del dueño.
+      if (msg?.type === 'location') {
+        const lat = Number(msg.lat), lng = Number(msg.lng), ok = s.owner && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0);
+        if (ok) s.location = { lat, lng, at: Date.now() };
+        const waiting = s.locating ?? []; s.locating = [];
+        for (const done of waiting) done(ok ? { lat, lng } : undefined);
+        return;
+      }
       if (msg?.type === 'wake') { if (s.suspended) { this.wake(client, s); this.greetAwake(client, s); } return; } // toque en la pantalla
       if (msg?.type === 'playback' && !msg.playing) s.lastPlayEnd = Date.now();
       if (msg?.type === 'playback' && !(s.turn && !msg.playing)) s.clientPlaying = !!msg.playing; // mientras el turno sigue generando, se considera hablando
@@ -541,6 +552,18 @@ export class SessionGateway implements OnGatewayConnection {
     const list = wordsOf(heard);
     if (!list.length || !spoken.size) return false;
     return list.filter((w) => spoken.has(w)).length / list.length >= 0.7;
+  }
+
+  /** Pide la ubicacion al navegador y espera hasta 8 s. Una ubicacion de hace menos de 2 minutos se reutiliza. */
+  private locate(client: WebSocket, s: Session): Promise<{ lat: number; lng: number } | undefined> {
+    if (s.location && Date.now() - s.location.at < 120_000) return Promise.resolve({ lat: s.location.lat, lng: s.location.lng });
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = (p?: { lat: number; lng: number }) => { if (settled) return; settled = true; clearTimeout(timer); resolve(p); };
+      const timer = setTimeout(() => done(undefined), 8000);
+      (s.locating ??= []).push(done);
+      this.send(client, { type: 'locate' });
+    });
   }
 
   // ---------- suspension ----------
@@ -738,7 +761,7 @@ export class SessionGateway implements OnGatewayConnection {
             result = 'NO se ejecutó. Por seguridad, esta acción no corre en la misma respuesta en que leíste datos de terceros ni en un aviso automático. Dile a Javier qué ibas a hacer y pídele que te lo confirme; si dice que sí, vuelve a llamar la herramienta.';
           }
           else {
-            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, news: (s.news ??= { index: 0 }), marketList: (s.marketList ??= { items: [], title: '' }), demo: s.demo, source: s.callerPhone ? 'llamada' : 'voz',
+            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, news: (s.news ??= { index: 0 }), marketList: (s.marketList ??= { items: [], title: '' }), places: (s.places ??= { chargers: [] }), locate: s.owner && !s.callerPhone ? () => this.locate(client, s) : undefined, demo: s.demo, source: s.callerPhone ? 'llamada' : 'voz',
               notify: (note) => { if (s.ready) { s.notes.push(note); this.pumpNotes(client, s); } } });
             if (c.name === 'buscar_imagenes' && out.gallery) s.imageSearches++;
             if (out.gallery) this.sendGallery(client, s, out.gallery);

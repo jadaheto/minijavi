@@ -37,27 +37,86 @@ minijavi es la versión con IA de Javier Hermosilla, desarrollador de Sucre, Col
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/img/matrix.jpg" alt="Fondo de lluvia de código cuando habla de programación"></td>
+    <td width="50%"><img src="docs/img/neuronal.jpg" alt="Fondo de red neuronal cuando habla de programación o inteligencia artificial"></td>
     <td width="50%"><img src="docs/img/lluvia.jpg" alt="Fondo de lluvia según el clima consultado"></td>
   </tr>
   <tr>
-    <td align="center"><sub><b>Reacciona a lo que dice.</b> Si habla de programación o IA, llueve código.</sub></td>
-    <td align="center"><sub><b>El fondo sale del dato.</b> Pregúntale por el clima y lo verás detrás.</sub></td>
+    <td align="center"><sub><b>Reacciona a lo que dice.</b> Si habla de programación o IA, aparece una red neuronal.<br>Di: <b>«¿Qué es la inteligencia artificial?»</b></sub></td>
+    <td align="center"><sub><b>El fondo sale del dato.</b> El clima consultado se ve detrás.<br>Di: <b>«¿Cómo está el clima?»</b></sub></td>
   </tr>
   <tr>
     <td><img src="docs/img/musica.jpg" alt="El avatar suspendido, con audífonos y un ecualizador de fondo"></td>
     <td><img src="docs/img/juego.jpg" alt="El avatar suspendido siguiendo con la mirada una partida de pong"></td>
   </tr>
   <tr>
-    <td align="center"><sub><b>«Silénciate».</b> Deja de responder y se pone los audífonos…</sub></td>
-    <td align="center"><sub>…o juega solo hasta que alguien diga <b>«Javi»</b>.</sub></td>
+    <td align="center"><sub>Deja de responder y se pone los audífonos…<br>Di: <b>«Silénciate»</b></sub></td>
+    <td align="center"><sub>…o juega solo hasta que lo llamen.<br>Di: <b>«Javi»</b></sub></td>
   </tr>
 </table>
 
 <p align="center">
   <img src="docs/img/taller.jpg" alt="El avatar con el código que escribe Claude Code reflejado en las gafas" width="860"><br>
-  <sub><b>Taller de programación.</b> Javier encarga un sitio por voz, Claude Code lo construye y el código se refleja en las gafas.</sub>
+  <sub><b>Taller de programación.</b> Javier encarga un sitio por voz, Claude Code lo construye y el código se refleja en las gafas.<br>Di: <b>«Hazme una landing para una cafetería»</b> (primero muestra tres propuestas para elegir)</sub>
 </p>
+
+## Paneles por voz
+
+Se le pide algo y aparece un panel animado al lado del avatar. Debajo de cada imagen está lo que hay que decir.
+Los marcados con 🔒 solo funcionan en **modo dueño**. Las capturas usan datos de ejemplo o públicos.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/img/dolar-bitcoin.jpg" alt="Panel con la TRM y Bitcoin, cada uno con su gráfica"></td>
+    <td width="50%"><img src="docs/img/noticias.jpg" alt="Lista numerada de noticias de inteligencia artificial"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Dólar y Bitcoin.</b> TRM oficial y Bitcoin con su gráfica.<br>Di: <b>«¿Cómo va el dólar?»</b> · <b>«¿Y Bitcoin?»</b></sub></td>
+    <td align="center"><sub><b>Noticias de IA.</b> Los titulares del día, numerados.<br>Di: <b>«Dame las noticias de inteligencia artificial»</b></sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/img/noticia-abierta.jpg" alt="Una noticia abierta con su resumen y un código QR"></td>
+    <td><img src="docs/img/tesla.jpg" alt="Panel del Tesla con la batería, la carga, los seguros y la temperatura"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Una noticia, con su QR.</b> La resume, la lee o la lee completa por partes (🔒).<br>Di: <b>«Ve al artículo 2»</b> · <b>«Léeme la noticia»</b> · <b>«Léemela completa»</b></sub></td>
+    <td align="center"><sub>🔒 <b>Tesla.</b> Batería, carga, seguros y clima. Solo consulta: no envía órdenes al carro.<br>Di: <b>«¿Cuánta batería tiene el carro?»</b> · <b>«¿Quedó con seguro?»</b></sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/img/trayecto.jpg" alt="Mapa con la ruta, el tiempo de trayecto y la hora de llegada"></td>
+    <td><img src="docs/img/cargadores.jpg" alt="Mapa con cargadores numerados y su potencia"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>🔒 <b>Trayecto.</b> Tiempo en carro con el tráfico de ahora, distancia y hora de llegada.<br>Di: <b>«¿Cuánto me demoro a Montería?»</b></sub></td>
+    <td align="center"><sub>🔒 <b>Cargadores.</b> Los públicos más cercanos, de cualquier operador.<br>Di: <b>«¿Dónde puedo cargar?»</b> · <b>«Llévame al 1»</b></sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/img/tablero.jpg" alt="Tablero de tareas por columnas con lo atrasado resaltado"></td>
+    <td><img src="docs/img/mercados.jpg" alt="Lista de mercados de predicción con medidores y tendencias"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>🔒 <b>Tablero de Plane.</b> Mis tareas por estado, con lo atrasado primero.<br>Di: <b>«Muéstrame mis tareas de Comercial»</b></sub></td>
+    <td align="center"><sub>🔒 <b>Mercados de predicción.</b> Probabilidades de Polymarket, solo consulta.<br>Di: <b>«¿Qué se está moviendo en Polymarket?»</b></sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/img/mercado-abierto.jpg" alt="Un mercado abierto con su medidor, la gráfica de evolución y las opciones"></td>
+    <td><img src="docs/img/servicios.jpg" alt="Semáforo con el estado de cada servicio"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>🔒 <b>Un mercado en detalle.</b> Evolución de la opción que va adelante.<br>Di: <b>«Abre el mercado 2»</b></sub></td>
+    <td align="center"><sub>🔒 <b>Estado de los servicios.</b> Lo que falla sale primero.<br>Di: <b>«¿Está todo funcionando?»</b></sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/img/consumo.jpg" alt="Barras de consumo de los últimos siete días"></td>
+    <td align="center"><sub><b>Y sin panel:</b><br><br><b>«Ponme una de Joe Arroyo»</b> — música por Spotify (o YouTube), con la carátula 🔒<br><br><b>«Créame una imagen de…»</b> — tres versiones para elegir y pedir cambios 🔒<br><br><b>«¿Qué hora es?»</b> · <b>«¿Cómo está el clima?»</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>🔒 <b>Consumo.</b> Conversaciones, escucha, modelo y voz por día.<br>Di: <b>«¿Cuánto he consumido?»</b></sub></td>
+    <td></td>
+  </tr>
+</table>
+
+**Modo carro.** Abriendo el avatar con `?carro=1` (por ejemplo en el navegador de un Tesla) solo atiende las frases que
+traen su nombre, como un asistente de voz: **«Javi, ¿cuánto me demoro a casa?»**. Lo demás que se oiga se descarta.
 
 ## Cómo funciona una conversación
 
@@ -92,7 +151,10 @@ flowchart LR
 | 🧾 **Informe y embudo** | Al cerrar cada conversación guarda un resumen y, si hubo interés, lo envía por Telegram. |
 | 🧠 **Base de conocimiento** | Búsqueda en Qdrant con embeddings; lo privado solo lo ve el dueño. |
 | 🛠️ **Taller** | En modo dueño, Claude Code programa sitios por encargo, los revisa y los publica con su código QR. |
-| 🎵 **Música, imágenes y bocetos** | YouTube de fondo, fotos de Unsplash, imágenes generadas y bocetos de portada, todo por voz. |
+| 🎵 **Música, imágenes y bocetos** | Spotify de fondo (YouTube de respaldo), fotos de Unsplash, imágenes generadas en tres versiones con cambios, y bocetos para elegir antes de construir. |
+| 📰 **Noticias de IA** | Titulares del día en pantalla, cada uno con su QR; al dueño le lee la nota completa en español, por partes. |
+| 📊 **Paneles de datos** | Dólar y Bitcoin con gráfica; para el dueño: estado de los servicios, consumo, tablero de Plane y mercados de predicción (solo consulta). |
+| 🚗 **Carro** | Estado del Tesla (solo lectura), tiempo de trayecto con tráfico y cargadores cercanos con mapa. Modo carro: solo responde al oír su nombre. |
 | 😴 **Suspensión** | «Silénciate» lo calla; solo despierta con su nombre o un toque. |
 | 🚨 **Operación** | Vigilancia de proveedores, alertas, respaldo diario y medición de consumo. |
 
@@ -176,7 +238,9 @@ Sin `ELEVENLABS_API_KEY` y `ELEVENLABS_VOICE_ID` el avatar habla con la voz del 
 compatible con OpenAI), `MODELO_CAPAZ` y `MODELO_CAPAZ_KEY`. Nunca se usa con visitantes, y si falla el turno sigue con
 el modelo de siempre. Lo demás se enciende al
 configurar su clave: `OWNER_SECRET` (modo dueño), `DATABASE_URL` (PostgreSQL; sin ella usa SQLite), Telegram,
-WhatsApp, Qdrant, YouTube, Unsplash y el taller.
+WhatsApp, Qdrant, YouTube, Spotify, Unsplash, el taller, Tesla, las noticias (`NOTICIAS_URL`), los mapas
+(`GOOGLE_MAPS_KEY`, que nunca llega al navegador), los cargadores (`OPENCHARGEMAP_API_KEY`) y los mercados de predicción
+(`POLYMARKET=1`).
 
 ## Desplegar en Easypanel
 
@@ -197,6 +261,9 @@ src/
   session/    WebSocket y orquestación de cada turno de voz
   stt/ llm/ tts/   Deepgram · DeepSeek · ElevenLabs
   tools/      herramientas del modelo (clima, dólar, interesados, portafolio, taller…)
+  music/ news/ markets/   Spotify y YouTube · noticias de IA · mercados de predicción
+  tesla/ maps/ panels/    Tesla (solo lectura) · trayectos y cargadores · datos de los paneles
+  mcp/        Plane (solo consulta) y su tablero
   calls/      webhook de WhatsApp y llamadas por WebRTC
   whatsapp/   mensajes de WhatsApp (chat, medios, plantilla)
   leads/ visits/ portfolio/   interesados, embudo e informes, casos reales

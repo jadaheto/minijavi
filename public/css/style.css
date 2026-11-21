@@ -403,3 +403,20 @@ body.panel:has(.pnl[data-kind="board"]):not(.showing) #stage { transform: transl
 .pnl-col[data-group="completed"] .pnl-task-name { color: #aab4c4; text-decoration: line-through; text-decoration-color: rgba(255, 255, 255, .25); }
 @media (max-aspect-ratio: 4/5) { .pnl[data-kind="board"] { width: min(820px, 96vw); } .pnl-cols { grid-auto-flow: row; } body.panel:has(.pnl[data-kind="board"]):not(.showing) #stage { transform: translateY(34vh) scale(.42); } }
 @media (prefers-reduced-motion: reduce) { .pnl-col, .pnl-task { opacity: 1; animation: none; } .pnl-track i { animation: none; } }
+
+/* Trayecto y cargadores: imagen del mapa (la pide el servidor) y datos. */
+.pnl-route, .pnl-chargers { display: grid; gap: 10px; }
+.pnl-map { margin: 0; border-radius: 16px; overflow: hidden; aspect-ratio: 16 / 10; background: rgba(255, 255, 255, .05); opacity: 0; transform: scale(.97); transition: opacity .6s ease, transform .6s ease; }
+.pnl-map.ready { opacity: 1; transform: none; }
+.pnl-map img { display: block; width: 100%; height: 100%; object-fit: contain; } /* entera: los puntos del borde no se recortan */
+.pnl-route .pnl-big { gap: 4px; }
+.mkt-chg.flat { color: #9fc8ff; background: rgba(111, 178, 255, .13); }
+.pnl-charger { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; background: rgba(255, 255, 255, .045); opacity: 0; animation: tsl-row .4s ease forwards; }
+.pnl-charger .nws-n { width: 30px; height: 30px; font-size: 15px; border-radius: 10px; background: linear-gradient(140deg, #ffd27a, #f0b429); }
+.pnl-charger.fast .nws-n { background: linear-gradient(140deg, #7dffc0, #34d17f); }
+.pnl-charger-side { flex: none; display: grid; justify-items: end; }
+.pnl-charger-side b { font-size: 14px; font-variant-numeric: tabular-nums; }
+.pnl-charger-side small { font-size: 11px; color: #8f9aac; }
+.pnl[data-kind="chargers"], .pnl[data-kind="route"] { width: min(560px, 46vw); }
+@media (max-aspect-ratio: 4/5) { .pnl[data-kind="chargers"], .pnl[data-kind="route"] { width: min(560px, 94vw); } }
+@media (prefers-reduced-motion: reduce) { .pnl-charger { opacity: 1; animation: none; } .pnl-map { opacity: 1; transform: none; transition: none; } }

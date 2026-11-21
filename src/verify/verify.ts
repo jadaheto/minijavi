@@ -33,13 +33,14 @@ async function main() {
   let imageFetch: ((url: string, init: any) => Response) | undefined; // OpenAI Images y Magnific simulados
   let musicFetch: ((url: string, init: any) => Response) | undefined; // Spotify y YouTube simulados
   let newsFetch: (() => Response | Promise<Response>) | undefined; // webhook de noticias simulado
+  let mapsFetch: ((url: string, init: any) => Response) | undefined; // Google Maps y Open Charge Map simulados
   let planeFetch: ((body: any, init: any) => unknown) | undefined; // MCP de Plane simulado: devuelve el resultado de cada herramienta
   let panelFetch: ((url: string) => Response) | undefined; // datos.gov.co y CoinGecko simulados
   let marketFetch: ((url: string, init: any) => Response) | undefined; // API de mercados simulada
   let teslaFetch: ((url: string, init: any) => Response) | undefined; // Tesla simulado
   let githubFetch: ((url: string, init: any) => Response) | undefined; // GitHub simulado (cada prueba pone el suyo)
   globalThis.fetch = (async (url: any, init?: any) => { sent.push(String(url));
-    if (String(url).includes('api.telegram.org')) { const method = String(url).split('/').pop()!, body = JSON.parse(String(init?.body ?? '{}')); tg.push({ method, body }); return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: tgWebhook } : method === 'getUpdates' ? [] : { message_id: 9000 + tg.length } }), { status: 200 }); } if (githubFetch && String(url).includes('api.github.invalid')) return githubFetch(String(url), init); if (newsFetch && String(url).includes('noticias.invalid')) return newsFetch(); if (planeFetch && String(url).includes('plane.invalid')) { const b = JSON.parse(String(init?.body ?? '{}')); const out = planeFetch(b, init); return new Response(JSON.stringify({ jsonrpc: '2.0', id: b.id, result: { content: [{ type: 'text', text: typeof out === 'string' ? out : JSON.stringify(out) }], isError: typeof out === 'string' } }), { status: 200 }); } if (panelFetch && /datos\.gov\.co|coingecko\.com/.test(String(url))) return panelFetch(String(url)); if (marketFetch && String(url).includes('gamma-api.polymarket.com')) return marketFetch(String(url), init); if (teslaFetch && /tesla\.com/.test(String(url))) return teslaFetch(String(url), init); if (musicFetch && /spotify\.com|googleapis\.com\/youtube/.test(String(url))) return musicFetch(String(url), init); if (imageFetch && /api\.openai\.com\/v1\/images|magnific/.test(String(url))) return imageFetch(String(url), init); if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
+    if (String(url).includes('api.telegram.org')) { const method = String(url).split('/').pop()!, body = JSON.parse(String(init?.body ?? '{}')); tg.push({ method, body }); return new Response(JSON.stringify({ ok: true, result: method === 'getWebhookInfo' ? { url: tgWebhook } : method === 'getUpdates' ? [] : { message_id: 9000 + tg.length } }), { status: 200 }); } if (githubFetch && String(url).includes('api.github.invalid')) return githubFetch(String(url), init); if (newsFetch && String(url).includes('noticias.invalid')) return newsFetch(); if (planeFetch && String(url).includes('plane.invalid')) { const b = JSON.parse(String(init?.body ?? '{}')); const out = planeFetch(b, init); return new Response(JSON.stringify({ jsonrpc: '2.0', id: b.id, result: { content: [{ type: 'text', text: typeof out === 'string' ? out : JSON.stringify(out) }], isError: typeof out === 'string' } }), { status: 200 }); } if (mapsFetch && /googleapis\.com|openchargemap\.io/.test(String(url))) return mapsFetch(String(url), init); if (panelFetch && /datos\.gov\.co|coingecko\.com/.test(String(url))) return panelFetch(String(url)); if (marketFetch && String(url).includes('gamma-api.polymarket.com')) return marketFetch(String(url), init); if (teslaFetch && /tesla\.com/.test(String(url))) return teslaFetch(String(url), init); if (musicFetch && /spotify\.com|googleapis\.com\/youtube/.test(String(url))) return musicFetch(String(url), init); if (imageFetch && /api\.openai\.com\/v1\/images|magnific/.test(String(url))) return imageFetch(String(url), init); if (capableFetch && /modelo-capaz\.invalid|api\.anthropic\.com/.test(String(url))) return capableFetch(String(url), JSON.parse(String(init?.body ?? '{}'))); return new Response(JSON.stringify({ messages: [{ id: 'simulado' }], success: true }), { status: 200, headers: { 'content-type': 'application/json' } }); }) as typeof fetch;
 
   const { ConfigService } = await import('../config/config.service');
   const { DbService } = await import('../db/db.service');
@@ -1443,6 +1444,58 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     must((tb.panel as any)?.kind === 'board' && /mis tareas/.test((tb.panel as any).title) && /Atrasadas: 1 · vencen hoy: 1/.test(tb.text) && /Informe mensual \(atrasada desde 2026-11-18/.test(tb.text) && /<<<DATOS/.test(tb.text) && tb.untrusted === true, `tablero por voz: ${tb.text.slice(0, 300)}`);
     planeFetch = undefined; Object.assign(process.env, { PLANE_MCP_URL: '', PLANE_API_KEY: '' });
     return 'sin proyecto pregunta; solo mis tareas (o todas); atrasadas y de hoy primero; canceladas fuera; error de Plane dicho; solo consultas; solo dueño';
+  });
+
+  await check('Trayecto y cargadores: solo dueño, la clave de Google no sale del servidor, ubicación del navegador o por voz', async () => {
+    const { MapsService, decodePolyline, encodePolyline, shortenPolyline, haversine, validPlace } = await import('../maps/maps.service');
+    const { MapsController } = await import('../maps/maps.controller');
+    // Polilinea: ida y vuelta, y recorte conservando los extremos.
+    const pts: [number, number][] = Array.from({ length: 900 }, (_, i) => [9.3 - i * 0.0006, -75.4 - i * 0.0005]);
+    const enc = encodePolyline(pts), back = decodePolyline(enc), short = shortenPolyline(enc, 1200), sp = decodePolyline(short);
+    must(back.length === 900 && Math.abs(back[899][0] - pts[899][0]) < 1e-5 && short.length <= 1200 && Math.abs(sp[0][0] - 9.3) < 1e-5 && Math.abs(sp.at(-1)![1] - pts[899][1]) < 1e-5 && shortenPolyline('abc') === 'abc', `polilínea: ${back.length} puntos, recortada a ${short.length} caracteres`);
+    must(Math.abs(haversine({ lat: 9.3047, lng: -75.3978 }, { lat: 8.7479, lng: -75.8814 }) - 81.4) < 1.5 && validPlace(9.3, -75.4) && !validPlace(0, 0) && !validPlace(91, 0) && !validPlace('x', 1), 'distancia en línea recta o validación de coordenadas');
+    Object.assign(process.env, { GOOGLE_MAPS_EMBED_KEY: 'clave-google-secreta', GOOGLE_MAPS_MAP_ID: 'mapa123', OPENCHARGEMAP_API_KEY: 'clave-ocm', MAPAS_CONSULTAS_DIA: '9' });
+    const mcfg = new ConfigService(), maps = new MapsService(mcfg, usage), calls: string[] = [];
+    const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(900, 7)]);
+    const poi = (id: number, title: string, lat: number, kw: number, ok: boolean | null = true) => ({ ID: id, AddressInfo: { Title: title, Town: 'Sincelejo', Latitude: lat, Longitude: -75.4 }, OperatorInfo: { Title: 'Operador <b>X</b>' }, UsageType: { Title: 'Public' }, StatusType: ok === null ? null : { IsOperational: ok }, UsageCost: '$1800/kWh', Connections: [{ ConnectionType: { Title: 'CCS (Type 2)' }, PowerKW: kw, Level: { IsFastChargeCapable: kw >= 40 } }] });
+    mapsFetch = (url, init) => {
+      const u = new URL(url);
+      if (u.hostname === 'api.openchargemap.io') { calls.push(`ocm:${u.searchParams.get('distance')}km:${init.headers['X-API-Key']}:${u.searchParams.has('key') ? 'CLAVE-EN-URL' : 'sin-clave-en-url'}`); return new Response(JSON.stringify(u.searchParams.get('distance') === '50' ? [poi(1, 'Lejano', 9.6, 7), poi(2, 'Cercano', 9.31, 50)] : [poi(1, 'Lejano', 9.6, 7), poi(2, 'Cercano', 9.31, 50), poi(3, 'Dañado', 9.305, 150, false), poi(4, 'Medio', 9.4, 22, null), { ID: 5, AddressInfo: { Title: 'Sin coordenadas' } }]), { status: 200 }); }
+      if (u.pathname.endsWith('/geocode/json')) { calls.push(`geo:${u.searchParams.get('address')}`); return new Response(JSON.stringify(/ningún/.test(u.searchParams.get('address')!) ? { status: 'ZERO_RESULTS', results: [] } : { status: 'OK', results: [{ formatted_address: 'Montería, Córdoba, Colombia', geometry: { location: { lat: 8.75, lng: -75.88 } } }] }), { status: 200 }); }
+      if (u.hostname === 'routes.googleapis.com') { const b = JSON.parse(String(init.body)); calls.push(`ruta:${b.routingPreference}:${init.headers['X-Goog-Api-Key']}:${b.origin.location.latLng.latitude}`); return new Response(JSON.stringify({ routes: [{ duration: '8180s', staticDuration: '7800s', distanceMeters: 117600, polyline: { encodedPolyline: enc } }] }), { status: 200 }); }
+      if (u.pathname.endsWith('/staticmap')) { calls.push(`mapa:${u.searchParams.get('map_id')}:${u.searchParams.getAll('markers').length}:${u.searchParams.get('path') ? 'ruta' : 'sin-ruta'}:${url.length < 8000 ? 'cabe' : 'LARGA'}`); return new Response(PNG, { status: 200, headers: { 'content-type': 'image/png' } }); }
+      return new Response('{}', { status: 404 });
+    };
+    const tools = new ToolsService(mcfg, { enabled: false, definitions: async () => [] } as any, P.leads, { enabled: false, defaultModel: { label: '' } } as any, { enabled: false } as any, usage, { enabled: false, canGenerate: false } as any, { visible: () => [], list: () => [] } as any, {} as any, P.actions, P.approvals, undefined, undefined, undefined, undefined, maps);
+    const here = { lat: 9.3047, lng: -75.3978 }; let asked = 0;
+    const ctx: any = { origin: '', places: { chargers: [] }, locate: async () => { asked++; return here; } };
+    must(/no existe/.test((await tools.run('trayecto', '{"destino":"Montería"}', false, ctx)).text) && /no existe/.test((await tools.run('cargadores', '{}', false, ctx)).text) && calls.length === 0, 'trayecto y cargadores son solo del dueño');
+    // Trayecto con la ubicacion del navegador.
+    const r = await tools.run('trayecto', '{"destino":"Montería"}', true, ctx), rp: any = r.panel;
+    must(asked === 1 && rp?.kind === 'route' && rp.minutes === 136 && rp.km === 117.6 && rp.delay === 6 && /^\/mapas\/[a-f0-9]{24}\.png$/.test(rp.map) && /2 horas y 16 minutos/.test(r.text) && /tráfico agrega unos 6 minutos/.test(r.text) && r.untrusted === true, `trayecto: ${r.text.slice(0, 260)}`);
+    must(calls.join() === 'geo:Montería,ruta:TRAFFIC_AWARE:clave-google-secreta:9.3047,mapa:mapa123:2:ruta:cabe', `llamadas del trayecto: ${calls}`);
+    must(!JSON.stringify(r).includes('clave-google-secreta') && !JSON.stringify(r).includes('mapa123'), 'la clave de Google y el Map ID no deben salir hacia el navegador ni hacia el modelo');
+    // La imagen se sirve por su codigo y solo esa.
+    const sent: any = {}; const res: any = { set: (h: any) => { sent.h = h; return res; }, send: (b: Buffer) => { sent.b = b; } };
+    new MapsController(maps).get(rp.map.replace('/mapas/', ''), res);
+    must(sent.b?.equals(PNG) && sent.h['Content-Type'] === 'image/png' && maps.image('0'.repeat(24)) === undefined && maps.image('../../etc/passwd') === undefined, 'la imagen del mapa debía servirse solo con su código');
+    // Origen dicho por voz: no se pide la ubicacion. Sin ubicacion y sin origen: se pregunta, no se inventa.
+    asked = 0; await tools.run('trayecto', '{"destino":"Montería","origen":"Sincelejo"}', true, ctx); must(asked === 0, 'con origen dicho no debe pedirse la ubicación');
+    const lost = await tools.run('trayecto', '{"destino":"Montería"}', true, { ...ctx, locate: async () => undefined });
+    must(!lost.panel && /No tengo la ubicación/.test(lost.text) && /No encontré|no encontré/.test((await tools.run('trayecto', '{"destino":"ningún lugar"}', true, ctx)).text), `sin ubicación: ${lost.text}`);
+    // Cargadores: pocos cerca -> se amplia; fuera los dañados y los sin coordenadas; ordenados por distancia; clave en cabecera.
+    calls.length = 0;
+    const c = await tools.run('cargadores', '{}', true, ctx), cp: any = c.panel;
+    must(calls.filter((x) => x.startsWith('ocm')).join() === 'ocm:50km:clave-ocm:sin-clave-en-url,ocm:200km:clave-ocm:sin-clave-en-url' && cp?.kind === 'chargers' && cp.items.map((i: any) => i.title).join() === 'Cercano,Medio,Lejano' && cp.items[0].fast && cp.items[0].n === 1 && cp.items[0].lat === undefined && !/[<>]/.test(JSON.stringify(cp.items)) && ctx.places.chargers.length === 3, `cargadores: ${JSON.stringify(cp?.items)}`);
+    must(calls.at(-1) === 'mapa:mapa123:4:sin-ruta:cabe' && /Open Charge Map/.test(c.text) && /desactualizados/.test(c.text), `mapa y avisos de cargadores: ${calls.at(-1)}`);
+    const go = await tools.run('trayecto', '{"cargador":1}', true, ctx);
+    must((go.panel as any)?.to === 'Cercano' && !calls.slice(-3).some((x) => x.startsWith('geo')) && /pídele un número entre 1 y 3/.test((await tools.run('trayecto', '{"cargador":9}', true, ctx)).text), 'la ruta a un cargador debe usar sus coordenadas, sin buscar el lugar');
+    // Tope diario propio (9 llamadas a Google en esta prueba).
+    const capped = await (async () => { for (let i = 0; i < 6; i++) { const t = (await tools.run('trayecto', `{"destino":"Lugar ${i}","origen":"Otro ${i}"}`, true, ctx)).text; if (/tope de consultas/.test(t)) return true; } return false; })();
+    must(capped, 'debía cortar al llegar al tope diario de consultas de mapas');
+    mapsFetch = undefined; Object.assign(process.env, { GOOGLE_MAPS_EMBED_KEY: '', GOOGLE_MAPS_MAP_ID: '', OPENCHARGEMAP_API_KEY: '' }); delete process.env.MAPAS_CONSULTAS_DIA;
+    const off = new MapsService(new ConfigService(), usage); must(!off.enabled && !off.chargersEnabled, 'sin claves deben quedar apagados');
+    return 'ruta con tráfico y mapa como imagen propia; clave fuera del navegador; ubicación del navegador o por voz, nunca inventada; cargadores filtrados y ordenados; tope diario';
   });
 
   rmSync(dir, { recursive: true, force: true });

@@ -8,6 +8,7 @@ import { NewsService } from '../news/news.service';
 import { MarketEvent, PolymarketService } from '../markets/polymarket.service';
 import { PanelsService } from '../panels/panels.service';
 import { buildBoard } from '../mcp/plane-board';
+import { Charger, MapsService, Place, validPlace } from '../maps/maps.service';
 import { describeTesla, teslaCard, TeslaFocus, TeslaService } from '../tesla/tesla.service';
 import { UsageService } from '../usage/usage.service';
 import { GalleryItem, GalleryState, ImagesService } from '../images/images.service';
@@ -75,6 +76,10 @@ export interface ToolContext { /** Interesados registrados en esta conversacion 
   origin: string; music?: MusicState; gallery?: GalleryState;
   /** Noticia que se esta viendo en esta conversacion (0 = la lista), para "la siguiente". */
   news?: { index: number; part?: number };
+  /** Pide la ubicacion al navegador de esta sesion (el dueño debe permitirla); undefined si no la dio o no hay navegador. */
+  locate?: () => Promise<{ lat: number; lng: number } | undefined>;
+  /** Cargadores mostrados por ultima vez (para "llévame al 2") y desde donde se buscaron. */
+  places?: { chargers: Charger[]; from?: Place };
   /** Mercados de prediccion mostrados por ultima vez en esta conversacion (para "abre el mercado 3"). */
   marketList?: { items: MarketEvent[]; title: string };
   /** Demostracion en curso en esta conversacion (el avatar actua como el asistente del negocio del visitante). */
@@ -121,7 +126,7 @@ export class ToolsService {
   private readonly tools: Record<string, Tool>;
   /** Herramientas locales que solo existen en sesiones del dueño. */
   private readonly ownerTools: Record<string, Tool>;
-  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService, news?: NewsService, markets?: PolymarketService, panels?: PanelsService) {
+  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService, news?: NewsService, markets?: PolymarketService, panels?: PanelsService, maps?: MapsService) {
     this.tools = {
       hora_actual: {
         description: 'Devuelve la fecha y la hora actuales. Usala cuando pregunten que hora es o que dia es hoy.',
@@ -489,6 +494,66 @@ export class ToolsService {
         if (!panels) return text;
         const c = await panels.consumption(Math.max(7, days));
         return { text: `En pantalla está el panel de consumo de los últimos ${c.days.length} días.${c.priced ? '' : ' No hay precios configurados (USAGE_PRICES), así que se ve en unidades, sin costo en dólares: no inventes un costo.'}\n${text}`, panel: { kind: 'usage', title: 'Consumo', ...c } };
+      },
+    };
+    // Trayectos y cargadores con mapa. Solo dueño: usan APIs de pago de Google (con tope diario) y su ubicacion.
+    // El origen sale de lo que diga Javier o, si no dice, de la ubicacion que entregue su navegador.
+    const whereFrom = async (said: string, ctx: ToolContext): Promise<Place | string> => {
+      if (said.trim()) return maps!.geocode(said);
+      const here = await ctx.locate?.();
+      return here && validPlace(here.lat, here.lng) ? { ...here, label: 'tu ubicación' } : 'No tengo la ubicación de Javier (el navegador no la entregó o no dio permiso). Pregúntale desde dónde sale o cerca de qué lugar buscar, y vuelve a llamar la herramienta con ese lugar.';
+    };
+    const hm = (s: number) => { const m = Math.max(1, Math.round(s / 60)); return m < 60 ? `${m} minutos` : `${Math.floor(m / 60)} hora${m >= 120 ? 's' : ''}${m % 60 ? ` y ${m % 60} minutos` : ''}`; };
+    if (maps?.enabled) this.ownerTools.trayecto = {
+      description: 'Calcula cuánto se demora Javier en carro hasta un lugar, con el tráfico de este momento, y muestra el mapa con la ruta, la distancia y la hora de llegada. Úsala cuando pregunte cuánto se demora, cuánto falta o cómo llegar a un sitio, o diga "llévame al cargador 2". Si no dice desde dónde, se usa su ubicación actual.',
+      parameters: { type: 'object', properties: {
+        destino: { type: 'string', description: 'A dónde va: ciudad, barrio, dirección o sitio, tal como lo dijo (por ejemplo "Montería", "aeropuerto de Cartagena").' },
+        origen: { type: 'string', description: 'Desde dónde sale, solo si lo dijo. Omítelo para usar su ubicación actual.' },
+        cargador: { type: 'number', description: 'Número de un cargador de la lista en pantalla, si el destino es ese cargador (en ese caso omite destino).' },
+      }, required: [] },
+      run: async (args, ctx) => {
+        try {
+          const st = ctx.places ?? { chargers: [] }, k = Math.round(Number(args.cargador));
+          let to: Place;
+          if (args.cargador !== undefined && args.cargador !== null && args.cargador !== '') {
+            const c = st.chargers[k - 1];
+            if (!c) return st.chargers.length ? `En pantalla hay ${st.chargers.length} cargadores; pídele un número entre 1 y ${st.chargers.length}.` : 'No hay cargadores en pantalla. Búscalos primero con la herramienta cargadores.';
+            to = { lat: c.lat, lng: c.lng, label: c.title };
+          } else {
+            if (String(args.destino ?? '').trim().length < 2) return 'Falta el destino. Pregúntale a dónde va.';
+            to = await maps.geocode(String(args.destino));
+          }
+          const from = await whereFrom(String(args.origen ?? ''), ctx);
+          if (typeof from === 'string') return from;
+          const r = await maps.route(from, to);
+          const map = await maps.mapImage({ polyline: r.polyline, markers: [{ ...from, label: 'A', color: '0x34d17f' }, { ...to, label: 'B', color: '0xef5350' }] });
+          const arrive = new Intl.DateTimeFormat('es-CO', { timeZone: cfg.timezone, hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(Date.now() + r.seconds * 1000)).replace(/\.$/, '');
+          const delay = Math.round((r.seconds - r.staticSeconds) / 60), km = Math.round(r.meters / 100) / 10;
+          return { untrusted: true, panel: { kind: 'route', title: 'Trayecto', from: from.label, to: to.label, minutes: Math.max(1, Math.round(r.seconds / 60)), km, arrive, delay, map },
+            text: `En pantalla está el mapa con la ruta.\n${asData('Google Maps (nombres de lugares)', `Desde: ${from.label}\nHasta: ${to.label}`)}\nTiempo en carro con el tráfico de ahora: ${hm(r.seconds)} (${km.toLocaleString('es-CO')} km). Llegaría hacia las ${arrive}.${delay >= 3 ? ` El tráfico agrega unos ${delay} minutos.` : ''}\nDíselo en una o dos frases, con el tiempo, la distancia y la hora de llegada. Es una estimación de Google.` };
+        } catch (e) { return `No se pudo calcular el trayecto: ${(e as Error).message}. Díselo tal cual, sin inventar tiempos.`; }
+      },
+    };
+    if (maps?.chargersEnabled) this.ownerTools.cargadores = {
+      description: 'Busca cargadores públicos para carro eléctrico (de cualquier operador, no solo Tesla) cerca de Javier o de un lugar, y los muestra numerados en un mapa con su potencia y conectores. Úsala cuando pregunte dónde cargar o por cargadores cercanos. Si no dice dónde, se usa su ubicación actual.',
+      parameters: { type: 'object', properties: {
+        cerca_de: { type: 'string', description: 'Lugar alrededor del cual buscar, solo si lo dijo ("Montería", "vía a Cartagena"). Omítelo para usar su ubicación actual.' },
+        radio_km: { type: 'number', description: 'Radio de búsqueda en kilómetros. Por defecto 50; si no aparece nada se amplía solo.' },
+      }, required: [] },
+      run: async (args, ctx) => {
+        try {
+          if (String(args.cerca_de ?? '').trim() && !maps.enabled) return 'Para buscar por nombre de lugar hace falta la clave de mapas. Dile que por ahora solo se puede con su ubicación actual.';
+          const from = await whereFrom(String(args.cerca_de ?? ''), ctx);
+          if (typeof from === 'string') return from;
+          let radius = Math.min(300, Math.max(5, Math.round(Number(args.radio_km) || 50))), list = await maps.chargers(from, radius);
+          if (list.length < 3 && radius < 200) { radius = 200; list = await maps.chargers(from, radius); } // pocos cerca: se amplia una vez para dar opciones
+          if (!list.length) return `No aparecen cargadores públicos a menos de ${radius} km de ${from.label} en Open Charge Map. Díselo; puede que existan y no estén registrados.`;
+          if (ctx.places) { ctx.places.chargers = list; ctx.places.from = from; }
+          const map = maps.enabled ? await maps.mapImage({ markers: [{ ...from, label: 'A', color: '0x4f8dff' }, ...list.map((c) => ({ lat: c.lat, lng: c.lng, label: String(c.n), color: c.fast ? '0x34d17f' : '0xf0b429' }))] }) : '';
+          return { untrusted: true, panel: { kind: 'chargers', title: `Cargadores cerca de ${from.label}`.slice(0, 60), items: list.map(({ lat: _a, lng: _b, ...rest }) => rest), map, radius },
+            text: `En pantalla ${map ? 'está el mapa con' : 'están'} ${list.length === 1 ? 'el único cargador que aparece' : `${list.length} cargadores numerados, del más cercano al más lejano`} a menos de ${radius} km (distancia en línea recta).\n${asData('Open Charge Map (datos de la comunidad)', list.map((c) => `${c.n}. ${c.title}${c.town ? `, ${c.town}` : ''} — a ${c.km.toLocaleString('es-CO')} km${c.kw ? `, hasta ${c.kw} kW` : ''}${c.fast ? ' (carga rápida)' : ''}${c.connectors.length ? `; conectores: ${c.connectors.join(', ')}` : ''}${c.usage ? `; ${c.usage}` : ''}${c.cost ? `; costo ${c.cost}` : ''}`).join('\n'))}\n` +
+              'Dile cuántos hay y nombra los dos o tres más cercanos con su distancia y potencia. Aclara que son datos de una base comunitaria: pueden estar desactualizados y no dicen si el cargador está libre. Dile que puede pedir la ruta a cualquiera por su número.' };
+        } catch (e) { return `No se pudieron buscar cargadores: ${(e as Error).message}. Díselo tal cual.`; }
       },
     };
     // Tablero de tareas de Plane en pantalla. Solo lectura (el MCP solo deja pasar herramientas de consulta).

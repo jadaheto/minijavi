@@ -303,6 +303,13 @@ function onMessage(msg) {
       hideCard(); if (gallery) hideGallery(); tesla.hide(); markets.hide(); dataPanel.hide(); news.show(msg); break;
     case 'markets': // mercados de prediccion
       hideCard(); if (gallery) hideGallery(); tesla.hide(); news.hide(); dataPanel.hide(); markets.show(msg); break;
+    case 'locate': // el servidor necesita la ubicacion (trayecto o cargadores): el navegador pide permiso una vez
+      if (!navigator.geolocation) { socket?.send({ type: 'location', error: 'sin soporte' }); break; }
+      navigator.geolocation.getCurrentPosition(
+        (p) => socket?.send({ type: 'location', lat: p.coords.latitude, lng: p.coords.longitude, accuracy: Math.round(p.coords.accuracy) }),
+        (e) => socket?.send({ type: 'location', error: e.code === 1 ? 'sin permiso' : 'no disponible' }),
+        { enableHighAccuracy: true, timeout: 6500, maximumAge: 60000 });
+      break;
     case 'panel': // dolar y Bitcoin, servicios, consumo
       hideCard(); if (gallery) hideGallery(); tesla.hide(); news.hide(); markets.hide(); dataPanel.show(msg); break;
     case 'spotify_token': { // respuesta al token pedido por el reproductor de Spotify

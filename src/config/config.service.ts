@@ -113,6 +113,11 @@ export class ConfigService {
   /** Mercados de prediccion (Polymarket), solo consulta y solo modo dueño. Apagado salvo POLYMARKET=1. */
   readonly polymarket: boolean;
   readonly polymarketTopics: string[];
+  /** Mapas (trayectos e imagen del mapa: clave de Google que NO sale del servidor) y cargadores (Open Charge Map). Solo modo dueño. */
+  readonly googleMapsKey: string;
+  readonly googleMapsMapId: string;
+  readonly openChargeMapKey: string;
+  readonly mapsDailyCalls: number;
   /** Proyecto de Plane que abre el tablero cuando Javier no dice cual (nombre o identificador). */
   readonly planeBoardProject: string;
   readonly musicDefaultQuery: string;
@@ -304,6 +309,10 @@ export class ConfigService {
     this.newsHour = Math.min(23, int('NOTICIAS_HORA', 6, 0));
     this.newsDomains = str('NOTICIAS_DOMINIOS', 'theguardian.com,technologyreview.com,arstechnica.com,theverge.com,techcrunch.com,xataka.com').toLowerCase().split(',').map((d) => d.trim().replace(/^www\./, '')).filter((d) => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d));
     this.planeBoardProject = str('PLANE_TABLERO_PROYECTO');
+    this.googleMapsKey = str('GOOGLE_MAPS_KEY') || str('GOOGLE_MAPS_EMBED_KEY');
+    this.googleMapsMapId = /^[A-Za-z0-9_-]{4,64}$/.test(str('GOOGLE_MAPS_MAP_ID')) ? str('GOOGLE_MAPS_MAP_ID') : '';
+    this.openChargeMapKey = str('OPENCHARGEMAP_API_KEY');
+    this.mapsDailyCalls = int('MAPAS_CONSULTAS_DIA', 150, 1);
     this.polymarket = str('POLYMARKET', '0') === '1';
     this.polymarketTopics = str('POLYMARKET_TEMAS', 'ai,tech,crypto,economy,politics,geopolitics').toLowerCase().split(',').map((t) => t.trim()).filter((t) => /^[a-z0-9-]{2,40}$/.test(t)).slice(0, 8);
     const teslaOn = str('TESLA', '1') !== '0';

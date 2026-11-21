@@ -123,7 +123,43 @@ function board(msg) {
   return wrap;
 }
 
-const KINDS = { finance, status, usage, board };
+/** Imagen del mapa que armo el servidor (solo de este mismo sitio). */
+function mapImage(src, alt) {
+  if (typeof src !== 'string' || !/^\/mapas\/[a-f0-9]{24}\.png$/.test(src)) return null;
+  const fig = el('figure', 'pnl-map'), img = el('img'); img.src = src; img.alt = alt; img.addEventListener('load', () => fig.classList.add('ready'));
+  fig.append(img); return fig;
+}
+
+/** Trayecto: mapa con la ruta, el tiempo en grande, la distancia y la hora de llegada. */
+function route(msg) {
+  const wrap = el('div', 'pnl-route'), map = mapImage(msg.map, 'Mapa con la ruta'); if (map) wrap.append(map);
+  const card = el('section', 'pnl-card'), row = el('div', 'pnl-row'), big = el('div', 'pnl-big'), mins = Math.max(1, Number(msg.minutes) || 0);
+  if (mins >= 60) { const h = el('b', 'pnl-value'), m = el('b', 'pnl-value'); countUp(h, Math.floor(mins / 60), 0, 200); countUp(m, mins % 60, 0, 350); big.append(h, el('small', '', 'h'), m, el('small', '', 'min')); }
+  else { const m = el('b', 'pnl-value'); countUp(m, mins, 0, 200); big.append(m, el('small', '', 'min')); }
+  const left = el('div', 'pnl-name'); left.append(el('strong', '', 'En carro, con el tráfico de ahora'), el('small', '', `${msg.from || ''} → ${msg.to || ''}`));
+  row.append(left, big); card.append(row);
+  const chips = el('div', 'pnl-chips');
+  chips.append(el('span', 'mkt-chg flat', `${num(msg.km, 1)} km`), el('span', 'mkt-chg flat', `llegas ${msg.arrive || ''}`));
+  if (Number(msg.delay) >= 3) chips.append(el('span', 'mkt-chg warn', `+${num(msg.delay)} min por tráfico`)); else chips.append(el('span', 'mkt-chg up', 'sin demoras'));
+  card.append(chips, el('small', 'pnl-source', 'Estimación de Google Maps')); wrap.append(card);
+  return wrap;
+}
+
+/** Cargadores: mapa con los puntos numerados y la lista con distancia, potencia y conectores. */
+function chargers(msg) {
+  const wrap = el('div', 'pnl-chargers'), map = mapImage(msg.map, 'Mapa con los cargadores'); if (map) wrap.append(map);
+  const list = el('ul', 'pnl-list');
+  (msg.items || []).forEach((c, i) => {
+    const li = el('li', `pnl-charger${c.fast ? ' fast' : ''}`); li.style.animationDelay = `${0.3 + i * 0.07}s`;
+    const t = el('span', 'pnl-svc-text'); t.append(el('b', '', c.title), el('small', '', [c.town, (c.connectors || []).join(' · '), c.cost].filter(Boolean).join(' — ')));
+    const right = el('span', 'pnl-charger-side'); right.append(el('b', '', `${num(c.km, 1)} km`), el('small', '', c.kw ? `${num(c.kw)} kW${c.fast ? ' · rápida' : ''}` : 'potencia sin dato'));
+    li.append(el('span', 'nws-n', String(c.n)), t, right); list.append(li);
+  });
+  wrap.append(list, el('small', 'pnl-source', `Di «llévame al ${Math.min(2, (msg.items || []).length) || 1}» · distancias en línea recta · datos: Open Charge Map y su comunidad (CC BY 4.0); pueden estar desactualizados`));
+  return wrap;
+}
+
+const KINDS = { finance, status, usage, board, route, chargers };
 export function createDataPanel(box) {
   let timer = 0;
   const hide = () => { clearTimeout(timer); box.hidden = true; box.replaceChildren(); document.body.classList.remove('panel'); };
@@ -137,7 +173,7 @@ export function createDataPanel(box) {
       box.append(head, render(msg));
       box.hidden = false; document.body.classList.add('panel');
       box.classList.remove('in'); void box.offsetWidth; box.classList.add('in');
-      timer = setTimeout(hide, msg.kind === 'board' ? 120000 : 45000); // son consultas puntuales: se van solas (el tablero dura mas)
+      timer = setTimeout(hide, ['board', 'route', 'chargers'].includes(msg.kind) ? 120000 : 45000); // son consultas puntuales: se van solas (el tablero dura mas)
     },
     hide,
     get active() { return !box.hidden; },
