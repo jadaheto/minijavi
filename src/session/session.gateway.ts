@@ -85,7 +85,7 @@ interface Session {
   locating?: ((p?: { lat: number; lng: number }) => void)[];
   places?: { chargers: any[]; from?: any }; // cargadores mostrados por ultima vez
   marketList?: { items: any[]; title: string }; // mercados de prediccion mostrados por ultima vez (para abrir uno por su numero)
-  news?: { index: number; part?: number }; // noticia que se esta viendo (0 = la lista) y parte de la lectura completa
+  news?: { index: number; part?: number; section?: string }; // noticia que se esta viendo (0 = la lista) y parte de la lectura completa
   car?: boolean;         // modo carro: solo atiende las frases que traen su nombre (o las que siguen a una respuesta)
   carHeard?: boolean;    // la frase en curso ya fue aceptada (para no soltarla a la mitad cuando se cierra la ventana)
   starting?: boolean;    // ya llego el saludo del navegador y se esta abriendo la sesion

@@ -20,7 +20,7 @@ const META_KEY = 'news_cache';
 const MAX_ITEMS = 8;
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', iquest: '¿', iexcl: '¡', ntilde: 'ñ', Ntilde: 'Ñ', aacute: 'á', eacute: 'é', iacute: 'í', oacute: 'ó', uacute: 'ú', uuml: 'ü', ldquo: '“', rdquo: '”', lsquo: '‘', rsquo: '’', hellip: '…', mdash: '—', ndash: '–' };
 /** Texto plano de un trozo de HTML: sin etiquetas, con las entidades resueltas y recortado. */
-const plain = (html: string, max: number) => html.replace(/<[^>]*>/g, ' ')
+export const plain = (html: string, max: number) => html.replace(/<[^>]*>/g, ' ')
   .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Math.min(0x10ffff, Number(d)))).replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(Math.min(0x10ffff, parseInt(h, 16))))
   .replace(/&([a-zA-Z]+);/g, (m, k) => ENTITIES[k] ?? m).replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 
@@ -50,7 +50,8 @@ export function articleParagraphs(html: string): string[] {
   const out: string[] = []; let total = 0;
   for (const m of art.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)) {
     const t = plain(m[1], 1500);
-    if (t.length < 60 || out.includes(t)) continue;
+    // Fuera lo que no es la nota: firma con botones de compartir, formularios de "enviar a un amigo", avisos del sitio.
+    if (t.length < 60 || out.includes(t) || /Facebook\s+X\s+Whats?app|^Por:\s.{0,80}\|\s*\d|Escribe a continuación al correo|Suscr[ií]bete a nuestro|Lea también:|Le puede interesar:/i.test(t)) continue;
     out.push(t); total += t.length;
     if (total > 14_000) break; // tope: una nota muy larga se lee hasta aqui
   }
@@ -68,6 +69,23 @@ export function readingParts(paragraphs: string[], size = 1500): string[] {
   }
   if (cur) parts.push(cur);
   return parts;
+}
+
+/**
+ * Parrafos de una nota leidos de la pagina del medio. El enlace viene de un tercero: solo se abre si es https y de un
+ * dominio de `domains`, tambien despues de las redirecciones. Lanza con el motivo si no se pudo leer.
+ */
+export async function fetchArticle(link: string, domains: string[]): Promise<string[]> {
+  const allowed = (u: string) => { try { const x = new URL(u); return x.protocol === 'https:' && domains.some((d) => x.hostname === d || x.hostname.endsWith(`.${d}`)); } catch { return false; } };
+  if (!allowed(link)) throw new Error('el medio de esa noticia no está en la lista de los que se pueden abrir');
+  let res: Response;
+  try { res = await fetch(link, { signal: AbortSignal.timeout(12_000), headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36', 'Accept-Language': 'es,en', Accept: 'text/html' } }); }
+  catch (e) { throw new Error(`no se pudo abrir la nota (${(e as Error).name})`); }
+  if (!res.ok) throw new Error(`el medio respondió ${res.status}`);
+  if (!allowed(res.url || link)) throw new Error('la nota redirige a otro sitio');
+  const paragraphs = articleParagraphs(await res.text());
+  if (paragraphs.join(' ').length < 500) throw new Error('el medio no dejó leer el texto de la nota');
+  return paragraphs;
 }
 
 @Injectable()
@@ -145,26 +163,22 @@ export class NewsService implements OnModuleInit, OnModuleDestroy {
   async article(n: number): Promise<string[]> {
     const it = this.items[n - 1];
     if (!it?.link) throw new Error('esa noticia no trae enlace');
-    const allowed = (u: string) => { try { const x = new URL(u); return x.protocol === 'https:' && this.cfg.newsDomains.some((d) => x.hostname === d || x.hostname.endsWith(`.${d}`)); } catch { return false; } };
-    if (!allowed(it.link)) throw new Error('el medio de esa noticia no está en la lista de los que se pueden abrir');
     const hit = this.articles.get(it.link);
     if (hit && Date.now() - hit.at < 24 * 3600_000) return hit.parts;
     this.usage.add('news_articles');
-    let res: Response;
-    try { res = await fetch(it.link, { signal: AbortSignal.timeout(12_000), headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36', 'Accept-Language': 'en,es', Accept: 'text/html' } }); }
-    catch (e) { throw new Error(`no se pudo abrir la nota (${(e as Error).name})`); }
-    if (!res.ok) throw new Error(`el medio respondió ${res.status}`);
-    if (!allowed(res.url || it.link)) throw new Error('la nota redirige a otro sitio');
-    const parts = readingParts(articleParagraphs(await res.text()));
-    if (parts.join(' ').length < 500) throw new Error('el medio no dejó leer el texto de la nota');
+    const parts = readingParts(await fetchArticle(it.link, this.cfg.newsDomains));
     this.articles.set(it.link, { at: Date.now(), parts });
     if (this.articles.size > 40) this.articles.delete(this.articles.keys().next().value!);
     return parts;
   }
+  /** Nombre de esta seccion de noticias (para la pantalla y para lo que dice el avatar). */
+  readonly label = 'inteligencia artificial';
+  /** Las de IA se traen solas una vez al dia: no hay nada que esperar al pedirlas. */
+  async ensureFresh(): Promise<void> { /* nada */ }
 
   /** Lo que el navegador dibuja: la lista numerada o, con `open`, esa noticia en grande con su codigo QR. */
   panel(open?: number): Record<string, unknown> {
     const it = open ? this.items[open - 1] : undefined;
-    return { action: it ? 'open' : 'list', day: this.day, items: this.items, index: it ? it.n : 0 };
+    return { action: it ? 'open' : 'list', title: 'Noticias de inteligencia artificial', day: this.day, items: this.items, index: it ? it.n : 0 };
   }
 }

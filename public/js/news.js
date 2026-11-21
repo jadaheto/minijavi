@@ -3,7 +3,7 @@
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 
 export function createNewsPanel(box, onPick) {
-  let items = [], index = 0, day = '';
+  let items = [], index = 0, day = '', title = '';
   const hide = () => { box.hidden = true; box.replaceChildren(); document.body.classList.remove('news'); items = []; index = 0; };
   const meta = (it) => [it.source, it.date].filter(Boolean).join(' · ');
 
@@ -20,7 +20,7 @@ export function createNewsPanel(box, onPick) {
     box.replaceChildren();
     box.dataset.view = index ? 'open' : 'list';
     if (!index) {
-      box.append(head('Noticias de inteligencia artificial'));
+      box.append(head(title || 'Noticias'));
       const list = el('ol', 'nws-list');
       for (const it of items) {
         const li = el('li', 'nws-item'); li.style.animationDelay = `${0.08 * it.n}s`;
@@ -53,7 +53,7 @@ export function createNewsPanel(box, onPick) {
   return {
     show(msg) {
       if (msg.action === 'hide' || !Array.isArray(msg.items) || !msg.items.length) return hide();
-      items = msg.items.slice(0, 8); day = msg.day || ''; index = Math.max(0, Math.min(items.length, Number(msg.index) || 0));
+      items = msg.items.slice(0, 8); day = msg.day || ''; title = msg.title || ''; index = Math.max(0, Math.min(items.length, Number(msg.index) || 0));
       draw();
       box.hidden = false; document.body.classList.add('news');
       box.classList.remove('in'); void box.offsetWidth; box.classList.add('in');

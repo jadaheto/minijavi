@@ -71,7 +71,7 @@ Los marcados con 🔒 solo funcionan en **modo dueño**. Las capturas usan datos
   </tr>
   <tr>
     <td align="center"><sub><b>Dólar y Bitcoin.</b> TRM oficial y Bitcoin con su gráfica.<br>Di: <b>«¿Cómo va el dólar?»</b> · <b>«¿Y Bitcoin?»</b></sub></td>
-    <td align="center"><sub><b>Noticias de IA.</b> Los titulares del día, numerados.<br>Di: <b>«Dame las noticias de inteligencia artificial»</b></sub></td>
+    <td align="center"><sub><b>Noticias.</b> Los titulares numerados: de inteligencia artificial o de Colombia (Forbes, Blu Radio, El País y Pulzo).<br>Di: <b>«Dame las noticias de inteligencia artificial»</b> · <b>«Dame las noticias de Colombia»</b></sub></td>
   </tr>
   <tr>
     <td><img src="docs/img/noticia-abierta.jpg" alt="Una noticia abierta con su resumen y un código QR"></td>
@@ -152,7 +152,7 @@ flowchart LR
 | 🧠 **Base de conocimiento** | Búsqueda en Qdrant con embeddings; lo privado solo lo ve el dueño. |
 | 🛠️ **Taller** | En modo dueño, Claude Code programa sitios por encargo, los revisa y los publica con su código QR. |
 | 🎵 **Música, imágenes y bocetos** | Spotify de fondo (YouTube de respaldo), fotos de Unsplash, imágenes generadas en tres versiones con cambios, y bocetos para elegir antes de construir. |
-| 📰 **Noticias de IA** | Titulares del día en pantalla, cada uno con su QR; al dueño le lee la nota completa en español, por partes. |
+| 📰 **Noticias** | De inteligencia artificial y de Colombia (las más importantes de cuatro medios, elegidas por el modelo), cada una con su QR; al dueño le lee la nota completa, por partes. |
 | 📊 **Paneles de datos** | Dólar y Bitcoin con gráfica; para el dueño: estado de los servicios, consumo, tablero de Plane y mercados de predicción (solo consulta). |
 | 🚗 **Carro** | Estado del Tesla (solo lectura), tiempo de trayecto con tráfico y cargadores cercanos con mapa. Modo carro: solo responde al oír su nombre. |
 | 😴 **Suspensión** | «Silénciate» lo calla; solo despierta con su nombre o un toque. |

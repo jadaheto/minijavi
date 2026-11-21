@@ -108,6 +108,9 @@ export class ConfigService {
   /** Noticias de IA: webhook (https) que devuelve la pagina del boletin, y hora local desde la que se piden una vez al dia. */
   readonly newsUrl: string;
   readonly newsHour: number;
+  /** Noticias de Colombia (Forbes, Blu Radio, El País, Pulzo), leidas por el servidor. NOTICIAS_COLOMBIA=0 las apaga. */
+  readonly newsColombia: boolean;
+  readonly newsColombiaMinutes: number;
   /** Medios cuya pagina se puede abrir para leer una nota completa (dominios, sin www). */
   readonly newsDomains: string[];
   /** Mercados de prediccion (Polymarket), solo consulta y solo modo dueño. Apagado salvo POLYMARKET=1. */
@@ -307,6 +310,8 @@ export class ConfigService {
     this.spotifyRedirectUri = spotifyOn ? str('SPOTIFY_REDIRECT_URI') : '';
     this.newsUrl = /^https:\/\/[^\s]+$/.test(str('NOTICIAS_URL')) ? str('NOTICIAS_URL') : '';
     this.newsHour = Math.min(23, int('NOTICIAS_HORA', 6, 0));
+    this.newsColombia = str('NOTICIAS_COLOMBIA', '1') !== '0';
+    this.newsColombiaMinutes = int('NOTICIAS_COLOMBIA_MINUTOS', 60, 10);
     this.newsDomains = str('NOTICIAS_DOMINIOS', 'theguardian.com,technologyreview.com,arstechnica.com,theverge.com,techcrunch.com,xataka.com').toLowerCase().split(',').map((d) => d.trim().replace(/^www\./, '')).filter((d) => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d));
     this.planeBoardProject = str('PLANE_TABLERO_PROYECTO');
     this.googleMapsKey = str('GOOGLE_MAPS_KEY') || str('GOOGLE_MAPS_EMBED_KEY');

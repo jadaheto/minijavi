@@ -5,6 +5,7 @@ import { PLANE_PREFIX, PlaneMcpService } from '../mcp/plane-mcp.service';
 import { MODELS, WorkshopService } from '../workshop/workshop.service';
 import { MusicService, MusicState } from '../music/music.service';
 import { NewsService } from '../news/news.service';
+import { ColombiaNewsService } from '../news/colombia.service';
 import { MarketEvent, PolymarketService } from '../markets/polymarket.service';
 import { PanelsService } from '../panels/panels.service';
 import { buildBoard } from '../mcp/plane-board';
@@ -75,7 +76,7 @@ const UNTRUSTED: Record<string, string> = { que_hiciste: 'la bitácora (nombres 
 export interface ToolContext { /** Interesados registrados en esta conversacion (para anotarles algo, como que pidieron precio). */ leadIds?: number[];
   origin: string; music?: MusicState; gallery?: GalleryState;
   /** Noticia que se esta viendo en esta conversacion (0 = la lista), para "la siguiente". */
-  news?: { index: number; part?: number };
+  news?: { index: number; part?: number; section?: string };
   /** Pide la ubicacion al navegador de esta sesion (el dueño debe permitirla); undefined si no la dio o no hay navegador. */
   locate?: () => Promise<{ lat: number; lng: number } | undefined>;
   /** Cargadores mostrados por ultima vez (para "llévame al 2") y desde donde se buscaron. */
@@ -126,7 +127,7 @@ export class ToolsService {
   private readonly tools: Record<string, Tool>;
   /** Herramientas locales que solo existen en sesiones del dueño. */
   private readonly ownerTools: Record<string, Tool>;
-  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService, news?: NewsService, markets?: PolymarketService, panels?: PanelsService, maps?: MapsService) {
+  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService, news?: NewsService, markets?: PolymarketService, panels?: PanelsService, maps?: MapsService, newsCo?: ColombiaNewsService) {
     this.tools = {
       hora_actual: {
         description: 'Devuelve la fecha y la hora actuales. Usala cuando pregunten que hora es o que dia es hoy.',
@@ -315,24 +316,32 @@ export class ToolsService {
           text: `En pantalla está el panel con ${items.length === 2 ? 'las gráficas' : 'la gráfica'}.\n${say.join('\n')}${errors.length ? `\nNo se pudo consultar ${errors.join('; ')}: díselo.` : ''}\nDíselo en una o dos frases, con las cifras redondeadas. Es información, no un consejo de compra o venta.` };
       },
     };
-    // Noticias de inteligencia artificial: titulares que el servidor trae una vez al dia de un webhook de Javier. Publica.
-    if (news?.enabled) this.tools.noticias = {
-      description: 'Noticias recientes de inteligencia artificial (de medios; se actualizan una vez al día). "ver" muestra en pantalla la lista numerada; "abrir" con un número muestra esa noticia en grande con un código QR para leerla completa; "leer" lee en voz alta su resumen (la que está abierta, o la del número que digan) dejando el QR en pantalla; "leer_completa" (solo Javier) abre la nota en el medio y la lee ENTERA en español por partes, y "seguir" lee la parte siguiente; "siguiente" y "anterior" pasan de una noticia a otra; "quitar" las saca de la pantalla. ' +
-        'Úsala cuando pidan las noticias de inteligencia artificial o de IA, o digan "ve al artículo 3", "abre la dos", "léeme la noticia", "léemela completa", "lee la noticia entera", "sigue", "continúa leyendo", "la siguiente", "vuelve a la lista", "quita las noticias".',
-      parameters: { type: 'object', properties: { accion: { type: 'string', enum: ['ver', 'abrir', 'leer', 'leer_completa', 'seguir', 'siguiente', 'anterior', 'quitar', 'actualizar'], description: '"seguir" = continuar la lectura completa donde iba (NO es pasar a otra noticia). "actualizar" vuelve a traer las noticias del día (solo Javier; tarda cerca de un minuto).' }, numero: { type: 'number', description: 'Número de la noticia, para "abrir", "leer" o "leer_completa". En las de leer se puede omitir: se lee la que está abierta.' } }, required: ['accion'] },
+    // Noticias en pantalla, por temas: inteligencia artificial (webhook de Javier, una vez al dia) y Colombia (el servidor
+    // lee cuatro medios y el modelo elige las mas importantes). Publica. Cada conversacion recuerda en que tema va.
+    const newsSources = { ...(news?.enabled ? { ia: news } : {}), ...(newsCo?.enabled ? { colombia: newsCo } : {}) } as Record<string, NewsService | ColombiaNewsService>;
+    if (Object.keys(newsSources).length) this.tools.noticias = {
+      description: `Noticias recientes, en pantalla, de estos temas: ${Object.keys(newsSources).map((k) => (k === 'ia' ? 'inteligencia artificial (tema "ia")' : 'Colombia: nación, política, economía y negocios, de Forbes, Blu Radio, El País y Pulzo (tema "colombia")')).join('; ')}. "ver" muestra en pantalla la lista numerada; "abrir" con un número muestra esa noticia en grande con un código QR para leerla completa; "leer" lee en voz alta su resumen (la que está abierta, o la del número que digan) dejando el QR en pantalla; "leer_completa" (solo Javier) abre la nota en el medio y la lee ENTERA en español por partes, y "seguir" lee la parte siguiente; "siguiente" y "anterior" pasan de una noticia a otra; "quitar" las saca de la pantalla. ` +
+        'Úsala cuando pidan las noticias (de inteligencia artificial, de IA, de Colombia, del país, "qué está pasando en Colombia"), o digan "ve al artículo 3", "abre la dos", "léeme la noticia", "léemela completa", "lee la noticia entera", "sigue", "continúa leyendo", "la siguiente", "vuelve a la lista", "quita las noticias".',
+      parameters: { type: 'object', properties: { tema: { type: 'string', enum: Object.keys(newsSources), description: 'De qué tema, para "ver" o "actualizar". En las demás acciones omítelo: siguen sobre las noticias que están en pantalla.' }, accion: { type: 'string', enum: ['ver', 'abrir', 'leer', 'leer_completa', 'seguir', 'siguiente', 'anterior', 'quitar', 'actualizar'], description: '"seguir" = continuar la lectura completa donde iba (NO es pasar a otra noticia). "actualizar" vuelve a traer las noticias del día (solo Javier; tarda cerca de un minuto).' }, numero: { type: 'number', description: 'Número de la noticia, para "abrir", "leer" o "leer_completa". En las de leer se puede omitir: se lee la que está abierta.' } }, required: ['accion'] },
       run: async (args, ctx) => {
-        const st: { index: number; part?: number } = ctx.news ?? { index: 0 }, items = news.items, action = String(args.accion);
+        const st: { index: number; part?: number; section?: string } = ctx.news ?? { index: 0 }, action = String(args.accion);
+        const asked = typeof args.tema === 'string' && newsSources[args.tema] ? args.tema : undefined;
+        if (asked && asked !== st.section) { st.section = asked; st.index = 0; st.part = 0; } // cambio de tema: la lista es otra
+        const section = st.section && newsSources[st.section] ? st.section : Object.keys(newsSources)[0], src = newsSources[section];
+        st.section = section;
+        if (action === 'ver') await src.ensureFresh();
+        const items = src.items;
         if (action === 'quitar') { st.index = 0; return { text: 'Noticias quitadas de la pantalla.', news: { action: 'hide' } }; }
         if (action === 'actualizar') { // solo el dueño: cada actualizacion llama al flujo de n8n (y a su modelo)
           if (!ctx.owner) return 'Las noticias se actualizan solas una vez al día.';
-          if (!news.loading) void news.refresh();
+          if (!src.loading) void src.refresh();
           return 'Se están trayendo de nuevo las noticias; tarda cerca de un minuto. Dile que te las pida en un momento.';
         }
-        if (!items.length) { if (!news.loading) void news.refresh(); return 'Las noticias de hoy todavía se están trayendo; tarda cerca de un minuto. Dile que te las pida otra vez en un momento.'; }
+        if (!items.length) { if (!src.loading) void src.refresh(); return `Las noticias de ${src.label} todavía se están trayendo${src.lastError ? ` (el último intento falló: ${src.lastError})` : ''}; tarda cerca de un minuto. Dile que te las pida otra vez en un momento.`; }
         const source = 'las noticias (titulares de medios, texto de terceros)';
         if (action === 'ver') {
           st.index = 0;
-          return { untrusted: true, news: news.panel(), text: `En pantalla está la lista numerada de ${items.length} noticias de inteligencia artificial (del ${news.day}).\n${asData(source, items.map((i) => `${i.n}. ${i.title}${i.source ? ` (${i.source}${i.date ? `, ${i.date}` : ''})` : ''}`).join('\n'))}\n` +
+          return { untrusted: true, news: src.panel(), text: `En pantalla está la lista numerada de ${items.length} noticias de ${src.label} (actualizadas: ${src.day}).\n${asData(source, items.map((i) => `${i.n}. ${i.title}${i.source ? ` (${i.source}${i.date ? `, ${i.date}` : ''})` : ''}`).join('\n'))}\n` +
             'Dile cuántas hay, menciona dos o tres titulares en pocas palabras (sin leer la lista entera) y pregúntale cuál quiere abrir. No inventes detalles que no estén en los titulares.' };
         }
         if (action === 'leer_completa' || action === 'seguir') {
@@ -342,14 +351,14 @@ export class ToolsService {
           if (!(n >= 1 && n <= items.length)) return `Hay ${items.length} noticias; pídele un número entre 1 y ${items.length}.`;
           const it = items[n - 1];
           let parts: string[];
-          try { parts = await news.article(n); }
-          catch (e) { st.index = n; st.part = 0; return { untrusted: true, news: news.panel(n), text: `No se pudo abrir la nota completa: ${(e as Error).message}. Díselo en una frase y léele lo que sí hay:\n${asData(source, `Titular: ${it.title}\nMedio: ${it.source || 'sin dato'}${it.summary ? `\nResumen: ${it.summary}` : ''}`)}\nEn español, sin agregar nada, y recuérdale el código QR.` }; }
+          try { parts = await src.article(n); }
+          catch (e) { st.index = n; st.part = 0; return { untrusted: true, news: src.panel(n), text: `No se pudo abrir la nota completa: ${(e as Error).message}. Díselo en una frase y léele lo que sí hay:\n${asData(source, `Titular: ${it.title}\nMedio: ${it.source || 'sin dato'}${it.summary ? `\nResumen: ${it.summary}` : ''}`)}\nEn español, sin agregar nada, y recuérdale el código QR.` }; }
           const part = action === 'seguir' && st.index === n ? (st.part ?? 0) + 1 : 1;
           st.index = n;
           if (part > parts.length) { st.part = parts.length; return 'Ya se leyó toda la nota. Dile que terminó y pregúntale si quiere otra noticia.'; }
           st.part = part;
           const last = part === parts.length;
-          return { untrusted: true, news: news.panel(n), text: `En pantalla sigue la noticia ${n} con su código QR. Esta es la parte ${part} de ${parts.length} del texto completo de la nota${part === 1 ? ` "${it.title}", de ${it.source || 'un medio'}` : ''}.\n${asData('el texto de la nota (de un medio, texto de terceros)', parts[part - 1])}\n` +
+          return { untrusted: true, news: src.panel(n), text: `En pantalla sigue la noticia ${n} con su código QR. Esta es la parte ${part} de ${parts.length} del texto completo de la nota${part === 1 ? ` "${it.title}", de ${it.source || 'un medio'}` : ''}.\n${asData('el texto de la nota (de un medio, texto de terceros)', parts[part - 1])}\n` +
             `Léesela a Javier EN ESPAÑOL: tradúcela con fidelidad, completa y en orden, frase por frase, sin resumir, sin saltarte nada, sin comentar y sin agregar nada que no esté ahí (si ya está en español, léela tal cual). ${part === 1 ? 'Empieza diciendo de qué medio es. ' : 'No repitas el titular ni lo que ya leíste. '}` +
             (last ? 'Es la última parte: al terminar dile que ahí acaba la nota y pregúntale si quiere otra noticia.' : `Al terminar esta parte detente y pregúntale solo: "¿Sigo?" (faltan ${parts.length - part}). Si dice que sí, usa noticias con accion seguir.`) };
         }
@@ -359,14 +368,14 @@ export class ToolsService {
           if (!(n >= 1 && n <= items.length)) return `Hay ${items.length} noticias; pídele un número entre 1 y ${items.length}.`;
           const it = items[n - 1]; st.index = n;
           const body = it.summary ? `Titular: ${it.title}\nMedio: ${it.source || 'sin dato'}\nFecha: ${it.date || 'sin dato'}\nTexto: ${it.summary}` : `Titular: ${it.title}\nMedio: ${it.source || 'sin dato'}\nFecha: ${it.date || 'sin dato'}`;
-          return { untrusted: true, news: news.panel(n), text: `En pantalla queda la noticia ${n} de ${items.length}${it.qr ? ' con su código QR' : ''}.\n${asData(source, body)}\n` +
+          return { untrusted: true, news: src.panel(n), text: `En pantalla queda la noticia ${n} de ${items.length}${it.qr ? ' con su código QR' : ''}.\n${asData(source, body)}\n` +
             (it.summary ? `Léesela en voz alta EN ESPAÑOL (si algo viene en otro idioma, tradúcelo): di de qué medio es y luego el texto completo, con naturalidad y sin saltarte nada ni agregar datos que no estén ahí. No leas la dirección del enlace. Esto es el RESUMEN de la nota, no la nota entera. ${ctx.owner ? 'Al terminar pregúntale si quiere que se la leas completa (acción leer_completa).' : 'Al terminar, recuérdale que con el código QR puede abrir la nota original.'}`
               : 'De esta noticia solo llegó el titular: díselo en español, acláraselo, y recuérdale que con el código QR puede leerla completa. No inventes el contenido.') };
         }
         const k = action === 'abrir' ? Math.round(Number(args.numero)) : st.index ? ((st.index - 1 + (action === 'siguiente' ? 1 : items.length - 1)) % items.length) + 1 : action === 'siguiente' ? 1 : items.length;
         if (!(k >= 1 && k <= items.length)) return `Hay ${items.length} noticias; pídele un número entre 1 y ${items.length}.`;
         const it = items[k - 1]; st.index = k; st.part = 0;
-        return { untrusted: true, news: news.panel(k), text: `En pantalla está la noticia ${k} de ${items.length}${it.qr ? ', con un código QR que la abre completa en el celular' : ''}.\n${asData(source, `Titular: ${it.title}\nMedio: ${it.source || 'sin dato'}\nFecha: ${it.date || 'sin dato'}${it.summary ? `\nResumen: ${it.summary}` : ''}`)}\n` +
+        return { untrusted: true, news: src.panel(k), text: `En pantalla está la noticia ${k} de ${items.length}${it.qr ? ', con un código QR que la abre completa en el celular' : ''}.\n${asData(source, `Titular: ${it.title}\nMedio: ${it.source || 'sin dato'}\nFecha: ${it.date || 'sin dato'}${it.summary ? `\nResumen: ${it.summary}` : ''}`)}\n` +
           `Cuéntasela en una o dos frases con SOLO lo que dice ahí: aquí no tienes el texto completo de la nota, así que no agregues cifras, causas ni detalles. ${ctx.owner ? 'Pregúntale si quiere que se la leas completa (acción leer_completa) o ver otra.' : 'Dile que con el código QR puede leerla completa y pregúntale si quiere ver otra.'}` };
       },
     };
