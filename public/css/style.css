@@ -464,3 +464,24 @@ body.panel:has(.pnl[data-kind="brief"]):not(.showing) #stage { transform: transl
 .pnl-bat i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; }
 .pnl-bat i.now { background: rgba(255, 255, 255, .16); animation: none; }
 .pnl-bat i.arrive { background: linear-gradient(90deg, color-mix(in srgb, var(--c) 70%, #000), var(--c)); box-shadow: 0 0 10px var(--c); animation-delay: .5s; }
+
+/* Demo "Crea tu propio asistente": tarjeta para subir el documento del negocio (abajo a la derecha). */
+.demo-doc { position: fixed; right: 16px; bottom: 16px; z-index: 30; width: min(420px, calc(100vw - 32px)); display: grid; gap: 10px; padding: 14px 16px; border-radius: 18px; background: rgba(15, 20, 32, .92); border: 1px solid rgba(217, 89, 38, .6); color: #eef2f8; box-shadow: 0 18px 50px rgba(0, 0, 0, .45); backdrop-filter: blur(8px); }
+.demo-doc.in { animation: tsl-row .45s ease both; }
+.dd-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 15px; }
+.dd-row { display: flex; gap: 14px; align-items: flex-start; }
+.dd-left { flex: 1; display: grid; gap: 8px; min-width: 0; }
+.dd-hint { margin: 0; font-size: 13px; color: #b8c2d3; line-height: 1.4; }
+.dd-consent { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: #d7deea; }
+.dd-consent input { width: 18px; height: 18px; margin: 0; flex: none; }
+.dd-pick { justify-self: start; padding: 10px 16px; border: 0; border-radius: 12px; background: #d95926; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.dd-pick:disabled { opacity: .5; cursor: default; }
+.dd-max { font-size: 11px; color: #8f9aac; }
+.dd-qr { margin: 0; display: grid; gap: 4px; justify-items: center; flex: none; }
+.dd-qr img { width: 112px; height: 112px; border-radius: 10px; background: #fff; padding: 4px; }
+.dd-qr figcaption { font-size: 11px; color: #9aa6b8; }
+.dd-status { margin: 0; font-size: 13px; min-height: 1em; }
+.dd-status:empty { display: none; }
+.dd-status[data-tone=busy] { color: #f0d07a; } .dd-status[data-tone=ok] { color: #7dffc0; } .dd-status[data-tone=bad] { color: #ffb4b0; }
+@media (max-aspect-ratio: 4/5) { .demo-doc { left: 16px; right: 16px; width: auto; } }
+@media (max-width: 600px) { .dd-qr { display: none; } } /* en un celular se sube con el boton; el QR es para el kiosco y el computador */

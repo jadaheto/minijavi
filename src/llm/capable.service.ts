@@ -82,6 +82,32 @@ export class CapableModelService implements OnModuleInit {
   /** Para el respaldo del taller: a donde y con que clave se llama a la API Responses (la clave no sale del servidor). */
   get responsesTarget() { return this.usesResponses ? { url: this.url, key: this.key, model: this.cfg.capableModel, extra: extraForResponses(this.cfg.capableExtra) } : undefined; }
 
+  /** ¿Puede leer documentos (PDF con sus imagenes, fotos)? Solo OpenAI por la API Responses. */
+  get readsFiles() { return this.usesResponses && this.cfg.capableProvider === 'openai'; }
+  /**
+   * Lee un archivo con el modelo capaz y devuelve su respuesta en texto. Documentacion de OpenAI leida el 2026-11-21
+   * (guia "File inputs"): `{type: "input_file", filename, file_data: "data:application/pdf;base64,..."}`; para PDF el
+   * modelo recibe el texto extraido Y la imagen de cada pagina (por eso sirve con PDF escaneados); 50 MB por archivo.
+   * Las fotos van como `input_image` con una data URL; el texto plano, como texto.
+   */
+  async readFile(file: { name: string; mime: string; data: Buffer }, prompt: string, maxOut = 32000, signal?: AbortSignal): Promise<string> {
+    if (!this.readsFiles) throw new Error('el modelo capaz no puede leer archivos (hace falta OpenAI)');
+    const b64 = file.data.toString('base64');
+    const part = file.mime === 'application/pdf' ? { type: 'input_file', filename: file.name, file_data: `data:application/pdf;base64,${b64}` }
+      : file.mime.startsWith('image/') ? { type: 'input_image', image_url: `data:${file.mime};base64,${b64}` }
+      : { type: 'input_text', text: `Contenido del archivo ${file.name}:\n${file.data.toString('utf8').slice(0, 120_000)}` };
+    const body = { model: this.cfg.capableModel, input: [{ role: 'user', content: [part, { type: 'input_text', text: prompt }] }], max_output_tokens: maxOut, ...extraForResponses(this.cfg.capableExtra) };
+    let out = '';
+    try {
+      for await (const ev of responsesEvents(this.url, this.key, body, signal)) {
+        if (ev.type === 'response.output_text.delta' && typeof ev.delta === 'string') out += ev.delta;
+        else if (ev.type === 'response.completed' || ev.type === 'response.incomplete') { const u = responseUsage(ev); this.usage.add('capaz_calls'); this.usage.add('capaz_in', u.input); this.usage.add('capaz_out', u.output); }
+        else if (ev.type === 'response.failed' || ev.type === 'error') throw new Error(responseFailure(ev));
+      }
+    } catch (e) { throw new Error(`${this.label} ${(e as any).status ? `respondió ${(e as any).status}: ` : 'falló: '}${(e as Error).message}`); }
+    return out;
+  }
+
   // ---- OpenAI, API Responses (ver openai-responses.ts) ----
   private async *chatResponses(messages: OpenAiMessage[], tools: OpenAiTool[], signal: AbortSignal | undefined, maxTokens: number): AsyncGenerator<LlmEvent> {
     const { instructions, input } = toResponsesInput(messages, this.items);

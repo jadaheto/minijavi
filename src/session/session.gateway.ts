@@ -17,7 +17,8 @@ import { MemoryService, VisitorMemory } from '../memory/memory.service';
 import { INTERESTS, LeadsService } from '../leads/leads.service';
 import { GalleryItem, GalleryState, ImagesService } from '../images/images.service';
 import { DeepgramService, SttStream } from '../stt/deepgram.service';
-import { asData, DEMO_TURNS, DemoState, ToolsService } from '../tools/tools.service';
+import { asData, demoTurns, DemoState, ToolsService } from '../tools/tools.service';
+import { DemoDocsService, DocUpdate } from '../demo/demo-docs.service';
 import { AlertsService } from '../ops/alerts.service';
 import { PortfolioService } from '../portfolio/portfolio.service';
 import { CapableModelService } from '../llm/capable.service';
@@ -288,6 +289,7 @@ export class SessionGateway implements OnGatewayConnection {
     private readonly portfolio: PortfolioService, private readonly visits: VisitsService,
     private readonly optout: OptOutService, private readonly guard: InjectionGuard, private readonly capable: CapableModelService, private readonly catalog: CatalogService,
     @Optional() private readonly brief?: BriefService,
+    @Optional() private readonly demoDocs?: DemoDocsService,
   ) {
     // Cuando Claude Code termina un encargo, se le cuenta a Javier en las sesiones de dueño abiertas.
     this.workshop.onDone((d) => { for (const [s, client] of this.owners) void this.workshopNote(client, s, d.project.slug); });
@@ -500,9 +502,36 @@ export class SessionGateway implements OnGatewayConnection {
     return firstToday && this.brief ? `${hello}, Javier.` : `${hello}, Javier, aquí estoy. ¿Qué revisamos?`;
   }
 
+  /** Avance de la lectura del documento de la demo: se muestra en pantalla y, al terminar, el avatar lo cuenta. */
+  private onDemoDoc(client: WebSocket, s: Session, u: DocUpdate) {
+    if (!s.ready) return;
+    s.demo.doc = { ...(s.demo.doc ?? {}), state: u.state, ...(u.id ? { id: u.id } : {}), ...(u.business ? { business: u.business } : {}), ...(u.profile ? { profile: u.profile } : {}) };
+    this.send(client, { type: 'demo_doc', state: u.state, message: u.message, business: u.business });
+    if (u.state === 'leyendo') s.lastActivity = Date.now();
+    if (u.state === 'listo' && u.profile) {
+      const ficha = asData('el documento que subió la persona', u.profile.ficha.slice(0, 2500));
+      s.notes.push({ text: s.demo.on
+        ? `(Aviso del sistema: ya se leyó el documento que subió la persona para "${u.profile.negocio}". Ficha del negocio: ${ficha} Dile en una o dos frases que ya lo leíste y menciona dos o tres cosas que vende; luego sigue la demostración como su asistente. Desde ahora responde SOLO con lo que diga su documento (en cada turno te llegan los fragmentos relacionados); lo que no esté, di que se configuraría con sus datos reales, sin inventarlo. La demostración ahora dura ${demoTurns(s.demo)} intervenciones.)`
+        : `(Aviso del sistema: ya se leyó el documento que subió la persona para "${u.profile.negocio}". Ficha: ${ficha} La demostración había terminado: pregúntale en una frase si quiere probarla de nuevo con su información; si dice que sí, llama a demo con accion empezar.)` });
+      this.pumpNotes(client, s);
+    } else if (u.state === 'error') {
+      s.notes.push({ text: `(Aviso del sistema: no se pudo usar el documento que subió la persona. Lo que hay que decirle: "${u.message}". Díselo con tus palabras en una frase y sigue${s.demo.on ? ' la demostración' : ''}.)` });
+      this.pumpNotes(client, s);
+    }
+  }
+  /** El interesado registrado despues de una demo con documento: su ficha queda anotada para Javier. */
+  private async linkDemoLead(doc: NonNullable<DemoState['doc']>, leadId: number) {
+    try {
+      await this.demoDocs?.linkLead(doc.id!, leadId);
+      const lead = await this.leads.get(leadId); if (!lead) return;
+      const note = `Subió el documento de su negocio a la demo (${doc.id}). Ficha: ${(doc.profile?.ficha ?? '').replace(/\s+/g, ' ').slice(0, 600)}`;
+      await this.leads.update(leadId, { notes: lead.notes ? `${lead.notes}\n${note}` : note });
+    } catch (e) { this.log.warn(`no se pudo anotar la demo en el interesado ${leadId}: ${(e as Error).message}`); }
+  }
+
   private end(s: Session) {
     if (!s.ready) return;
-    s.ready = false; this.active--; this.owners.delete(s); clearTimeout(s.noteTimer);
+    s.ready = false; this.active--; this.owners.delete(s); clearTimeout(s.noteTimer); this.demoDocs?.forget(s.n);
     s.turn?.ctrl.abort(); s.stt?.close(); s.spec?.ctrl.abort(); clearTimeout(s.specTimer);
     if (!s.owner && s.userTurns > 0) void this.wrapUp(s);
     // Conversaciones del sitio (solo si SAVE_CONVERSATIONS=1; las llamadas las guarda su propio controlador y las del dueño no se guardan).
@@ -750,9 +779,10 @@ export class SessionGateway implements OnGatewayConnection {
     let demoNote = '';
     if (s.demo.on && !auto) {
       s.demo.turns++;
-      demoNote = s.demo.turns >= DEMO_TURNS
+      const limit = demoTurns(s.demo);
+      demoNote = s.demo.turns >= limit
         ? `\n\n(Nota del sistema: esta fue la última intervención de la demostración. Respóndele todavía como el asistente de "${s.demo.business}" y, en la misma respuesta, llama a demo con accion terminar.)`
-        : `\n\n(Nota del sistema: demostración en curso, intervención ${s.demo.turns} de ${DEMO_TURNS}. Sigues siendo el asistente de "${s.demo.business}" atendiendo a un cliente; no eres Javier. Si la persona pide parar o vuelve a hablar de contratar a Javier, llama a demo con accion terminar.)`;
+        : `\n\n(Nota del sistema: demostración en curso, intervención ${s.demo.turns} de ${limit}. Sigues siendo el asistente de "${s.demo.business}" atendiendo a un cliente; no eres Javier. Si la persona pide parar o vuelve a hablar de contratar a Javier, llama a demo con accion terminar.)`;
     }
     // Señal de inyeccion: se evalua en paralelo con la respuesta y solo se consulta si el turno va a ejecutar una herramienta con efectos.
     if (!auto) turn.screen = this.guard.screen(userText, s.owner ? 'una sesión del dueño' : s.callerPhone ? 'una llamada de WhatsApp' : 'una conversación del sitio', s.owner ? 'dueno' : 'publico');
@@ -762,6 +792,7 @@ export class SessionGateway implements OnGatewayConnection {
     if (s.history.length > 41) s.history.splice(1, s.history.length - 41); // system + ultimos 40 mensajes
     try {
       let buffer = '';
+      let demoCtx: string | undefined; // fragmentos del documento de la demo: se buscan una vez por turno y sirven en todas sus rondas
       for (let round = 0; round < (s.owner ? 6 : 4); round++) {
         let toolCalls: { id: string; name: string; arguments: string }[] = [];
         let text = '';
@@ -769,13 +800,17 @@ export class SessionGateway implements OnGatewayConnection {
         if (round === 0 && spec) source = this.drain(spec);
         else {
           // El contexto de conocimiento acompana al mensaje solo en este turno; en el historial queda el mensaje limpio.
-          const ctx = auto || s.demo.on ? '' : await this.context(s, userText); // en una demostracion no se mezcla lo que se sabe de Javier
+          // En una demostracion no se mezcla lo que se sabe de Javier; si la persona subio su documento, se buscan los
+          // fragmentos de ESE documento para lo que pregunto el cliente.
+          const doc = s.demo.on && s.demo.doc?.state === 'listo' && s.demo.doc.id ? s.demo.doc : undefined;
+          const ctx = auto ? '' : doc ? (demoCtx ??= this.demoDocs ? await this.demoDocs.context(doc.id!, doc.profile, userText) : '') : s.demo.on ? '' : await this.context(s, userText);
           const view = ctx ? s.history.map((m) => (m === userEntry ? { ...m, content: m.content + ctx } : m)) : s.history;
           // En modo dueño el encargo para el taller va completo en los argumentos de la herramienta: necesita mas espacio.
           // Ruta del turno (1c): solo en la primera peticion, solo si YA llego y Javier la activo; si no, todo va como siempre.
           const route = round === 0 ? turn.screen?.route() : undefined;
           if (round === 0) turn.capable = this.guard.useCapable(route, s.owner);
-          const defs = this.guard.tools(await this.tools.definitions(s.owner) as any[], route);
+          // Durante una demostracion solo existe la herramienta demo (impuesto aqui, no solo en el prompt).
+          const defs = s.demo.on ? (await this.tools.definitions(s.owner) as any[]).filter((t) => t.function?.name === 'demo') : this.guard.tools(await this.tools.definitions(s.owner) as any[], route);
           source = turn.capable ? this.viaCapable(s, turn, view, defs) : this.llm.chat(view, defs, turn.ctrl.signal, s.owner ? 2000 : 400);
         }
         for await (const ev of source) {
@@ -798,19 +833,28 @@ export class SessionGateway implements OnGatewayConnection {
           let result: string;
           if (c.name === 'registrar_interesado' && s.leads >= 3) result = 'No se guardó: ya se registraron varios contactos en esta conversación.';
           else if (c.name === 'buscar_imagenes' && !s.owner && s.imageSearches >= this.cfg.imagesPerSession) result = 'No se buscó: ya se mostraron varias tandas de imágenes en esta conversación. Dile que por ahora no puedes mostrar más.';
+          else if (s.demo.on && c.name !== 'demo') result = 'NO se ejecutó: durante la demostración no se usan herramientas. Sigue en el papel o termina la demostración con demo terminar.';
           else if (!s.owner && turn.screen && (await turn.screen.blocks(c.name))) result = BLOCKED_NOTE;
           else if (GATED.has(c.name) && (auto || turn.tainted)) {
             this.log.warn(`sesion #${s.n}: ${c.name} bloqueada (${auto ? 'aviso automatico' : 'el turno leyo texto de terceros'})`);
             result = 'NO se ejecutó. Por seguridad, esta acción no corre en la misma respuesta en que leíste datos de terceros ni en un aviso automático. Dile a Javier qué ibas a hacer y pídele que te lo confirme; si dice que sí, vuelve a llamar la herramienta.';
           }
           else {
-            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, news: (s.news ??= { index: 0 }), marketList: (s.marketList ??= { items: [], title: '' }), places: (s.places ??= { chargers: [] }), locate: s.owner && !s.callerPhone ? () => this.locate(client, s) : undefined, demo: s.demo, source: s.callerPhone ? 'llamada' : 'voz',
+            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, news: (s.news ??= { index: 0 }), marketList: (s.marketList ??= { items: [], title: '' }), places: (s.places ??= { chargers: [] }), locate: s.owner && !s.callerPhone ? () => this.locate(client, s) : undefined, demo: s.demo, canUpload: !!this.demoDocs?.enabled && !s.callerPhone && (!s.demo.doc || s.demo.doc.state === 'esperando'), source: s.callerPhone ? 'llamada' : 'voz',
               notify: (note) => { if (s.ready) { s.notes.push(note); this.pumpNotes(client, s); } } });
             if (c.name === 'buscar_imagenes' && out.gallery) s.imageSearches++;
             if (out.gallery) this.sendGallery(client, s, out.gallery);
-            if (out.demo !== undefined) this.send(client, { type: 'demo', on: out.demo, title: s.demo.business });
+            if (out.demo !== undefined) {
+              // Al empezar una demo (con pantalla y sin documento aun): enlace de subida para el boton y el QR.
+              const upload = out.demo && (!s.demo.doc || s.demo.doc.state === 'esperando') && !s.callerPhone && this.demoDocs?.enabled ? await this.demoDocs.offer(s.n, s.demo.business, (u) => this.onDemoDoc(client, s, u)) : null;
+              if (upload) s.demo.doc = { state: 'esperando' };
+              this.send(client, { type: 'demo', on: out.demo, title: s.demo.business, ...(upload ? { upload: { token: upload.token, url: upload.url, qr: upload.qr, mb: this.cfg.demoDocMb, days: this.cfg.demoDocDays } } : {}) });
+            }
             result = out.text; if (out.untrusted) turn.tainted = true;
-            if (c.name === 'registrar_interesado' && result.startsWith('Guardado')) { s.leads++; const id = Number(result.match(/número (\d+)/)?.[1]); if (id) s.leadIds.push(id); }
+            if (c.name === 'registrar_interesado' && result.startsWith('Guardado')) {
+              s.leads++; const id = Number(result.match(/número (\d+)/)?.[1]); if (id) s.leadIds.push(id);
+              if (id && s.demo.doc?.state === 'listo' && s.demo.doc.id) void this.linkDemoLead(s.demo.doc, id); // la ficha de su negocio queda con el interesado
+            }
             if (c.name === 'demo' && out.demo === true) s.demos++;
             if (c.name === 'portafolio' && result.includes('del portafolio (datos reales')) s.cases++;
             // Efectos que dependen del dato consultado: fondo del clima, billetes del dolar.

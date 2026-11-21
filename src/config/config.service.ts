@@ -147,6 +147,13 @@ export class ConfigService {
   readonly briefHour: number;
   readonly briefDays: number[];
   readonly briefVoice: boolean;
+  /** "Crea tu propio asistente": documentos subidos a una demo (DEMO_DOCUMENTOS=0 lo apaga). Topes de tamaño, paginas, por IP, por dia y dias que se guardan. */
+  readonly demoDocs: boolean;
+  readonly demoDocMb: number;
+  readonly demoDocPages: number;
+  readonly demoDocPerIpHour: number;
+  readonly demoDocDaily: number;
+  readonly demoDocDays: number;
   /** Al cerrar una conversacion publica: analizarla con el modelo y avisar por Telegram si mostro interes. */
   readonly visitReports: boolean;
   /** Guardar tambien las conversaciones del sitio (no solo las llamadas). Apagado por defecto: implica avisar a los visitantes. */
@@ -381,6 +388,12 @@ export class ConfigService {
     this.briefHour = hour('RESUMEN_HORA', 7);
     this.briefDays = [...new Set(str('RESUMEN_DIAS', '1,2,3,4,5').split(',').map((d) => Number(d.trim())).filter((d) => Number.isInteger(d) && d >= 1 && d <= 7))];
     this.briefVoice = str('RESUMEN_VOZ', '1') !== '0';
+    this.demoDocs = str('DEMO_DOCUMENTOS', '1') !== '0';
+    this.demoDocMb = Math.min(40, int('DEMO_DOC_MB', 10, 1));
+    this.demoDocPages = int('DEMO_DOC_PAGINAS', 20, 1);
+    this.demoDocPerIpHour = int('DEMO_DOC_POR_IP_HORA', 3, 1);
+    this.demoDocDaily = int('DEMO_DOC_DIA', 30, 1);
+    this.demoDocDays = int('DEMO_DOC_DIAS', 7, 1);
     this.visitReports = process.env.VISIT_REPORTS !== '0';
     this.usagePrices = {};
     try { for (const [k, v] of Object.entries(JSON.parse(process.env.USAGE_PRICES || '{}'))) if (Number(v) > 0) this.usagePrices[k] = Number(v); }

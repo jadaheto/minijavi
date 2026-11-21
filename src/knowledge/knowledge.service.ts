@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { ConfigService } from '../config/config.service';
 import { UsageService } from '../usage/usage.service';
 
-export interface Chunk { text: string; source: string; scope: 'publico' | 'privado'; }
+export interface Chunk { text: string; source: string; scope: 'publico' | 'privado' | 'demo'; }
 export interface Hit extends Chunk { score: number; }
 
 /**
@@ -58,7 +58,7 @@ export class KnowledgeService {
   }
 
   /** Reemplaza todo lo que habia de un archivo por sus fragmentos nuevos. */
-  async replaceSource(source: string, scope: Chunk['scope'], texts: string[]) {
+  async replaceSource(source: string, scope: Chunk['scope'], texts: string[], extra: Record<string, unknown> = {}) {
     const name = this.cfg.qdrantCollection;
     await this.qdrant('POST', `/collections/${name}/points/delete?wait=true`, { filter: { must: [{ key: 'source', match: { value: source } }] } });
     for (let i = 0; i < texts.length; i += 16) {
@@ -67,7 +67,7 @@ export class KnowledgeService {
       const points = batch.map((text, k) => {
         const h = createHash('sha256').update(`${source}#${i + k}`).digest('hex');
         const id = `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
-        return { id, vector: vectors[k], payload: { text, source, scope } };
+        return { id, vector: vectors[k], payload: { text, source, scope, ...extra } };
       });
       await this.qdrant('PUT', `/collections/${name}/points?wait=true`, { points });
     }
@@ -84,10 +84,37 @@ export class KnowledgeService {
     const [vector] = await this.embed([query], 'query', signal);
     const out = await this.qdrant('POST', `/collections/${this.cfg.qdrantCollection}/points/query`, {
       query: vector, limit: this.cfg.knowledgeTopK, with_payload: true, score_threshold: this.cfg.knowledgeMinScore,
-      ...(owner ? {} : { filter: { must: [{ key: 'scope', match: { value: 'publico' } }] } }),
+      // El dueño ve lo publico y lo privado; nadie ve aqui los documentos de las demos (solo su propia demo, con searchDemo).
+      filter: owner ? { must_not: [{ key: 'scope', match: { value: 'demo' } }] } : { must: [{ key: 'scope', match: { value: 'publico' } }] },
     }, signal);
     return (out?.points ?? []).map((p: any) => ({ text: p.payload?.text ?? '', source: p.payload?.source ?? '', scope: p.payload?.scope, score: p.score }));
   }
+  // ---- Documentos de las demos ("Crea tu propio asistente"): scope 'demo' y campo `demo` con el id de la demo. ----
+  /** Guarda los fragmentos del documento de una demo (reemplaza los que tuviera). */
+  async addDemo(id: string, texts: string[]): Promise<number> {
+    const [probe] = await this.embed([texts[0] ?? 'x'], 'passage');
+    await this.ensureCollection(probe.length);
+    await this.qdrant('PUT', `/collections/${this.cfg.qdrantCollection}/index`, { field_name: 'demo', field_schema: 'keyword' }).catch(() => undefined); // ya existe: da igual
+    await this.replaceSource(`demo:${id}`, 'demo', texts, { demo: id });
+    this.ready = null;
+    return texts.length;
+  }
+  /** Fragmentos del documento de ESA demo (nunca de otra, ni de la base de Javier). */
+  async searchDemo(id: string, query: string, signal?: AbortSignal): Promise<Hit[]> {
+    if (!this.enabled) return [];
+    const [vector] = await this.embed([query], 'query', signal);
+    const out = await this.qdrant('POST', `/collections/${this.cfg.qdrantCollection}/points/query`, {
+      query: vector, limit: 4, with_payload: true, score_threshold: Math.min(this.cfg.knowledgeMinScore, 0.2),
+      filter: { must: [{ key: 'scope', match: { value: 'demo' } }, { key: 'demo', match: { value: id } }] },
+    }, signal);
+    return (out?.points ?? []).map((p: any) => ({ text: p.payload?.text ?? '', source: p.payload?.source ?? '', scope: p.payload?.scope, score: p.score }));
+  }
+  /** Borra todo lo de una demo. */
+  async deleteDemo(id: string): Promise<void> {
+    if (!this.enabled) return;
+    await this.qdrant('POST', `/collections/${this.cfg.qdrantCollection}/points/delete?wait=true`, { filter: { must: [{ key: 'demo', match: { value: id } }] } });
+  }
+
   /** Tras cargar documentos, para que la siguiente busqueda vuelva a comprobar el contenido. */
   refresh() { this.ready = null; }
 }

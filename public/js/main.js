@@ -9,6 +9,7 @@ import { createTeslaPanel } from './tesla.js';
 import { createNewsPanel } from './news.js';
 import { createMarketsPanel } from './markets.js';
 import { createDataPanel } from './panels.js';
+import { createDemoDoc } from './demo-doc.js';
 import { BrowserVoice } from './browser-voice.js';
 import { createGate } from './mic-gate.js';
 
@@ -43,6 +44,7 @@ const news = createNewsPanel($('news'), (index) => { socket?.send({ type: 'news'
 const markets = createMarketsPanel($('markets'), () => { if (!markets.active && state !== 'speaking') backdrop.show(restScene()); }); // al cerrarlos se va su fondo
 // Paneles de datos: dolar y Bitcoin, estado de los servicios y consumo.
 const dataPanel = createDataPanel($('panel'));
+const demoDoc = createDemoDoc($('demo-doc'));
 // Vista previa del resumen del dia con datos de EJEMPLO (no consulta nada): abrir con ?demo=resumen.
 if (new URLSearchParams(location.search).get('demo') === 'resumen') {
   const cards = [
@@ -326,7 +328,9 @@ function onMessage(msg) {
     case 'card':
       showCard(msg); break;
     case 'demo': // demostracion en vivo: el avatar esta haciendo de asistente de otro negocio
-      $('demo').hidden = !msg.on; $('demo').textContent = msg.on ? `Demostración: asistente de ${msg.title}` : ''; break;
+      $('demo').hidden = !msg.on; $('demo').textContent = msg.on ? `Demostración: asistente de ${msg.title}` : ''; demoDoc.demo(msg); break;
+    case 'demo_doc': // lectura del documento del negocio (subido aqui o desde el celular)
+      demoDoc.update(msg); break;
     case 'gallery': // fotos o bocetos al lado del avatar
       showGallery(msg); break;
     case 'music': // musica de fondo

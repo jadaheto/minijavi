@@ -40,8 +40,13 @@ import { asData } from './data';
 import { BriefService } from '../brief/brief.service';
 import { weatherNow } from './weather';
 /** Demostracion en vivo: el avatar hace de asistente del negocio de quien pregunta, unos pocos turnos. */
-export interface DemoState { on: boolean; business: string; kind: string; turns: number; }
+export interface DemoState { on: boolean; business: string; kind: string; turns: number;
+  /** Documento del negocio subido en esta conversacion ("Crea tu propio asistente"). */
+  doc?: { id?: string; state: 'esperando' | 'leyendo' | 'listo' | 'error'; business?: string; profile?: { negocio: string; ficha: string; colores: string[]; extra?: string } }; }
 export const DEMO_TURNS = 6;
+/** Con el documento del negocio leido la demostracion dura un poco mas (hay mas que probar). */
+export const DEMO_TURNS_DOC = 8;
+export const demoTurns = (d?: DemoState) => (d?.doc?.state === 'listo' ? DEMO_TURNS_DOC : DEMO_TURNS);
 
 /**
  * Encargo de bocetos: tres propuestas distintas y rapidas, cada una en su carpeta, para elegir ANTES de construir.
@@ -74,6 +79,8 @@ const UNTRUSTED: Record<string, string> = { que_hiciste: 'la bitácora (nombres 
 /** Datos de la sesion que algunas herramientas necesitan (la direccion publica, para enlaces y QR). */
 export interface ToolContext { /** Interesados registrados en esta conversacion (para anotarles algo, como que pidieron precio). */ leadIds?: number[];
   origin: string; music?: MusicState; gallery?: GalleryState;
+  /** En esta conversacion se puede ofrecer subir el documento del negocio a la demo (hay pantalla y la funcion esta activa). */
+  canUpload?: boolean;
   /** Noticia que se esta viendo en esta conversacion (0 = la lista), para "la siguiente". */
   news?: { index: number; part?: number; section?: string };
   /** Pide la ubicacion al navegador de esta sesion (el dueño debe permitirla); undefined si no la dio o no hay navegador. */
@@ -221,11 +228,16 @@ export class ToolsService {
         const tipo = ['whatsapp', 'voz', 'pedidos', 'citas'].includes(String(args.tipo)) ? String(args.tipo) : 'whatsapp';
         Object.assign(d, { on: true, business: negocio, kind: tipo, turns: 0 });
         usage.add('demos');
+        const doc = d.doc?.state === 'listo' ? d.doc : undefined;
+        const first = doc ? `"Listo, desde ya soy el asistente de ${negocio} y ya tengo la información de tu documento; háblame como si fueras un cliente."`
+          : ctx.canUpload ? `"Listo, desde ya soy el asistente de ${negocio}. Si tienes un PDF o una foto con tus productos y precios, súbelo con el botón de la pantalla o el código QR y te atiendo con tu información; si no, háblame como si fueras un cliente."`
+          : `"Listo, desde ya soy el asistente de ${negocio}; háblame como si fueras un cliente."`;
         const papel = { whatsapp: 'el asistente que responde el WhatsApp del negocio', voz: 'el agente de voz que contesta el teléfono del negocio', pedidos: 'el asistente que toma los pedidos del negocio', citas: 'el asistente que agenda las citas del negocio' }[tipo];
-        return { text: `Demostración iniciada. Primero dile en UNA frase: "Listo, desde ya soy el asistente de ${negocio}; háblame como si fueras un cliente." Y enseguida saluda ya en el papel. ` +
+        return { text: `Demostración iniciada. Primero dile en UNA frase: ${first} Y enseguida saluda ya en el papel. ` +
           `Desde ahora, y hasta que termine, eres ${papel} "${negocio}", NO Javier: atiendes a un cliente de ese negocio, amable y breve. Lo que contó del negocio: ${asData('lo que dijo la persona', String(args.que_ofrece ?? 'no dio detalles').slice(0, 500))} ` +
-          `Si te preguntan algo que no sabes (precios, existencias, horarios), invéntalo de forma creíble diciendo "por ejemplo" una sola vez al inicio: es una muestra, no datos reales. No registres interesados ni uses otras herramientas dentro del papel. ` +
-          `La demostración dura ${DEMO_TURNS} intervenciones del cliente; el sistema te avisará cuándo cerrarla.`, demo: true };
+          (doc ? `Su documento ya está leído. Ficha del negocio: ${asData('el documento que subió la persona', doc.profile?.ficha ?? '')} Responde SOLO con lo que diga el documento (en cada turno te llegan los fragmentos relacionados); si preguntan algo que no está, di que eso se configuraría con sus datos reales, sin inventarlo. `
+            : `Si te preguntan algo que no sabes (precios, existencias, horarios), invéntalo de forma creíble diciendo "por ejemplo" una sola vez al inicio: es una muestra, no datos reales. `) +
+          `No registres interesados ni uses otras herramientas dentro del papel. La demostración dura ${demoTurns(d)} intervenciones del cliente; el sistema te avisará cuándo cerrarla.`, demo: true };
       },
     };
     // Portafolio (pedido por Javier el 2026-11-18): casos reales. El detalle completo y la foto salen de aqui; el prompt trae un resumen.

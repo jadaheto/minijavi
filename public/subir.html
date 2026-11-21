@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Sube tu documento</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; min-height: 100vh; box-sizing: border-box; padding: 16px; display: grid; place-items: center; background: #0f1420; color: #eef2f8; font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { box-sizing: border-box; width: min(440px, 100%); display: grid; gap: 14px; padding: 22px; border-radius: 20px; background: #182031; box-shadow: 0 20px 60px rgba(0, 0, 0, .4); }
+    h1 { margin: 0; font-size: 21px; }
+    p { margin: 0; color: #b8c2d3; }
+    label { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: #d7deea; }
+    input[type=checkbox] { width: 20px; height: 20px; margin-top: 1px; flex: none; }
+    button { padding: 14px; border: 0; border-radius: 14px; background: #3987e5; color: #fff; font: inherit; font-weight: 700; }
+    button:disabled { opacity: .5; }
+    small { color: #8f9aac; }
+    #estado[data-tone=bad] { color: #ffb4b0; } #estado[data-tone=ok] { color: #7dffc0; } #estado[data-tone=busy] { color: #f0d07a; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>📄 Sube el documento de tu negocio</h1>
+    <p>Un PDF (también escaneado) o una foto con tus productos y precios. El asistente de la pantalla te atenderá con tu información.</p>
+    <label><input type="checkbox" id="ok"> Autorizo guardar este documento 7 días para armar mi demostración.</label>
+    <input type="file" id="file" accept="application/pdf,image/jpeg,image/png,image/webp,text/plain,.pdf,.txt" hidden>
+    <button type="button" id="pick">Elegir documento</button>
+    <small>Máximo 10 MB · PDF, JPG, PNG o texto</small>
+    <p id="estado" aria-live="polite"></p>
+  </main>
+  <script src="/js/subir.js"></script>
+</body>
+</html>

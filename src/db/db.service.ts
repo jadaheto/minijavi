@@ -93,6 +93,9 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS job_gates (id {{ID}}, business TEXT NOT NULL, slug TEXT NOT NULL, run_at TEXT NOT NULL, pass INTEGER NOT NULL, at TEXT NOT NULL, gate TEXT NOT NULL, kind TEXT NOT NULL,
      ok INTEGER NOT NULL, exit_code INTEGER, seconds INTEGER NOT NULL DEFAULT 0, output TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS job_gates_run ON job_gates (slug, run_at)`,
+  // Documentos de las demos "Crea tu propio asistente" (2026-11-21): la ficha del negocio y el estado. El texto completo
+  // vive en Qdrant (scope demo). Se borran al vencer (expires_at); NO van en el respaldo diario (datos de terceros, 7 dias).
+  `CREATE TABLE IF NOT EXISTS demos (id TEXT PRIMARY KEY, business TEXT NOT NULL, created_at {{TS}} NOT NULL, expires_at {{TS}} NOT NULL, status TEXT NOT NULL, profile TEXT NOT NULL DEFAULT '', chunks INTEGER NOT NULL DEFAULT 0, pages INTEGER NOT NULL DEFAULT 0, kind TEXT NOT NULL DEFAULT '', lead_id INTEGER NOT NULL DEFAULT 0, consent_at {{TS}} NOT NULL, error TEXT NOT NULL DEFAULT '')`,
 ];
 
 @Injectable()
