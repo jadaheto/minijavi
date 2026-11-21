@@ -433,3 +433,12 @@ body.panel:has(.pnl[data-kind="board"]):not(.showing) #stage { transform: transl
 .pnl[data-kind="chargers"], .pnl[data-kind="route"] { width: min(560px, 46vw); }
 @media (max-aspect-ratio: 4/5) { .pnl[data-kind="chargers"], .pnl[data-kind="route"] { width: min(560px, 94vw); } }
 @media (prefers-reduced-motion: reduce) { .pnl-charger { opacity: 1; animation: none; } .pnl-map { opacity: 1; transform: none; transition: none; } }
+
+/* Bateria al llegar (trayecto con el Tesla conectado). */
+.pnl-battery { animation-delay: .25s; --c: #34d17f; }
+.pnl-battery.low { --c: #f0b429; } .pnl-battery.short { --c: #ef5350; }
+.pnl-battery .pnl-value { color: var(--c); }
+.pnl-bat { position: relative; height: 10px; }
+.pnl-bat i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; }
+.pnl-bat i.now { background: rgba(255, 255, 255, .16); animation: none; }
+.pnl-bat i.arrive { background: linear-gradient(90deg, color-mix(in srgb, var(--c) 70%, #000), var(--c)); box-shadow: 0 0 10px var(--c); animation-delay: .5s; }

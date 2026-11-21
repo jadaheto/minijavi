@@ -142,6 +142,18 @@ function route(msg) {
   chips.append(el('span', 'mkt-chg flat', `${num(msg.km, 1)} km`), el('span', 'mkt-chg flat', `llegas ${msg.arrive || ''}`));
   if (Number(msg.delay) >= 3) chips.append(el('span', 'mkt-chg warn', `+${num(msg.delay)} min por tráfico`)); else chips.append(el('span', 'mkt-chg up', 'sin demoras'));
   card.append(chips, el('small', 'pnl-source', 'Estimación de Google Maps')); wrap.append(card);
+  // Con el Tesla conectado: con cuanta bateria se llega (la barra muestra la de ahora, tenue, y la de llegada, encendida).
+  const b = msg.battery;
+  if (b && Number.isFinite(b.now)) {
+    const bat = el('section', `pnl-card pnl-battery ${!b.enough ? 'short' : b.arrive < 15 ? 'low' : 'ok'}`), top = el('div', 'pnl-row'), name = el('div', 'pnl-name'), bigB = el('div', 'pnl-big');
+    name.append(el('strong', '', b.enough ? 'Batería al llegar' : 'No alcanza la batería'), el('small', '', `sale con ${num(b.now)} % · ${num(b.rangeKm)} km de autonomía${b.live === false && Number.isFinite(b.ageMin) ? ` · dato de hace ${b.ageMin < 90 ? `${b.ageMin} min` : `${Math.round(b.ageMin / 60)} h`}` : ''}`));
+    if (b.enough) { const v = el('b', 'pnl-value'); countUp(v, b.arrive, 0, 500); bigB.append(v, el('small', '', '%')); }
+    else { const v = el('b', 'pnl-value'); countUp(v, b.shortKm, 0, 500); bigB.append(el('small', '', 'faltan'), v, el('small', '', 'km')); }
+    top.append(name, bigB);
+    const track = el('div', 'pnl-track pnl-bat'), now = el('i', 'now'), arr = el('i', 'arrive'); now.style.width = `${Math.max(0, Math.min(100, b.now))}%`; arr.style.width = `${Math.max(0, Math.min(100, b.enough ? b.arrive : 0))}%`; track.append(now, arr);
+    bat.append(top, track, el('small', 'pnl-source', b.enough ? 'Aproximado: autonomía que marca el carro menos los kilómetros de la ruta' : 'Hay que cargar antes o en el camino: di «¿dónde puedo cargar?»'));
+    wrap.append(bat);
+  }
   return wrap;
 }
 

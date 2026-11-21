@@ -1403,10 +1403,12 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     const { PlaneMcpService } = await import('../mcp/plane-mcp.service');
     const { buildBoard } = await import('../mcp/plane-board');
     Object.assign(process.env, { PLANE_MCP_URL: 'https://plane.invalid/mcp', PLANE_API_KEY: 'clave-plane' });
-    const bcfg = new ConfigService(), plane = new PlaneMcpService(bcfg), today = '2026-11-20', ME = 'yo-1', calls: string[] = []; let key = '';
+    const bcfg = new ConfigService(), plane = new PlaneMcpService(bcfg), ME = 'yo-1', calls: string[] = []; let key = '';
+    // Fechas relativas a hoy (la herramienta usa la fecha real): con fechas fijas esta prueba fallaba al cambiar el dia.
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: bcfg.timezone }).format(new Date()), dayPlus = (n: number) => new Date(Date.parse(`${today}T12:00:00Z`) + n * 86400_000).toISOString().slice(0, 10);
     const item = (n: number, name: string, state: string, o: object = {}) => ({ id: `i${n}`, sequence_id: n, name, state, priority: 'none', assignees: [ME], target_date: null, ...o });
-    const ITEMS = [item(1, 'Informe mensual', 's-todo', { target_date: '2026-11-18', priority: 'low' }), item(2, 'Revisar contrato', 's-todo', { target_date: '2026-11-20' }), item(3, 'Tarea urgente sin fecha', 's-todo', { priority: 'urgent' }), item(4, 'Diseño <b>nuevo</b>', 's-doing', { target_date: '2026-12-01' }),
-      item(5, 'Ya entregada', 's-done', { target_date: '2026-11-01' }), item(6, 'De otra persona', 's-todo', { assignees: ['otro'] }), item(7, 'Cancelada', 's-cancel'), ...Array.from({ length: 8 }, (_, i) => item(20 + i, `Pendiente ${i}`, 's-back'))];
+    const ITEMS = [item(1, 'Informe mensual', 's-todo', { target_date: dayPlus(-2), priority: 'low' }), item(2, 'Revisar contrato', 's-todo', { target_date: today }), item(3, 'Tarea urgente sin fecha', 's-todo', { priority: 'urgent' }), item(4, 'Diseño <b>nuevo</b>', 's-doing', { target_date: dayPlus(11) }),
+      item(5, 'Ya entregada', 's-done', { target_date: dayPlus(-19) }), item(6, 'De otra persona', 's-todo', { assignees: ['otro'] }), item(7, 'Cancelada', 's-cancel'), ...Array.from({ length: 8 }, (_, i) => item(20 + i, `Pendiente ${i}`, 's-back'))];
     planeFetch = (b, init) => {
       key = init.headers['X-Plane-Api-Key']; const { name, arguments: a } = b.params; calls.push(name);
       if (name === 'list_projects') return { results: [{ id: 'p1', name: 'Comercial V1', identifier: 'COMERCIAL' }, { id: 'p2', name: 'CUN360', identifier: 'CUN360' }, { id: 'p3', name: 'Archivado', identifier: 'OLD', archived_at: '2026-01-01' }] };
@@ -1442,7 +1444,7 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     const ask = await tools.run('tablero_tareas', '{}', true);
     must(!ask.panel && /Pregúntale cuál/.test(ask.text) && /Comercial V1 \(COMERCIAL\)/.test(ask.text) && ask.untrusted === true, `sin proyecto: ${ask.text.slice(0, 200)}`);
     const tb = await tools.run('tablero_tareas', '{"proyecto":"comercial"}', true);
-    must((tb.panel as any)?.kind === 'board' && /mis tareas/.test((tb.panel as any).title) && /Atrasadas: 1 · vencen hoy: 1/.test(tb.text) && /Informe mensual \(atrasada desde 2026-11-18/.test(tb.text) && /<<<DATOS/.test(tb.text) && tb.untrusted === true, `tablero por voz: ${tb.text.slice(0, 300)}`);
+    must((tb.panel as any)?.kind === 'board' && /mis tareas/.test((tb.panel as any).title) && /Atrasadas: 1 · vencen hoy: 1/.test(tb.text) && tb.text.includes(`Informe mensual (atrasada desde ${dayPlus(-2)}`) && /<<<DATOS/.test(tb.text) && tb.untrusted === true, `tablero por voz: ${tb.text.slice(0, 300)}`);
     planeFetch = undefined; Object.assign(process.env, { PLANE_MCP_URL: '', PLANE_API_KEY: '' });
     return 'sin proyecto pregunta; solo mis tareas (o todas); atrasadas y de hoy primero; canceladas fuera; error de Plane dicho; solo consultas; solo dueño';
   });
@@ -1491,6 +1493,21 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     must(calls.at(-1) === 'mapa:mapa123:4:sin-ruta:cabe' && /Open Charge Map/.test(c.text) && /desactualizados/.test(c.text), `mapa y avisos de cargadores: ${calls.at(-1)}`);
     const go = await tools.run('trayecto', '{"cargador":1}', true, ctx);
     must((go.panel as any)?.to === 'Cercano' && !calls.slice(-3).some((x) => x.startsWith('geo')) && /pídele un número entre 1 y 3/.test((await tools.run('trayecto', '{"cargador":9}', true, ctx)).text), 'la ruta a un cargador debe usar sus coordenadas, sin buscar el lugar');
+    // Con el Tesla conectado: bateria al llegar; si no alcanza, lo dice; con el carro dormido avisa la edad del dato.
+    {
+      const car = (level: number, miles: number, live = true) => ({ configured: true, connected: true, report: async () => ({ vehicle: { vin: 'X', name: 'Rayo', state: live ? 'online' : 'asleep' }, live, at: live ? undefined : Date.now() - 3 * 3600_000, data: { charge_state: { battery_level: level, battery_range: miles } } }) }) as any;
+      const withCar = (t: any) => new ToolsService(mcfg, { enabled: false, definitions: async () => [] } as any, P.leads, { enabled: false, defaultModel: { label: '' } } as any, { enabled: false } as any, usage, { enabled: false, canGenerate: false } as any, { visible: () => [], list: () => [] } as any, {} as any, P.actions, P.approvals, t, undefined, undefined, undefined, maps);
+      (maps as any).used = 0;
+      const ok = await withCar(car(64, 200)).run('trayecto', '{"destino":"Montería"}', true, ctx), ob: any = (ok.panel as any)?.battery;
+      must(ob?.now === 64 && ob.rangeKm === 322 && ob.arrive === 41 && ob.enough === true && /llegaría con cerca de 41 %/.test(ok.text) && /cuenta simple/.test(ok.text), `batería al llegar (64 %, 322 km de autonomía, ruta de 117,6 km → 41 %): ${JSON.stringify(ob)} ${ok.text.slice(-260)}`);
+      const short = await withCar(car(20, 50, false)).run('trayecto', '{"destino":"Montería"}', true, ctx), sb: any = (short.panel as any)?.battery;
+      must(sb?.enough === false && sb.arrive === 0 && sb.shortKm === 38 && /NO le alcanza/.test(short.text) && /faltan unos 38 km/.test(short.text) && /buscar cargadores/.test(short.text) && /dato de hace 3 horas/.test(short.text), `si no alcanza: ${JSON.stringify(sb)} ${short.text.slice(-260)}`);
+      const tight = await withCar(car(30, 80)).run('trayecto', '{"destino":"Montería"}', true, ctx);
+      must((tight.panel as any).battery.arrive === 3 && /muy justo/.test(tight.text), `llegada muy justa: ${JSON.stringify((tight.panel as any).battery)}`);
+      const broken = await withCar({ configured: true, connected: true, report: async () => { throw new Error('el carro no responde'); } }).run('trayecto', '{"destino":"Montería"}', true, ctx);
+      must((broken.panel as any)?.kind === 'route' && (broken.panel as any).battery === undefined && !/Batería/.test(broken.text), 'si el Tesla falla, el trayecto se responde igual, sin inventar batería');
+      (maps as any).used = 5;
+    }
     // Tope diario propio (9 llamadas a Google en esta prueba).
     const capped = await (async () => { for (let i = 0; i < 6; i++) { const t = (await tools.run('trayecto', `{"destino":"Lugar ${i}","origen":"Otro ${i}"}`, true, ctx)).text; if (/tope de consultas/.test(t)) return true; } return false; })();
     must(capped, 'debía cortar al llegar al tope diario de consultas de mapas');

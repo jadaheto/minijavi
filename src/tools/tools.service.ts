@@ -514,7 +514,7 @@ export class ToolsService {
     };
     const hm = (s: number) => { const m = Math.max(1, Math.round(s / 60)); return m < 60 ? `${m} minutos` : `${Math.floor(m / 60)} hora${m >= 120 ? 's' : ''}${m % 60 ? ` y ${m % 60} minutos` : ''}`; };
     if (maps?.enabled) this.ownerTools.trayecto = {
-      description: 'Calcula cuánto se demora Javier en carro hasta un lugar, con el tráfico de este momento, y muestra el mapa con la ruta, la distancia y la hora de llegada. Úsala cuando pregunte cuánto se demora, cuánto falta o cómo llegar a un sitio, o diga "llévame al cargador 2". Si no dice desde dónde, se usa su ubicación actual.',
+      description: 'Calcula cuánto se demora Javier en carro hasta un lugar, con el tráfico de este momento, y muestra el mapa con la ruta, la distancia y la hora de llegada. Si su Tesla está conectado, dice además con cuánta batería llegaría (o si no le alcanza). Úsala cuando pregunte cuánto se demora, cuánto falta o cómo llegar a un sitio, o diga "llévame al cargador 2". Si no dice desde dónde, se usa su ubicación actual.',
       parameters: { type: 'object', properties: {
         destino: { type: 'string', description: 'A dónde va: ciudad, barrio, dirección o sitio, tal como lo dijo (por ejemplo "Montería", "aeropuerto de Cartagena").' },
         origen: { type: 'string', description: 'Desde dónde sale, solo si lo dijo. Omítelo para usar su ubicación actual.' },
@@ -538,8 +538,23 @@ export class ToolsService {
           const map = await maps.mapImage({ polyline: r.polyline, markers: [{ ...from, label: 'A', color: '0x34d17f' }, { ...to, label: 'B', color: '0xef5350' }] });
           const arrive = new Intl.DateTimeFormat('es-CO', { timeZone: cfg.timezone, hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(Date.now() + r.seconds * 1000)).replace(/\.$/, '');
           const delay = Math.round((r.seconds - r.staticSeconds) / 60), km = Math.round(r.meters / 100) / 10;
-          return { untrusted: true, panel: { kind: 'route', title: 'Trayecto', from: from.label, to: to.label, minutes: Math.max(1, Math.round(r.seconds / 60)), km, arrive, delay, map },
-            text: `En pantalla está el mapa con la ruta.\n${asData('Google Maps (nombres de lugares)', `Desde: ${from.label}\nHasta: ${to.label}`)}\nTiempo en carro con el tráfico de ahora: ${hm(r.seconds)} (${km.toLocaleString('es-CO')} km). Llegaría hacia las ${arrive}.${delay >= 3 ? ` El tráfico agrega unos ${delay} minutos.` : ''}\nDíselo en una o dos frases, con el tiempo, la distancia y la hora de llegada. Es una estimación de Google.` };
+          // Con el Tesla conectado: bateria al llegar (pedido por Javier el 2026-11-21). Cuenta simple y dicha como tal:
+          // la autonomia que marca el carro menos los kilometros de la ruta. No despierta el carro (usa lo ultimo que reporto).
+          let battery: Record<string, unknown> | undefined, batteryText = '';
+          if (tesla?.connected) try {
+            const rep = await tesla.report(), c = teslaCard(rep), level = Number(c.level), range = Number(c.rangeKm);
+            if (level > 0 && range > 0) {
+              const enough = range > km, arrive = enough ? Math.max(0, Math.round(level * (1 - km / range))) : 0, age = c.ageMin as number | undefined;
+              const old = !rep.live && age !== undefined ? ` (dato de hace ${age < 90 ? `${age} minutos` : `${Math.round(age / 60)} horas`}: el carro está dormido)` : '';
+              battery = { now: level, arrive, rangeKm: range, enough, shortKm: enough ? 0 : Math.ceil(km - range), live: rep.live, ageMin: age };
+              batteryText = enough
+                ? `\nBatería del carro: ${level} %, ${range} km de autonomía${old}. Para ${km.toLocaleString('es-CO')} km llegaría con cerca de ${arrive} % (unos ${Math.round(range - km)} km de sobra).${arrive < 15 ? ' Es muy justo: recomiéndale cargar antes o en el camino.' : ''}`
+                : `\nBatería del carro: ${level} %, ${range} km de autonomía${old}. NO le alcanza para ${km.toLocaleString('es-CO')} km: le faltan unos ${Math.ceil(km - range)} km. Dile que tiene que cargar antes o en el camino y ofrécele buscar cargadores.`;
+              batteryText += ' Es una cuenta simple con la autonomía que marca el carro: la velocidad, las subidas y el aire la cambian. Dilo como aproximado.';
+            }
+          } catch { /* sin dato del carro: el trayecto se responde igual */ }
+          return { untrusted: true, panel: { kind: 'route', title: 'Trayecto', from: from.label, to: to.label, minutes: Math.max(1, Math.round(r.seconds / 60)), km, arrive, delay, map, battery },
+            text: `En pantalla está el mapa con la ruta.\n${asData('Google Maps (nombres de lugares)', `Desde: ${from.label}\nHasta: ${to.label}`)}\nTiempo en carro con el tráfico de ahora: ${hm(r.seconds)} (${km.toLocaleString('es-CO')} km). Llegaría hacia las ${arrive}.${delay >= 3 ? ` El tráfico agrega unos ${delay} minutos.` : ''}${batteryText}\nDíselo en dos o tres frases, con el tiempo, la distancia y la hora de llegada${battery ? ', y con cuánta batería llega' : ''}. El tiempo es una estimación de Google.` };
         } catch (e) { return `No se pudo calcular el trayecto: ${(e as Error).message}. Díselo tal cual, sin inventar tiempos.`; }
       },
     };
