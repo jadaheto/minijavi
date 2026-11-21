@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
  * asistente de UN negocio. Cada cliente es un servicio aparte (su base, su dominio, su numero) con un archivo de
  * configuracion. En este modo no existe nada de Javier: ni modo dueño, ni taller, ni sus herramientas.
  */
-export const AVATARS = ['hombre', 'mujer', 'joven', 'mayor', 'perro', 'gato', 'loro'] as const;
+export const AVATARS = ['hombre', 'mujer', 'joven', 'mayor', 'perro', 'gato', 'loro', 'mico'] as const;
 export type AvatarId = (typeof AVATARS)[number];
 export interface BusinessConfig {
   nombre: string;
