@@ -451,15 +451,15 @@ $('dec-test').addEventListener('submit', async (ev) => {
 });
 
 async function loadDemos() {
-  const { enabled, demos, perChat, perDay } = await json('demos');
+  const { enabled, demos, perChat, perDay, totalToday, totalCap } = await json('demos');
   $('demo-count').textContent = `(${demos.length})`;
-  $('demo-note').textContent = demos.length ? `Cada enlace dura 7 días (puedes alargarlo). Charlas de hasta ${perChat} min y ${perDay} min al día por demo. Se borran solas al vencer, con su documento.`
+  $('demo-note').textContent = demos.length ? `Cada enlace dura 7 días (puedes alargarlo). Charlas de hasta ${perChat} min y ${perDay} min al día por demo. Hoy van ${totalToday} de ${totalCap} min entre todas. Se borran solas al vencer, con su documento.`
     : enabled ? 'Todavía no hay ninguna. Aparecen cuando un visitante sube el documento de su negocio durante una demostración.' : 'La subida de documentos no está activa (hace falta el modelo capaz de OpenAI).';
   const estado = { listo: 'Lista', leyendo: 'Leyendo el documento', error: 'Con error' };
   $('demo-list').replaceChildren(...demos.map((d) => {
     const vence = Date.parse(d.expires), dias = Math.max(0, Math.ceil((vence - Date.now()) / 86400000));
     const title = el('strong', {}, ...(d.color ? [el('span', { className: 'swatch', style: `background:${/^#[0-9a-f]{6}$/i.test(d.color) ? d.color : '#888'}` })] : []), document.createTextNode(d.business));
-    const meta = el('small', { className: 'muted', textContent: [estado[d.status] || d.status, `creada ${fecha(d.created)}`, `vence en ${dias} día${dias === 1 ? '' : 's'}`, `${d.kind.toUpperCase()}${d.kind === 'pdf' ? ` · ${d.pages} pág.` : ''}`, `${d.chunks} fragmentos`, `hoy ${d.minutesToday} min`, d.lead ? `interesado #${d.lead}` : 'sin datos de contacto'].join(' · ') });
+    const meta = el('small', { className: 'muted', textContent: [estado[d.status] || d.status, `creada ${fecha(d.created)}`, `vence en ${dias} día${dias === 1 ? '' : 's'}`, `${d.kind.toUpperCase()}${d.kind === 'pdf' ? ` · ${d.pages} pág.` : ''}`, `${d.chunks} fragmentos`, d.sessions ? `la abrieron ${d.sessions} ve${d.sessions === 1 ? 'z' : 'ces'} (${d.minutes} min; hoy ${d.minutesToday})` : 'aún no la abren', d.lead ? `interesado #${d.lead}` : 'sin datos de contacto'].join(' · ') });
     const kids = [title, meta];
     if (d.error) kids.push(el('small', { className: 'danger-text', textContent: `Error: ${d.error}` }));
     if (d.saludo) kids.push(el('small', { textContent: `Saludo: «${d.saludo}»${d.preguntas.length ? ` · Preguntas: ${d.preguntas.join(' / ')}` : ''}` }));

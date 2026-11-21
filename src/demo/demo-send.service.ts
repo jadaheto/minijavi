@@ -53,6 +53,8 @@ export class DemoSendService implements OnModuleInit {
         await new Promise((r) => setTimeout(r, 3000));
       }
       if (!d || d.status !== 'listo' || !profile) return 'nada';
+      if (profile.config?.propuesta) return 'nada'; // ya se le propuso a Javier (queda en la base: un despliegue no lo repite)
+      await this.docs.patchConfig(demoId, { propuesta: true });
       const business = profile.negocio || d.business, url = this.link(demoId), img = this.header(profile);
       const noImage = img.own ? '' : `\n⚠️ No se pudo generar la imagen del negocio (${profile.config?.imagenError || 'OpenAI y Magnific fallaron'}): iría con tu imagen de cabecera. Si quieres una portada hecha por Claude Code para su enlace, dile al avatar en modo dueño: «haz la portada de la demo de ${business}».`;
       const lead = d.lead_id ? await this.leads.get(d.lead_id) : undefined;

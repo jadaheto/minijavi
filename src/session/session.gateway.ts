@@ -505,7 +505,7 @@ export class SessionGateway implements OnGatewayConnection {
       if (s.page && this.demoDocs) {
         const used = this.demoDocs.usedMinutes(s.page.id) + (Date.now() - s.startedAt) / 60_000;
         if (Date.now() - s.startedAt > this.cfg.demoPageMinutes * 60_000) { this.send(client, { type: 'error', reason: 'demo_tiempo' }); client.close(4408, 'demo_tiempo'); return; }
-        if (used >= this.cfg.demoPageDailyMinutes) { this.send(client, { type: 'error', reason: 'demo_limite' }); client.close(4408, 'demo_limite'); return; }
+        if (used >= this.cfg.demoPageDailyMinutes || this.demoDocs.totalMinutes() + (Date.now() - s.startedAt) / 60_000 >= this.cfg.demoPageTotalMinutes) { this.send(client, { type: 'error', reason: 'demo_limite' }); client.close(4408, 'demo_limite'); return; }
       }
       const working = job || listening || s.suspended || driving;
       if (!working && Date.now() - s.startedAt > this.cfg.sessionMaxSeconds * 1000) { this.send(client, { type: 'error', reason: 'tiempo' }); client.close(4408, 'duracion'); return; }
@@ -571,7 +571,11 @@ export class SessionGateway implements OnGatewayConnection {
     s.turn?.ctrl.abort(); s.stt?.close(); s.spec?.ctrl.abort(); clearTimeout(s.specTimer);
     // B3: el visitante subio el documento de su negocio: al terminar se le propone a Javier enviarle el enlace de su demo.
     if (!s.owner && !s.page && s.demo.doc?.state === 'listo' && s.demo.doc.id) void this.demoSend?.offer(s.demo.doc.id);
-    if (s.page) { const sec = (Date.now() - s.startedAt) / 1000; this.demoDocs?.addUsage(s.page.id, sec); this.usage.add('demo_page_s', sec); } // la charla de prueba cuenta para el tope del dia de esa demo
+    if (s.page) {
+      const sec = (Date.now() - s.startedAt) / 1000, page = s.page, first = String(s.history.find((m) => m.role === 'user')?.content ?? '').split('\n')[0];
+      this.usage.add('demo_page_s', sec);
+      void this.demoDocs?.addUsage(page.id, sec).then(() => this.demoDocs?.opened_(page, sec, s.userTurns, first)).catch(() => undefined); // cuenta para los topes y avisa a Javier que la abrieron
+    } // la charla de prueba cuenta para el tope del dia de esa demo
     if (!s.owner && s.userTurns > 0 && !s.page) void this.wrapUp(s); // la charla con el asistente de un negocio no es una visita de un interesado
     // Conversaciones del sitio (solo si SAVE_CONVERSATIONS=1; las llamadas las guarda su propio controlador y las del dueño no se guardan).
     if (this.cfg.saveConversations && !s.owner && !s.callerPhone && !s.page && s.userTurns > 0) {

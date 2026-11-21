@@ -1806,8 +1806,17 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     const pg: any = await docs.page(id);
     must(pg.business === 'Panadería Sol' && pg.config.preguntas.length === 3 && (await docs.page('no-existe-x') as any).error === 'no_existe' && (await docs.page('../etc') as any).error === 'no_existe', `página: ${JSON.stringify(pg).slice(0, 200)}`);
     // Tope del dia y vencimiento.
-    docs.addUsage(id, 31 * 60); must((await docs.page(id) as any).error === 'limite', 'con 31 minutos hoy debía quedar en su límite');
-    (docs as any).used.clear();
+    await P.db.query('DELETE FROM demo_usage');
+    await docs.addUsage(id, 31 * 60); must((await docs.page(id) as any).error === 'limite', 'con 31 minutos hoy debía quedar en su límite');
+    // El uso queda en la base: tras "reiniciar" (otra instancia) el tope sigue contando.
+    const again = new DemoDocsService(dcfg, P.db, capable, kb, { screen: () => ({ blocks: async () => false }) } as any, usage);
+    must((await again.page(id) as any).error === 'limite' && again.usedMinutes(id) === 31, 'tras reiniciar, el uso de hoy debía leerse de la base');
+    // Tope global entre todas las demos: otra demo con poco uso tampoco abre si el total del dia se paso.
+    await P.db.query('DELETE FROM demo_usage'); (docs as any).usedDay = '';
+    await docs.addUsage('otra-demo-x', 121 * 60, 4);
+    must((await docs.page(id) as any).error === 'limite' && docs.totalMinutes() === 121 && docs.usedMinutes(id) === 0, `tope global: total ${docs.totalMinutes()} min`);
+    must((await docs.totals('otra-demo-x')).sessions === 4, 'charlas contadas');
+    await P.db.query('DELETE FROM demo_usage'); (docs as any).usedDay = '';
     await P.db.query('UPDATE demos SET expires_at = $1 WHERE id = $2', [new Date(now - 1000).toISOString(), id]);
     must((await docs.page(id) as any).error === 'vencida', 'vencida');
     const until = await docs.extend(id, 7); must(!!until && Date.parse(until) > now + 6 * 86400_000 && !('error' in (await docs.page(id))), 'alargar 7 días');
@@ -1824,7 +1833,8 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     const noop = () => undefined, b = noJev, sent: any[] = [], asked: { sys: string; tools: number; user: string }[] = []; let wrapped = 0;
     const llm = { chat: async function* (messages: any[], defs: any[]) { asked.push({ sys: String(messages[0].content), tools: (defs ?? []).length, user: String(messages.filter((m) => m.role === 'user').at(-1)?.content ?? '') }); yield { type: 'text', delta: 'El pan francés vale dos mil pesos.' }; }, complete: async () => '{}' };
     const ftools = { definitions: async () => [{ type: 'function', function: { name: 'clima' } }], run: async () => ({ text: 'no debía correr' }) } as any;
-    const docsFake = { enabled: true, page: docs.page.bind(docs), usedMinutes: docs.usedMinutes.bind(docs), addUsage: docs.addUsage.bind(docs), context: async () => '\n\nDel documento: <<<DATOS x>>> Pan francés - $2.000', forget: noop } as any;
+    const openedTold: string[] = []; (docs as any).alerts = { enabled: true, send: async (t: string) => { openedTold.push(t); return ''; } };
+    const docsFake = { enabled: true, page: docs.page.bind(docs), usedMinutes: docs.usedMinutes.bind(docs), totalMinutes: docs.totalMinutes.bind(docs), addUsage: docs.addUsage.bind(docs), opened_: docs.opened_.bind(docs), context: async () => '\n\nDel documento: <<<DATOS x>>> Pan francés - $2.000', forget: noop } as any;
     const gw = new (SessionGateway as any)(b.cfg, {}, { open: () => ({ send: noop, close: noop }) }, llm, ftools, { verify: () => ({ id: 'dispositivo' }) }, { get: noop, ids: () => [] }, { get: async () => null, valid: () => true, save: async () => undefined },
       { enabled: false }, { enabled: false, onDone: noop, onAudit: noop, onProgress: noop, busy: () => undefined, unseen: () => [], pendingAudits: () => [], defaultModel: { label: '' } }, { enabled: false }, usage, { get: async () => undefined, logConversation: noop }, { enabled: false, canGenerate: false, newState: () => ({ title: '', kind: '', items: [], index: 0 }) },
       alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard, b.capable, b.catalog, undefined, docsFake);
@@ -1847,7 +1857,11 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     // Tope por charla: pasados 5 minutos se cierra con su aviso; al cerrar, cuenta para el tope del dia y no es una visita.
     sess.startedAt = Date.now() - 5.1 * 60_000; await wait(5300);
     must(sent.some((m) => m.type === 'error' && m.reason === 'demo_tiempo') && sent.some((m) => m.type === 'closed'), `tope de la charla: ${JSON.stringify(sent.slice(-3))}`);
+    await wait(200);
     must(docs.usedMinutes(id) >= 5 && wrapped === 0, `tras cerrar: ${docs.usedMinutes(id)} min usados, resúmenes de visita ${wrapped}`);
+    // Aviso a Javier de que abrieron la demo (con lo que preguntaron); como mucho uno por hora por demo.
+    must(openedTold.length === 1 && /Abrieron la demo de Panadería Sol/.test(openedTold[0]) && /1 pregunta/.test(openedTold[0]) && /cuánto vale el pan francés/.test(openedTold[0]) && /1 charla/.test(openedTold[0]), `aviso de apertura: ${JSON.stringify(openedTold)}`);
+    await docs.opened_(pg, 60, 2, 'otra'); must(openedTold.length === 1, 'un segundo aviso de la misma demo en la misma hora no debía salir');
     // Una demo vencida no abre.
     const sent2: any[] = [], h2: Record<string, any> = {};
     await P.db.query('UPDATE demos SET expires_at = $1 WHERE id = $2', [new Date(Date.now() - 1000).toISOString(), id]);
@@ -1885,6 +1899,8 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     must(pend.length === 1 && pend[0].contact === '573007770001' && /minijavi_demo/.test(pend[0].content) && /\/demo\/panaderia-sol-aaa111/.test(pend[0].content) && metaCalls.length === 0, `solicitud: ${JSON.stringify(pend.map((a) => a.content))}; salió a Meta: ${metaCalls.length}`);
     must(told[0]?.kind === 'foto' && /Demo lista: Panadería Sol/.test(told[0].text), `aviso con la imagen: ${JSON.stringify(told)}`);
     must((await send.offer('panaderia-sol-aaa111', 0)) === 'nada' && (await P.approvals.pending()).filter((a) => a.kind === 'enviar_demo').length === 1, 'la misma demo no se propone dos veces');
+    const send2 = new DemoSendService(P.cfg, docs, P.leads, P.approvals, P.policy, P.wa, { file: () => null } as any, alertsFake); // tras un reinicio
+    must((await send2.offer('panaderia-sol-aaa111', 0)) === 'nada' && told.length === 1, 'tras reiniciar tampoco se vuelve a proponer (queda en la base)');
     const done = await P.approvals.decide(pend[0].id, true, 'panel');
     const tpl = metaCalls.find((c) => c.url.endsWith('/messages'))?.body;
     must(done.ok && metaCalls[0]?.url.endsWith('/media') && String(tpl?.to).replace('+', '') === '573007770001' && tpl.template.name === 'minijavi_demo' && tpl.template.language.code === 'es'

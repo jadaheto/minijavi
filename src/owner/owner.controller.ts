@@ -261,11 +261,12 @@ export class OwnerController {
   async listDemos(@Req() req: Request) {
     this.require(req);
     if (!this.demos) return { enabled: false, demos: [] };
-    const rows = await this.demos.list();
-    return { enabled: this.demos.enabled, perDay: this.cfg.demoPageDailyMinutes, perChat: this.cfg.demoPageMinutes, demos: rows.map((d) => {
+    const rows = await this.demos.list(), totals = new Map<string, { sessions: number; minutes: number }>();
+    for (const d of rows) totals.set(d.id, await this.demos.totals(d.id));
+    return { enabled: this.demos.enabled, perDay: this.cfg.demoPageDailyMinutes, perChat: this.cfg.demoPageMinutes, totalToday: this.demos.totalMinutes(), totalCap: this.cfg.demoPageTotalMinutes, demos: rows.map((d) => {
       let p: any = {}; try { p = JSON.parse(d.profile || '{}'); } catch { /* fila con error */ }
       return { id: d.id, business: d.business, status: d.status, error: d.error, created: d.created_at, expires: d.expires_at, pages: d.pages, kind: d.kind, chunks: d.chunks, lead: d.lead_id || null,
-        url: `/demo/${d.id}`, minutesToday: this.demos!.usedMinutes(d.id), ficha: String(p.ficha ?? '').slice(0, 1500), saludo: p.config?.saludo ?? '', preguntas: p.config?.preguntas ?? [], color: p.config?.color ?? '',
+        url: `/demo/${d.id}`, minutesToday: this.demos!.usedMinutes(d.id), sessions: totals.get(d.id)?.sessions ?? 0, minutes: totals.get(d.id)?.minutes ?? 0, ficha: String(p.ficha ?? '').slice(0, 1500), saludo: p.config?.saludo ?? '', preguntas: p.config?.preguntas ?? [], color: p.config?.color ?? '',
         image: p.config?.imagen ? `/imagenes/${p.config.imagen}` : '', imageError: p.config?.imagen ? '' : String(p.config?.imagenError ?? ''), portada: p.config?.portada ? `/p/${p.config.portada}/` : '' };
     }) };
   }

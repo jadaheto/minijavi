@@ -95,6 +95,8 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS job_gates_run ON job_gates (slug, run_at)`,
   // Documentos de las demos "Crea tu propio asistente" (2026-11-21): la ficha del negocio y el estado. El texto completo
   // vive en Qdrant (scope demo). Se borran al vencer (expires_at); NO van en el respaldo diario (datos de terceros, 7 dias).
+  // Uso del enlace de cada demo por dia (segundos de voz y charlas): para los topes y para saber si el cliente la abrio.
+  `CREATE TABLE IF NOT EXISTS demo_usage (day TEXT NOT NULL, demo TEXT NOT NULL, seconds {{REAL}} NOT NULL DEFAULT 0, sessions INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, demo))`,
   `CREATE TABLE IF NOT EXISTS demos (id TEXT PRIMARY KEY, business TEXT NOT NULL, created_at {{TS}} NOT NULL, expires_at {{TS}} NOT NULL, status TEXT NOT NULL, profile TEXT NOT NULL DEFAULT '', chunks INTEGER NOT NULL DEFAULT 0, pages INTEGER NOT NULL DEFAULT 0, kind TEXT NOT NULL DEFAULT '', lead_id INTEGER NOT NULL DEFAULT 0, consent_at {{TS}} NOT NULL, error TEXT NOT NULL DEFAULT '')`,
 ];
 

@@ -49,6 +49,7 @@ export interface DemoDoc { id: string; business: string; created_at: string; exp
 /** Configuracion del enlace /demo/<id> (B2): la arma el modelo capaz a partir de la ficha; si falla, una por defecto. */
 export interface DemoConfig { saludo: string; personalidad: string; preguntas: string[]; color: string; auto: boolean; escena?: string; imagen?: string;
   /** Ya se intento la imagen (con o sin exito): el envio por WhatsApp no espera mas. */ imagenLista?: boolean; imagenError?: string;
+  /** Ya se le propuso a Javier enviar esta demo por WhatsApp. */ propuesta?: boolean;
   /** Proyecto del taller con la portada hecha por Claude Code (ultimo recurso si OpenAI y Magnific fallaron). */ portada?: string }
 export interface DemoProfile { negocio: string; ficha: string; colores: string[]; extra?: string; config?: DemoConfig }
 export interface DemoPage { id: string; business: string; profile: DemoProfile; config: DemoConfig; expires: string; usedMin: number }
@@ -98,7 +99,6 @@ export class DemoDocsService implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger(DemoDocsService.name);
   private readonly uploads = new Map<string, Upload>();
   private readonly hits = new Map<string, number[]>();
-  private day = ''; private today = 0;
   private timer?: NodeJS.Timeout;
 
   constructor(private readonly cfg: ConfigService, private readonly db: DbService, private readonly capable: CapableModelService, private readonly knowledge: KnowledgeService,
@@ -139,11 +139,11 @@ export class DemoDocsService implements OnModuleInit, OnModuleDestroy {
     if (!type) return { ok: false, status: 415, message: 'Ese tipo de archivo no sirve. Sube un PDF, una foto (JPG o PNG) o un texto.' };
     const pages = type.mime === 'application/pdf' ? pdfPages(buf) : 1;
     if (pages > this.cfg.demoDocPages) return { ok: false, status: 413, message: `El PDF tiene ${pages} páginas; el máximo es ${this.cfg.demoDocPages}. Sube solo las de productos y precios.` };
-    const d = new Intl.DateTimeFormat('en-CA', { timeZone: this.cfg.timezone }).format(new Date());
-    if (d !== this.day) { this.day = d; this.today = 0; }
-    if (this.today >= this.cfg.demoDocDaily) return { ok: false, status: 429, message: 'Por hoy ya se leyeron muchos documentos. Inténtalo mañana.' };
+    // Tope del dia: se cuenta en la base (documentos recibidos en las ultimas 24 horas), asi un despliegue no lo reinicia.
+    const recent = Number((await this.db.query<{ n: number }>('SELECT COUNT(*) AS n FROM demos WHERE created_at >= $1', [new Date(Date.now() - 24 * HOUR).toISOString()]))[0]?.n ?? 0);
+    if (recent >= this.cfg.demoDocDaily) return { ok: false, status: 429, message: 'Por hoy ya se leyeron muchos documentos. Inténtalo mañana.' };
     if (!this.allowed(`ip:${ip}`, this.cfg.demoDocPerIpHour, HOUR)) return { ok: false, status: 429, message: 'Ya subiste varios documentos en la última hora.' };
-    u.used = true; this.today++; this.usage.add('demo_docs');
+    u.used = true; this.usage.add('demo_docs');
     const id = `${slugOf(u.business)}-${randomBytes(3).toString('hex')}`, now = new Date();
     await this.db.query('INSERT INTO demos (id, business, created_at, expires_at, status, kind, pages, consent_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
       [id, u.business, now.toISOString(), new Date(now.getTime() + this.cfg.demoDocDays * 86400_000).toISOString(), 'leyendo', type.ext, pages, now.toISOString()]);
@@ -238,10 +238,43 @@ ${p.ficha}`) },
   }
 
   // ---- B2: el enlace /demo/<id> ----
-  private used = new Map<string, number>(); // segundos de voz por demo y dia ("dia|id"); en memoria: se reinicia al desplegar
-  private usedKey(id: string) { return `${new Intl.DateTimeFormat('en-CA', { timeZone: this.cfg.timezone }).format(new Date())}|${id}`; }
-  usedMinutes(id: string) { return Math.round((this.used.get(this.usedKey(id)) ?? 0) / 60); }
-  addUsage(id: string, seconds: number) { const k = this.usedKey(id); this.used.set(k, (this.used.get(k) ?? 0) + Math.max(0, seconds)); }
+  // Uso por demo y dia: en memoria para decidir rapido y en la tabla demo_usage para que un despliegue no lo borre.
+  private used = new Map<string, number>(); private usedDay = ''; private opened = new Map<string, number>();
+  private dayKey() { return new Intl.DateTimeFormat('en-CA', { timeZone: this.cfg.timezone }).format(new Date()); }
+  /** Carga de la base lo usado hoy (una vez por dia y al arrancar). */
+  private async loadUsage() {
+    const day = this.dayKey(); if (this.usedDay === day) return;
+    const rows = await this.db.query<{ demo: string; seconds: number }>('SELECT demo, seconds FROM demo_usage WHERE day = $1', [day]);
+    this.used = new Map(rows.map((r) => [r.demo, Number(r.seconds) || 0])); this.usedDay = day;
+  }
+  usedMinutes(id: string) { return this.usedDay === this.dayKey() ? Math.round((this.used.get(id) ?? 0) / 60) : 0; }
+  /** Minutos de voz de hoy entre todas las demos. */
+  totalMinutes() { return this.usedDay === this.dayKey() ? Math.round([...this.used.values()].reduce((a, b) => a + b, 0) / 60) : 0; }
+  /** Una charla termino: suma sus segundos (y la charla) al dia de esa demo. */
+  async addUsage(id: string, seconds: number, sessions = 1) {
+    const sec = Math.max(0, seconds);
+    await this.loadUsage().catch(() => undefined);
+    this.used.set(id, (this.used.get(id) ?? 0) + sec);
+    await this.db.query('INSERT INTO demo_usage (day, demo, seconds, sessions) VALUES ($1, $2, $3, $4) ON CONFLICT (day, demo) DO UPDATE SET seconds = demo_usage.seconds + excluded.seconds, sessions = demo_usage.sessions + excluded.sessions', [this.dayKey(), id, sec, sessions])
+      .catch((e) => this.log.warn(`demo ${id}: no se guardó el uso (${(e as Error).message})`));
+  }
+  /** Charlas y minutos de una demo desde que existe. */
+  async totals(id: string): Promise<{ sessions: number; minutes: number }> {
+    const [r] = await this.db.query<{ s: number; n: number }>('SELECT COALESCE(SUM(seconds), 0) AS s, COALESCE(SUM(sessions), 0) AS n FROM demo_usage WHERE demo = $1', [id]);
+    return { sessions: Number(r?.n) || 0, minutes: Math.round((Number(r?.s) || 0) / 60) };
+  }
+  /**
+   * Alguien abrio el enlace y hablo: se le avisa a Javier (es la señal de que el cliente esta interesado). Como mucho un
+   * aviso por demo cada hora; las demas charlas quedan contadas en el panel.
+   */
+  async opened_(page: DemoPage, seconds: number, turns: number, firstQuestion: string) {
+    if (turns < 1 || !this.alerts?.enabled) return;
+    const last = this.opened.get(page.id) ?? 0; if (Date.now() - last < HOUR) return;
+    this.opened.set(page.id, Date.now());
+    const d = await this.get(page.id), t = await this.totals(page.id);
+    const min = seconds >= 90 ? `${Math.round(seconds / 60)} min` : `${Math.round(seconds)} s`;
+    await this.alerts.send(`👀 Abrieron la demo de ${page.business}: hablaron ${min} (${turns} pregunta${turns === 1 ? '' : 's'}).${firstQuestion ? `\nEmpezó preguntando: «${firstQuestion.replace(/\s+/g, ' ').slice(0, 120)}»` : ''}\nEn total: ${t.sessions} charla${t.sessions === 1 ? '' : 's'}, ${t.minutes} min.${d?.lead_id ? ` Interesado #${d.lead_id}: buen momento para escribirle.` : ' No dejó datos de contacto.'}`);
+  }
   /** Datos para abrir el enlace, o el motivo por el que no se puede (no existe, vencio, aun no esta, tope del dia). */
   async page(id: string): Promise<DemoPage | { error: 'no_existe' | 'vencida' | 'no_lista' | 'limite' }> {
     if (!/^[a-z0-9-]{3,48}$/.test(id)) return { error: 'no_existe' };
@@ -249,7 +282,8 @@ ${p.ficha}`) },
     if (!d) return { error: 'no_existe' };
     if (Date.parse(d.expires_at) < Date.now()) return { error: 'vencida' };
     if (d.status !== 'listo') return { error: 'no_lista' };
-    if (this.usedMinutes(id) >= this.cfg.demoPageDailyMinutes) return { error: 'limite' };
+    await this.loadUsage().catch(() => undefined);
+    if (this.usedMinutes(id) >= this.cfg.demoPageDailyMinutes || this.totalMinutes() >= this.cfg.demoPageTotalMinutes) return { error: 'limite' };
     let profile: DemoProfile; try { profile = JSON.parse(d.profile); } catch { return { error: 'no_lista' }; }
     return { id, business: profile.negocio || d.business, profile, config: profile.config ?? DemoDocsService.fallbackConfig(profile), expires: d.expires_at, usedMin: this.usedMinutes(id) };
   }
@@ -265,6 +299,7 @@ ${p.ficha}`) },
     const d = await this.get(id); if (!d) return false;
     await this.knowledge.deleteDemo(id).catch((e) => this.log.warn(`demo ${id}: no se borraron sus fragmentos (${(e as Error).message})`));
     await this.db.query('DELETE FROM demos WHERE id = $1', [id]);
+    await this.db.query('DELETE FROM demo_usage WHERE demo = $1', [id]).catch(() => undefined);
     return true;
   }
 
@@ -296,7 +331,7 @@ ${p.ficha}`) },
   async purge(now = new Date()): Promise<number> {
     const old = await this.db.query<{ id: string }>('SELECT id FROM demos WHERE expires_at < $1', [now.toISOString()]);
     for (const d of old) {
-      try { await this.knowledge.deleteDemo(d.id); await this.db.query('DELETE FROM demos WHERE id = $1', [d.id]); }
+      try { await this.knowledge.deleteDemo(d.id); await this.db.query('DELETE FROM demos WHERE id = $1', [d.id]); await this.db.query('DELETE FROM demo_usage WHERE demo = $1', [d.id]).catch(() => undefined); }
       catch (e) { this.log.warn(`demo ${d.id}: no se pudo borrar al vencer (${(e as Error).message}); se reintenta en una hora`); }
     }
     if (old.length) this.log.log(`demos vencidas borradas: ${old.length}`);

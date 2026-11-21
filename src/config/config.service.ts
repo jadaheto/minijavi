@@ -161,6 +161,8 @@ export class ConfigService {
   readonly demoVoiceId: string;
   readonly demoPageMinutes: number;
   readonly demoPageDailyMinutes: number;
+  /** Tope de minutos de voz al dia entre TODAS las demos (cada minuto cuesta escucha, modelo y voz). */
+  readonly demoPageTotalMinutes: number;
   /** Al cerrar una conversacion publica: analizarla con el modelo y avisar por Telegram si mostro interes. */
   readonly visitReports: boolean;
   /** Guardar tambien las conversaciones del sitio (no solo las llamadas). Apagado por defecto: implica avisar a los visitantes. */
@@ -406,6 +408,7 @@ export class ConfigService {
     this.demoVoiceId = /^[A-Za-z0-9]{10,40}$/.test(str('DEMO_VOZ_ID', 'k1LcwPlB8fqtr2BOqzNo')) ? str('DEMO_VOZ_ID', 'k1LcwPlB8fqtr2BOqzNo') : '';
     this.demoPageMinutes = int('DEMO_MIN_CHARLA', 5, 1);
     this.demoPageDailyMinutes = int('DEMO_MIN_DIA', 30, 1);
+    this.demoPageTotalMinutes = int('DEMO_MIN_DIA_TOTAL', 120, 1);
     this.visitReports = process.env.VISIT_REPORTS !== '0';
     this.usagePrices = {};
     try { for (const [k, v] of Object.entries(JSON.parse(process.env.USAGE_PRICES || '{}'))) if (Number(v) > 0) this.usagePrices[k] = Number(v); }
