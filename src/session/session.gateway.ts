@@ -20,6 +20,7 @@ import { DeepgramService, SttStream } from '../stt/deepgram.service';
 import { asData, demoTurns, DemoState, ToolsService } from '../tools/tools.service';
 import { DemoDocsService, DemoPage, DocUpdate } from '../demo/demo-docs.service';
 import { DemoSendService } from '../demo/demo-send.service';
+import { BusinessService } from '../business/business.service';
 import { AlertsService } from '../ops/alerts.service';
 import { PortfolioService } from '../portfolio/portfolio.service';
 import { CapableModelService } from '../llm/capable.service';
@@ -309,6 +310,7 @@ export class SessionGateway implements OnGatewayConnection {
     @Optional() private readonly brief?: BriefService,
     @Optional() private readonly demoDocs?: DemoDocsService,
     @Optional() private readonly demoSend?: DemoSendService,
+    @Optional() private readonly biz?: BusinessService,
   ) {
     // Cuando Claude Code termina un encargo, se le cuenta a Javier en las sesiones de dueño abiertas.
     this.workshop.onDone((d) => { for (const [s, client] of this.owners) void this.workshopNote(client, s, d.project.slug); });
@@ -402,7 +404,7 @@ export class SessionGateway implements OnGatewayConnection {
   handleConnection(client: WebSocket, req?: IncomingMessage) {
     const internal = !!(client as any)[INTERNAL]; // llamada de WhatsApp creada por el propio servidor
     // El modo dueño se decide aqui, con la cookie del dispositivo; nada de lo que se diga en la conversacion lo cambia.
-    const owner = !!this.ownerAuth.verify(req?.headers?.cookie);
+    const owner = this.biz?.on ? false : !!this.ownerAuth.verify(req?.headers?.cookie); // en modo negocio no existe el modo dueño
     const s: Session = { n: ++this.counter, ready: false, owner, history: [], finals: [], turnId: 0, clientPlaying: false, lastActivity: Date.now(), leads: 0, userTurns: 0, langs: [], lastLang: 'es', timers: [], notes: [], startedAt: Date.now(), lastTurnEnd: Date.now(), lastStatus: 0, imageSearches: 0, leadIds: [], demos: 0, cases: 0, demo: { on: false, business: '', kind: '', turns: 0 }, suspended: false, suspendedAt: 0, waking: false, canSuspend: !internal, browserTts: this.cfg.ttsProvider === 'browser' && !internal, lastSpoken: '', lastPlayEnd: 0,
       origin: req?.headers?.host ? `${String(req.headers['x-forwarded-proto'] ?? 'http').split(',')[0].trim()}://${req.headers.host}` : '' };
     const authTimer = setTimeout(() => { if (!s.ready) client.close(4401, 'sin saludo'); }, 10_000);
@@ -419,7 +421,7 @@ export class SessionGateway implements OnGatewayConnection {
         clearTimeout(authTimer);
         if (s.starting) return; s.starting = true;
         // Enlace de la demo de un negocio: se valida aqui (existe, no vencio, no paso su tope del dia). No es sesion del dueño.
-        if (!internal && typeof msg.demoPage === 'string') {
+        if (!internal && typeof msg.demoPage === 'string' && !this.biz?.on) {
           void (this.demoDocs ? this.demoDocs.page(msg.demoPage) : Promise.resolve({ error: 'no_existe' as const })).then((p) => {
             if (client.readyState !== client.OPEN) return;
             if ('error' in p) { this.send(client, { type: 'error', reason: `demo_${p.error}` }); client.close(4404, 'demo'); return; }
@@ -475,7 +477,8 @@ export class SessionGateway implements OnGatewayConnection {
     const memoryNote = known
       ? `\n\nYa conoces a esta persona de una visita anterior${known.name ? `: se llama ${known.name}` : ''}. Lo que hablaron: ${known.summary || 'no hay resumen'}. Salúdala como a alguien conocido y no le vuelvas a pedir datos que ya dio.`
       : '';
-    if (s.page) s.history.push({ role: 'system', content: pagePrompt(s.page) + TAG_RULES });
+    if (this.biz?.on) s.history.push({ role: 'system', content: this.biz.prompt() + TAG_RULES }); // MODO NEGOCIO: el asistente de ese cliente, nada de Javier
+    else if (s.page) s.history.push({ role: 'system', content: pagePrompt(s.page) + TAG_RULES });
     else s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + (s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery, this.workshop.enabled) : '') + (s.owner ? DATA_RULES : DEMO_RULES) + (s.gallery && (this.images.enabled || (s.owner && (this.workshop.enabled || this.images.canGenerate))) ? IMAGE_RULES(this.images.enabled, s.owner && this.workshop.enabled, s.owner && this.images.canGenerate) : '') + this.portfolio.prompt(!!s.gallery) + (s.owner ? '' : this.catalog.prompt()) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote + (s.car ? CAR_RULES : '') });
     s.stt = this.stt.open({
       // Idioma: en modo carro la escucha es solo en español (con ruido y musica la deteccion de idioma falla y el avatar
@@ -576,7 +579,7 @@ export class SessionGateway implements OnGatewayConnection {
       this.usage.add('demo_page_s', sec);
       void this.demoDocs?.addUsage(page.id, sec).then(() => this.demoDocs?.opened_(page, sec, s.userTurns, first)).catch(() => undefined); // cuenta para los topes y avisa a Javier que la abrieron
     } // la charla de prueba cuenta para el tope del dia de esa demo
-    if (!s.owner && s.userTurns > 0 && !s.page) void this.wrapUp(s); // la charla con el asistente de un negocio no es una visita de un interesado
+    if (!s.owner && s.userTurns > 0 && !s.page && !this.biz?.on) void this.wrapUp(s); // la charla con el asistente de un negocio no es una visita de un interesado
     // Conversaciones del sitio (solo si SAVE_CONVERSATIONS=1; las llamadas las guarda su propio controlador y las del dueño no se guardan).
     if (this.cfg.saveConversations && !s.owner && !s.callerPhone && !s.page && s.userTurns > 0) {
       const lines = s.history.filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
@@ -751,6 +754,7 @@ export class SessionGateway implements OnGatewayConnection {
       .then((hits) => {
         if (!hits.length) return '';
         this.log.debug?.(`sesion #${s.n}: conocimiento ${hits.length} fragmentos en ${Date.now() - t0} ms`);
+        if (this.biz?.on) return `\n\nDe los documentos del negocio, lo más relacionado con lo que preguntó el cliente: ${asData('los documentos del negocio', hits.map((h) => `- ${h.text.replace(/\s+/g, ' ')}`).join('\n'))}`;
         return '\n\n(Información de referencia sobre Javier, tomada de su base de conocimiento. Úsala solo si sirve para responder; no la leas literal ni menciones que existe:\n' +
           hits.map((h) => `- ${h.text.replace(/\s+/g, ' ')}`).join('\n') + ')';
       })
@@ -768,7 +772,7 @@ export class SessionGateway implements OnGatewayConnection {
     const spec: Spec = { text, lang, ctrl: new AbortController(), events: [], done: false };
     s.spec = spec;
     (async () => {
-      const [tools, ctx] = await Promise.all([this.tools.definitions(s.owner), this.context(s, text)]);
+      const [tools, ctx] = await Promise.all([this.biz?.on ? [] : this.tools.definitions(s.owner), this.context(s, text)]);
       for await (const ev of this.llm.chat([...s.history, { role: 'user', content: userMsg(text, lang) + ctx }], tools, spec.ctrl.signal, s.owner ? 2000 : 400)) {
         if (ev.type === 'text') spec.tFirst ??= Date.now();
         spec.events.push(ev); spec.wake?.();
@@ -828,7 +832,7 @@ export class SessionGateway implements OnGatewayConnection {
         : `\n\n(Nota del sistema: demostración en curso, intervención ${s.demo.turns} de ${limit}. Sigues siendo el asistente de "${s.demo.business}" atendiendo a un cliente; no eres Javier. Si la persona pide parar o vuelve a hablar de contratar a Javier, llama a demo con accion terminar.)`;
     }
     // Señal de inyeccion: se evalua en paralelo con la respuesta y solo se consulta si el turno va a ejecutar una herramienta con efectos.
-    if (!auto && !s.page) turn.screen = this.guard.screen(userText, s.owner ? 'una sesión del dueño' : s.callerPhone ? 'una llamada de WhatsApp' : 'una conversación del sitio', s.owner ? 'dueno' : 'publico');
+    if (!auto && !s.page && !this.biz?.on) turn.screen = this.guard.screen(userText, s.owner ? 'una sesión del dueño' : s.callerPhone ? 'una llamada de WhatsApp' : 'una conversación del sitio', s.owner ? 'dueno' : 'publico');
     const toolsUsed: string[] = [];
     const userEntry = { role: 'user', content: auto ? userText : userMsg(userText, lang) + demoNote };
     s.history.push(userEntry);
@@ -853,7 +857,7 @@ export class SessionGateway implements OnGatewayConnection {
           const route = round === 0 ? turn.screen?.route() : undefined;
           if (round === 0) turn.capable = this.guard.useCapable(route, s.owner);
           // Durante una demostracion solo existe la herramienta demo (impuesto aqui, no solo en el prompt).
-          const defs = s.page ? [] : s.demo.on ? (await this.tools.definitions(s.owner) as any[]).filter((t) => t.function?.name === 'demo') : this.guard.tools(await this.tools.definitions(s.owner) as any[], route);
+          const defs = s.page || this.biz?.on ? [] : s.demo.on ? (await this.tools.definitions(s.owner) as any[]).filter((t) => t.function?.name === 'demo') : this.guard.tools(await this.tools.definitions(s.owner) as any[], route);
           source = turn.capable ? this.viaCapable(s, turn, view, defs) : this.llm.chat(view, defs, turn.ctrl.signal, s.owner ? 2000 : 400);
         }
         for await (const ev of source) {
@@ -924,7 +928,7 @@ export class SessionGateway implements OnGatewayConnection {
     }
     if (!turn.ctrl.signal.aborted) turn.screen?.done(toolsUsed); // lo que de verdad paso, para medir la ruta
     // Precios en vivo: no se puede frenar la voz, pero si se le escapo uno fuera del catalogo, Javier se entera. (El dolar que da la herramienta no es un precio de Javier.)
-    if (!s.owner && !auto && !s.demo.on && !s.page && !toolsUsed.includes('precio_dolar') && !toolsUsed.includes('demo')) this.catalog.spoken(turn.spoken, s.callerPhone ? 'una llamada de WhatsApp' : 'una conversación del sitio');
+    if (!s.owner && !auto && !s.demo.on && !s.page && !this.biz?.on && !toolsUsed.includes('precio_dolar') && !toolsUsed.includes('demo')) this.catalog.spoken(turn.spoken, s.callerPhone ? 'una llamada de WhatsApp' : 'una conversación del sitio');
     await this.finish(client, s, turn, hit ? 'turno (adelantado)' : 'turno');
   }
 

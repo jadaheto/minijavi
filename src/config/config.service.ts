@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { BusinessConfig, loadBusiness } from '../business/business';
 
 /** Configuracion leida de variables de entorno y validada al arrancar. Las claves nunca salen del backend. */
 @Injectable()
@@ -150,6 +152,10 @@ export class ConfigService {
   readonly briefHour: number;
   readonly briefDays: number[];
   readonly briefVoice: boolean;
+  /** MODO=negocio: este servicio es el asistente de un cliente (archivo NEGOCIO_ARCHIVO, por defecto DATA_DIR/negocio.json). undefined = minijavi de Javier. */
+  readonly business?: BusinessConfig;
+  /** Clave con la que Javier lee el consumo de este cliente (GET /api/consumo). Vacia = apagado. */
+  readonly reportSecret: string;
   /** "Crea tu propio asistente": documentos subidos a una demo (DEMO_DOCUMENTOS=0 lo apaga). Topes de tamaño, paginas, por IP, por dia y dias que se guardan. */
   readonly demoDocs: boolean;
   readonly demoDocMb: number;
@@ -399,6 +405,7 @@ export class ConfigService {
     this.briefHour = hour('RESUMEN_HORA', 7);
     this.briefDays = [...new Set(str('RESUMEN_DIAS', '1,2,3,4,5').split(',').map((d) => Number(d.trim())).filter((d) => Number.isInteger(d) && d >= 1 && d <= 7))];
     this.briefVoice = str('RESUMEN_VOZ', '1') !== '0';
+    this.reportSecret = str('REPORTE_SECRET').length >= 16 ? str('REPORTE_SECRET') : '';
     this.demoDocs = str('DEMO_DOCUMENTOS', '1') !== '0';
     this.demoDocMb = Math.min(40, int('DEMO_DOC_MB', 10, 1));
     this.demoDocPages = int('DEMO_DOC_PAGINAS', 20, 1);
@@ -461,5 +468,16 @@ ${readFileSync(costenoFile, 'utf8').trim()}` : '';
     const file = str('SYSTEM_PROMPT_FILE', 'prompts/system.md');
     this.systemPrompt = str('SYSTEM_PROMPT') || (existsSync(file) ? readFileSync(file, 'utf8').trim() : '');
     if (!this.systemPrompt) throw new Error('No hay system prompt: define SYSTEM_PROMPT o SYSTEM_PROMPT_FILE');
+    // MODO=negocio: este servicio es el asistente de un cliente. Se apaga EN CODIGO todo lo que es de Javier, aunque las
+    // variables vengan puestas por error: modo dueño, taller, sus cuentas y herramientas, avisos y envios propios.
+    if (str('MODO').toLowerCase() === 'negocio') {
+      const b = loadBusiness(str('NEGOCIO_ARCHIVO') || join(this.dataDir, 'negocio.json'));
+      Object.assign(this as any, {
+        business: b, greeting: b.saludo, elevenVoiceId: b.voz || this.elevenVoiceId, costenoPrompt: '',
+        ownerSecret: '', claudeToken: '', planeMcpUrl: '', youtubeApiKey: '', spotifyClientId: '', spotifyClientSecret: '', teslaClientId: '', teslaClientSecret: '',
+        googleMapsKey: '', openChargeMapKey: '', polymarket: false, newsUrl: '', newsColombia: false, unsplashAccessKey: '', magnificApiKey: '', imageOpenAiKey: '',
+        briefHour: -1, followupHour: -1, demoDocs: false, callMode: 'rechazar', whatsappReplies: 'off', n8nWebhookUrl: '', leadsWebhookUrl: '', visitorMemoryDays: 0, visitReports: false,
+      });
+    }
   }
 }

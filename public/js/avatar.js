@@ -6,7 +6,7 @@ const rnd = (a, b) => a + Math.random() * (b - a);
 
 const PHONES = { x: 1.0, top: 1.04, earY: -0.05, z: -0.05 }; // proporciones de los audifonos respecto a la caja del modelo
 
-export async function createAvatar(canvas) {
+export async function createAvatar(canvas, model = '') {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -18,7 +18,10 @@ export async function createAvatar(canvas) {
   const key = new THREE.DirectionalLight(0xffffff, 1.5); key.position.set(-1.2, 1.6, 4); scene.add(key);
   const rim = new THREE.DirectionalLight(0xffffff, 0.5); rim.position.set(2, 1.5, -3); scene.add(rim);
 
-  const gltf = await new GLTFLoader().loadAsync(new URL('../models/avatar-javier.glb', import.meta.url).href);
+  // Modo negocio: el avatar del catalogo que eligio el cliente (models/avatar-<id>.glb). Si aun no existe ese modelo, el de siempre.
+  const base = new URL('../models/avatar-javier.glb', import.meta.url).href, wanted = /^[a-z]{3,12}$/.test(model) ? new URL(`../models/avatar-${model}.glb`, import.meta.url).href : '';
+  const loader = new GLTFLoader();
+  const gltf = wanted ? await loader.loadAsync(wanted).catch(() => loader.loadAsync(base)) : await loader.loadAsync(base);
   const root = gltf.scene; const pivot = new THREE.Group(); pivot.add(root); scene.add(pivot);
 
   // Los morph targets estan repartidos en varias mallas: se indexa cada nombre con todas las mallas que lo tienen.

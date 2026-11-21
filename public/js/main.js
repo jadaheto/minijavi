@@ -27,7 +27,9 @@ const ERRORS = {
 // Enlace de la demo de un negocio (/demo/<id>): el servidor marca la pagina con su id; la conversacion es con ese asistente.
 const DEMO_PAGE = document.querySelector('meta[name="minijavi-demo"]')?.getAttribute('content') || '';
 
-const avatar = await createAvatar($('stage'));
+// Que es este servicio: el minijavi de Javier o el asistente de un negocio (modo negocio: su marca, su avatar, su voz).
+const NEGOCIO = await fetch(new URL('/api/modo', location.href), { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((m) => (m && m.modo === 'negocio' ? m : null)).catch(() => null);
+const avatar = await createAvatar($('stage'), NEGOCIO ? String(NEGOCIO.avatar || '') : '');
 const missing = REQUIRED.filter((n) => !avatar.morphNames.includes(n));
 if (missing.length) console.warn('Al modelo le faltan morph targets:', missing);
 if (new URLSearchParams(location.search).get('subs') === '0') $('subtitles').classList.add('off'); // subtitulos opcionales: ?subs=0
@@ -293,6 +295,7 @@ function onMessage(msg) {
       car = !!msg.car; if (car) setState('listening'); // modo carro: el letrero dice como llamarlo
       $('owner').hidden = !msg.owner; // aviso visible de que esta sesion tiene las herramientas privadas
       if (msg.page) showBrand(msg.page);
+      else if (NEGOCIO) showBrand({ business: NEGOCIO.nombre, color: NEGOCIO.color, questions: NEGOCIO.preguntas, own: true });
       if (msg.tts === 'browser') { browserVoice.configure(msg.voice, msg.rate); player = browserVoice; } else player = serverPlayer;
       for (const b of prebuffer.splice(0)) socket.sendAudio(b);
       break;
@@ -379,7 +382,7 @@ function shutdown(message) {
   setSub('sub-user', ''); setSub('sub-avatar', '');
   $('mic').hidden = true; $('owner').hidden = true; $('demo').hidden = true; $('gate').hidden = false;
   $('gate').classList.toggle('standby', armed);
-  $('gate-text').textContent = dormant ? 'Estoy suspendido. Toca la pantalla para despertarme.' : armed ? (message || STANDBY_TEXT) : DEMO_PAGE ? 'Toca para hablar con el asistente. El navegador te pedirá permiso para usar el micrófono.' : 'Toca para empezar a conversar. El navegador te pedirá permiso para usar el micrófono.';
+  $('gate-text').textContent = dormant ? 'Estoy suspendido. Toca la pantalla para despertarme.' : armed ? (message || STANDBY_TEXT) : DEMO_PAGE || NEGOCIO ? 'Toca para hablar con el asistente. El navegador te pedirá permiso para usar el micrófono.' : 'Toca para empezar a conversar. El navegador te pedirá permiso para usar el micrófono.';
   $('gate-error').textContent = armed ? '' : (message || '');
   if (armed && message && !dormant) setTimeout(() => { if (!live && !connecting && !dormant) $('gate-text').textContent = STANDBY_TEXT; }, 6000);
 }
@@ -397,7 +400,7 @@ function showBrand(page) {
   box.replaceChildren();
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
   if (/^#[0-9a-f]{6}$/i.test(page.color || '')) document.documentElement.style.setProperty('--brand', page.color);
-  const head = el('div', 'brand-head'); head.append(el('strong', '', page.business || 'Asistente'), el('small', '', `Asistente con IA · demostración hecha por Javier · charlas de hasta ${page.minutes || 5} min`));
+  const head = el('div', 'brand-head'); head.append(el('strong', '', page.business || 'Asistente'), el('small', '', page.own ? 'Asistente con inteligencia artificial' : `Asistente con IA · demostración hecha por Javier · charlas de hasta ${page.minutes || 5} min`));
   box.append(head);
   if (Array.isArray(page.questions) && page.questions.length) {
     const tips = el('div', 'brand-tips'); tips.append(el('span', 'brand-try', 'Prueba preguntar:'));
@@ -406,6 +409,14 @@ function showBrand(page) {
   }
   if (/^https:\/\//.test(page.contact || '')) { const a = el('a', 'brand-cta', '¿Quieres uno así? Habla con Javier'); a.href = page.contact; a.target = '_blank'; a.rel = 'noopener'; box.append(a); }
   box.hidden = false;
+}
+if (NEGOCIO && !DEMO_PAGE) { // el servicio entero es el asistente de un negocio
+  document.body.classList.add('demo-page');
+  document.title = `Asistente de ${NEGOCIO.nombre}`;
+  if (/^#[0-9a-f]{6}$/i.test(NEGOCIO.color || '')) document.documentElement.style.setProperty('--brand', NEGOCIO.color);
+  $('gate').querySelector('h1').textContent = NEGOCIO.nombre;
+  $('btn-start').textContent = 'Hablar con el asistente';
+  $('gate-text').textContent = 'Toca para hablar con el asistente. El navegador te pedirá permiso para usar el micrófono.';
 }
 if (DEMO_PAGE) {
   document.body.classList.add('demo-page');

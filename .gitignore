@@ -8,3 +8,6 @@ data/
 conocimiento/
 public/vendor/
 .DS_Store
+# Clientes del modo negocio: cada uno tiene su carpeta con datos propios; solo el ejemplo va al repositorio.
+clientes/*
+!clientes/ejemplo/
