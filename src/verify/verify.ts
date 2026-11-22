@@ -2204,6 +2204,89 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     return 'plantilla con retrato, primer nombre y enlace; sin producción bloqueada, en simulación simulada, fuera de horario espera y sale al abrir; nunca dos veces; todo queda en la bitácora; foto a los 30 días, comprobantes a los 90, retrato mientras viva la demo, solicitud sin pagar suelta su foto; borrado a pedido devuelve la demo al avatar por defecto';
   });
 
+  await check('Avatar con foto, flujo completo: foto → pago → comprobante → tu botón de Telegram → generación → activación en su demo → WhatsApp → borrado', async () => {
+    const { AvatarRequestsService } = await import('../avatars/avatar-requests.service');
+    const { AvatarGeneratorService } = await import('../avatars/avatar-generator.service');
+    const { AvatarCareService } = await import('../avatars/avatar-care.service');
+    const { DemoDocsService } = await import('../demo/demo-docs.service');
+    const { DemoPageController } = await import('../demo/demo-page.controller');
+    const { TelegramService } = await import('../ops/telegram.service');
+    const { WhatsAppService } = await import('../whatsapp/whatsapp.service');
+    const { mkdtempSync, existsSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+    const acfg = new ConfigService(); const dir = mkdtempSync(join(tmpdir(), 'avatares-todo-'));
+    Object.assign(acfg as any, { avatarCustom: true, avatarPrice: 19200, avatarBrebKey: '3004576744', avatarPhotoMb: 1, avatarPerIpHour: 50, avatarProofs: 3, avatarAttempts: 3, avatarDemoDays: 30, avatarPhotoDays: 30, avatarProofDays: 90, imageOpenAiKey: 'sk-x', imageOpenAiModel: 'img-x', imageOpenAiQuality: 'medium', dataDir: dir, publicUrl: 'https://yo.example',
+      telegramBotToken: 'T', telegramChatId: '777', telegramButtons: false, whatsappToken: 'tok', whatsappPhoneNumberId: '111', whatsappDefaultCountry: '57', whatsappApiVersion: 'v27.0', whatsappAvatarTemplate: 'minijavi_avatar_listo', whatsappAvatarTemplateLang: 'es', demoDocs: true, demoPageDailyMinutes: 30, demoPageTotalMinutes: 120 });
+    const prev = globalThis.fetch, log: string[] = [], tgMsgs: any[] = [], waMsgs: any[] = [];
+    globalThis.fetch = (async (url: any, init?: any) => { const u = String(url);
+      if (u.includes('/v1/models/')) { log.push('modelo'); return new Response('{}', { status: 200 }); }
+      if (u.endsWith('/v1/images/edits')) { log.push('retrato'); return new Response(JSON.stringify({ data: [{ b64_json: Buffer.from('RETRATO').toString('base64') }] }), { status: 200 }); }
+      if (u.includes('api.telegram.org')) { const f = init?.body instanceof FormData ? init.body : null, j = f ? null : JSON.parse(init?.body ?? '{}'); const method = u.split('/').pop()!; log.push(`tg:${method}`);
+        tgMsgs.push({ method, text: String(f ? f.get('caption') : j.caption ?? j.text ?? ''), markup: f ? JSON.parse(String(f.get('reply_markup') ?? 'null')) : j.reply_markup }); return new Response('{"ok":true,"result":{"message_id":42}}', { status: 200 }); }
+      if (u.includes('graph.facebook.com') && u.includes('/media')) { log.push('wa:imagen'); return new Response('{"id":"M1"}', { status: 200 }); }
+      if (u.includes('graph.facebook.com') && u.includes('/messages')) { log.push('wa:plantilla'); waMsgs.push(JSON.parse(init.body)); return new Response('{"messages":[{"id":"x"}]}', { status: 200 }); }
+      throw new Error(`petición inesperada: ${u}`); }) as any;
+    const was = { sim: P.policy.simulation, prod: P.policy.production, nums: P.settings.text('politica.numeros_prueba') };
+    const id = 'todo-panaderia-a1b2c3';
+    try {
+      at(MON10); await setP('simulacion', false); await setP('produccion', true);
+      const capable = { readsFiles: true, readFile: async (_f: any, prompt: string) => { log.push(/filtro de fotos/.test(prompt) ? 'filtro' : 'colores'); return /filtro de fotos/.test(prompt) ? '{"es_foto":true,"personas":1,"rostro_claro":true,"parece_menor":false}' : '{"base":"joven","piel":"#d9a57f","pelo":"#3a2a20","ojos":"#4e7d4a"}'; } } as any;
+      const leads = { get: async () => ({ id: 77, name: 'Camila Rojas', contact: '3005558801', consent_at: '2026-11-20T10:00:00Z' }) } as any;
+      const now = Date.now(); await P.db.query('DELETE FROM avatar_requests');
+      await P.db.query('INSERT INTO demos (id, business, created_at, expires_at, status, profile, consent_at, lead_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [id, 'Panadería', new Date(now).toISOString(), new Date(now + 5 * 86400_000).toISOString(), 'listo', JSON.stringify({ negocio: 'Panadería', ficha: 'x', colores: [] }), new Date(now).toISOString(), 77]);
+      // Los servicios REALES, conectados como en la aplicacion; solo la red esta simulada.
+      const docs = new DemoDocsService(acfg, P.db, capable, { enabled: false, deleteDemo: async () => undefined } as any, {} as any, usage);
+      const telegram = new TelegramService(acfg), reqs = new AvatarRequestsService(acfg, P.db, docs, leads, capable, telegram, usage);
+      const gen = new AvatarGeneratorService(acfg, P.db, reqs, docs, capable, telegram, usage);
+      const wa = new WhatsAppService(acfg, {} as any, usage, P.optout);
+      const care = new AvatarCareService(acfg, P.db, reqs, gen, docs, A, wa, usage);
+      await gen.onModuleInit(); care.onModuleInit();
+      const page = async () => { const r: any = { body: '', setHeader() {}, status() { return r; }, type() { return r; }, send(b: string) { r.body = b; return r; } }; await new DemoPageController(docs).page(id, r); return r.body as string; };
+      const jpg = (n: number) => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(40, n)]);
+      const st = async () => (await P.db.query<any>('SELECT * FROM avatar_requests ORDER BY id'))[0];
+      // 0. Antes de todo: la demo usa el avatar por defecto y ofrece la opcion.
+      must(!(await page()).includes('minijavi-demo-avatar"') && (await reqs.info(id)).available, 'punto de partida');
+      // 1. Foto con autorizacion.
+      const c: any = await reqs.create(id, '300 555 8801', jpg(1), '9.9.9.9', true); must(c.ok && (await st()).state === 'PENDIENTE_PAGO', 'foto → pendiente de pago');
+      // 2. Mientras tanto elige un avatar del catalogo y sigue usando su demo.
+      must(await docs.setAvatar(id, 'gato') && (await page()).includes('<meta name="minijavi-demo-avatar" content="gato">'), 'mientras tanto usa uno del catálogo');
+      // 3. Comprobante → Telegram con botones.
+      must((await reqs.proof(c.token, jpg(2), '9.9.9.9') as any).ok && (await st()).state === 'PENDIENTE_VALIDACION', 'comprobante → en revisión');
+      const notice = tgMsgs.find((m) => m.method === 'sendPhoto')!; const [ok] = notice.markup.inline_keyboard[0];
+      must(/Camila Rojas/.test(notice.text) && /\+573005558801/.test(notice.text) && /no significa que el dinero se haya recibido/.test(notice.text), 'aviso del comprobante');
+      // 4. Javier pulsa Aprobar en SU chat → la cola genera, activa y avisa (todo solo).
+      await telegram.handle({ callback_query: { id: 'q1', data: ok.callback_data, message: { message_id: 42, chat: { id: '777' }, photo: [{}] } } });
+      for (let i = 0; i < 60 && (await st()).wa_status !== 'enviada'; i++) await wait(50);
+      const r = await st(), html = await page();
+      must(r.state === 'COMPLETADO' && r.base_avatar === 'joven' && r.wa_status === 'enviada' && r.decided_by === 'telegram' && r.attempts === 1, `tras aprobar: ${r.state} / ${r.wa_status} / ${r.error}`);
+      must(html.includes('<meta name="minijavi-demo-avatar" content="joven">') && html.includes('<meta name="minijavi-demo-tinte" content="#d9a57f,#3a2a20,#4e7d4a">'), 'su demo abre con su avatar y sus colores');
+      must(Date.parse(((await docs.page(id)) as any).expires) > now + 29 * 86400_000, 'la demo pasa a 30 días');
+      const tpl = waMsgs[0].template;
+      must(waMsgs.length === 1 && waMsgs[0].to === '+573005558801' && tpl.name === 'minijavi_avatar_listo' && tpl.components[0].parameters[0].image.id === 'M1' && tpl.components[1].parameters[0].text === 'Camila' && tpl.components[2].parameters[0].text === id, `WhatsApp: ${JSON.stringify(waMsgs[0]).slice(0, 300)}`);
+      // El orden importa: nada se genera ni se envia antes de la aprobacion, y cada cosa pasa una sola vez.
+      const order = log.join(' ');
+      must(/filtro .*tg:sendPhoto .*tg:answerCallbackQuery .*retrato .*colores .*wa:imagen wa:plantilla/.test(order.replace(/tg:editMessageCaption /, '')) && log.filter((x) => x === 'retrato').length === 1 && log.filter((x) => x === 'wa:plantilla').length === 1, `orden: ${order}`);
+      must(log.indexOf('retrato') > log.indexOf('tg:answerCallbackQuery') || log.indexOf('retrato') > log.indexOf('tg:sendPhoto'), 'no se genera antes del pago');
+      // 5. Repetir cualquier paso no duplica nada.
+      await telegram.handle({ callback_query: { id: 'q2', data: ok.callback_data, message: { message_id: 42, chat: { id: '777' }, photo: [{}] } } }); await gen.tick(); await care.flush();
+      must((await P.db.query('SELECT id FROM avatar_requests')).length === 1 && log.filter((x) => x === 'retrato').length === 1 && waMsgs.length === 1, 'repetir no duplica ni cobra dos veces');
+      // Pedir OTRO avatar despues de completado es una compra nueva: nace esperando su propio pago y no genera nada.
+      const c2: any = await reqs.create(id, '3005558801', jpg(5), '9.9.9.9', true); await gen.tick();
+      const second = (await P.db.query<any>('SELECT * FROM avatar_requests ORDER BY id'))[1];
+      must(c2.ok && !c2.resumed && c2.token !== c.token && second.state === 'PENDIENTE_PAGO' && log.filter((x) => x === 'retrato').length === 1, 'otro avatar = otra solicitud con su propio pago');
+      await P.db.query('DELETE FROM avatar_requests WHERE id = $1', [second.id]);
+      must(((await reqs.view(c.token)) as any).state === 'COMPLETADO' && (await reqs.portrait(c.token))!.toString() === 'RETRATO', 'el cliente ve su avatar listo y su retrato');
+      // 6. Los plazos: a los 31 dias se va la foto; a los 91, el comprobante; con la demo vencida, el retrato.
+      const d = join(dir, 'avatares', r.dir);
+      await care.purge(now + 31 * 86400_000); must(!existsSync(join(d, 'foto.jpg')) && existsSync(join(d, 'comprobante-1.jpg')) && !existsSync(join(d, 'retrato.jpg')) === (Date.parse(((await docs.get(id)) as any).expires_at) < now + 31 * 86400_000), 'a los 31 días');
+      await care.purge(now + 91 * 86400_000); must(!existsSync(join(d, 'comprobante-1.jpg')) && !existsSync(join(d, 'retrato.jpg')) && (await st()).state === 'COMPLETADO' && (await st()).price === 19200, 'a los 91 días solo queda el registro');
+      gen.onModuleDestroy(); care.onModuleDestroy();
+    } finally {
+      globalThis.fetch = prev; at(MON10); await setP('simulacion', was.sim); await setP('produccion', was.prod); await P.settings.set('politica.numeros_prueba', was.nums);
+      await P.db.query('DELETE FROM avatar_requests'); await P.db.query('DELETE FROM demos WHERE id = $1', [id]);
+    }
+    return 'los servicios reales encadenados con la red simulada: avatar por defecto → foto → sigue con uno del catálogo → comprobante → tu botón → retrato, base y colores → su demo abre con su avatar y dura 30 días → una plantilla de WhatsApp con su retrato → repetir no duplica → borrado a los 31 y 91 días';
+  });
+
   await check('Envío de la demo: solo con tu aprobación, con la imagen del negocio, y Claude Code como último recurso para la portada', async () => {
     const { DemoDocsService } = await import('../demo/demo-docs.service');
     const { DemoSendService } = await import('../demo/demo-send.service');
