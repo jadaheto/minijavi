@@ -80,7 +80,7 @@
   },
   "retrato": {
     "_nota": "Texto NUEVO del 2026-11-21 (no existía antes): convierte la foto de una persona al estilo. Va seguido de las mismas cláusulas de `estilo`. Se envían dos imágenes: primero la referencia de estilo, después la foto.",
-    "entrada": "Convierte a la persona de la SEGUNDA imagen (una fotografía) en un personaje con exactamente el mismo estilo visual de la PRIMERA imagen (misma técnica, mismos materiales y mismas proporciones de caricatura). Debe reconocerse a la persona de la foto: conserva la forma de su cara, su peinado y color de pelo, su tono de piel, el color de sus ojos, sus cejas, su barba o bigote si los tiene y sus gafas si las lleva. No copies la cara, el pelo ni las gafas del personaje de la primera imagen: de ella solo se toma el estilo.",
-    "cierre": "Sin texto, sin logos, sin marcas de agua, sin marcos."
+    "entrada": "Convierte a la persona de la SEGUNDA imagen (una fotografía) en un personaje con exactamente el mismo estilo visual de la PRIMERA imagen (misma técnica, mismos materiales y mismas proporciones de caricatura). Debe reconocerse a la persona de la foto: conserva la forma de su cara, su peinado y color de pelo, su tono de piel, el color de sus ojos, sus cejas y su barba o bigote si los tiene. De la primera imagen se toma SOLO el estilo: no copies su cara, su pelo, su barba ni sus gafas. Gafas: el personaje lleva gafas únicamente si la persona de la fotografía las lleva puestas, y en ese caso con la forma y el color de las suyas; si en la fotografía no lleva gafas, el personaje NO lleva gafas.",
+    "cierre": "Recuerda: sin gafas si la persona de la fotografía no las lleva. Sin texto, sin logos, sin marcas de agua, sin marcos."
   }
 }

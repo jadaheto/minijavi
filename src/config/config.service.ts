@@ -174,6 +174,8 @@ export class ConfigService {
   readonly avatarPhotoMb: number;
   readonly avatarPerIpHour: number;
   readonly avatarProofs: number;
+  readonly avatarAttempts: number;
+  readonly avatarDemoDays: number;
   readonly demoPageMinutes: number;
   readonly demoPageDailyMinutes: number;
   /** Tope de minutos de voz al dia entre TODAS las demos (cada minuto cuesta escucha, modelo y voz). */
@@ -429,6 +431,8 @@ export class ConfigService {
     this.avatarPhotoMb = Math.min(20, int('AVATAR_FOTO_MB', 8, 1));
     this.avatarPerIpHour = int('AVATAR_POR_IP_HORA', 5, 1);
     this.avatarProofs = int('AVATAR_COMPROBANTES', 3, 1);
+    this.avatarAttempts = Math.min(5, int('AVATAR_INTENTOS', 3, 1));
+    this.avatarDemoDays = Math.min(90, int('AVATAR_DEMO_DIAS', 30, 1));
     this.demoPageMinutes = int('DEMO_MIN_CHARLA', 5, 1);
     this.demoPageDailyMinutes = int('DEMO_MIN_DIA', 30, 1);
     this.demoPageTotalMinutes = int('DEMO_MIN_DIA_TOTAL', 120, 1);

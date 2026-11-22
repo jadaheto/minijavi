@@ -52,7 +52,8 @@ export interface DemoConfig { saludo: string; personalidad: string; preguntas: s
   /** Ya se intento la imagen (con o sin exito): el envio por WhatsApp no espera mas. */ imagenLista?: boolean; imagenError?: string;
   /** Ya se le propuso a Javier enviar esta demo por WhatsApp. */ propuesta?: boolean;
   /** Proyecto del taller con la portada hecha por Claude Code (ultimo recurso si OpenAI y Magnific fallaron). */ portada?: string;
-  /** Avatar del catalogo elegido para ESTA demo ('' o ausente = el de Javier). */ avatar?: string }
+  /** Avatar del catalogo elegido para ESTA demo ('' o ausente = el de Javier). */ avatar?: string;
+  /** Avatar personalizado: colores del cliente sobre el avatar del catalogo (#rrggbb) y de que solicitud salio. */ tinte?: { piel: string; pelo: string; ojos: string }; avatarPropio?: number }
 export interface DemoProfile { negocio: string; ficha: string; colores: string[]; extra?: string; config?: DemoConfig }
 export interface DemoPage { id: string; business: string; profile: DemoProfile; config: DemoConfig; expires: string; usedMin: number }
 export interface DocUpdate { state: DocState; message: string; id?: string; business?: string; profile?: DemoProfile }

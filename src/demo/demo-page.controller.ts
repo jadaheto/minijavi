@@ -8,6 +8,9 @@ import { join } from 'node:path';
 import { DemoDocsService } from './demo-docs.service';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+const HEX = /^#[0-9a-f]{6}$/i;
+/** Los colores del avatar personalizado, solo si son tres #rrggbb (o vacios). */
+const tintMeta = (t?: { piel?: string; pelo?: string; ojos?: string }) => { const v = [t?.piel, t?.pelo, t?.ojos].map((x) => (HEX.test(String(x ?? '')) ? String(x).toLowerCase() : '')); return v.some(Boolean) ? `\n  <meta name="minijavi-demo-tinte" content="${v.join(',')}">` : ''; };
 const WHY = { no_existe: 'Esta demostración no existe.', vencida: 'Esta demostración ya venció.', no_lista: 'Esta demostración todavía se está preparando. Intenta en un rato.', limite: 'Esta demostración llegó a su límite de uso de hoy. Vuelve mañana.' };
 
 /**
@@ -30,7 +33,7 @@ export class DemoPageController {
     }
     this.html ??= readFileSync(join(__dirname, '..', '..', 'public', 'index.html'), 'utf8');
     const out = this.html
-      .replace('<head>', `<head>\n  <base href="/">\n  <meta name="robots" content="noindex, nofollow">\n  <meta name="minijavi-demo" content="${esc(p.id)}">${p.config.imagen && /^[A-Za-z0-9._-]+$/.test(p.config.imagen) ? `\n  <meta name="minijavi-demo-image" content="/imagenes/${esc(p.config.imagen)}">` : ''}\n  <meta name="minijavi-demo-avatars" content="${AVATARS.join(',')}">${p.config.avatar && (AVATARS as readonly string[]).includes(p.config.avatar) ? `\n  <meta name="minijavi-demo-avatar" content="${p.config.avatar}">` : ''}${!p.config.imagen && p.config.portada && /^[a-z0-9-]+$/.test(p.config.portada) && this.workshop?.hasSite(p.config.portada) ? `\n  <meta name="minijavi-demo-portada" content="/p/${esc(p.config.portada)}/">` : ''}`)
+      .replace('<head>', `<head>\n  <base href="/">\n  <meta name="robots" content="noindex, nofollow">\n  <meta name="minijavi-demo" content="${esc(p.id)}">${p.config.imagen && /^[A-Za-z0-9._-]+$/.test(p.config.imagen) ? `\n  <meta name="minijavi-demo-image" content="/imagenes/${esc(p.config.imagen)}">` : ''}\n  <meta name="minijavi-demo-avatars" content="${AVATARS.join(',')}">${p.config.avatar && (AVATARS as readonly string[]).includes(p.config.avatar) ? `\n  <meta name="minijavi-demo-avatar" content="${p.config.avatar}">${tintMeta(p.config.tinte)}` : ''}${!p.config.imagen && p.config.portada && /^[a-z0-9-]+$/.test(p.config.portada) && this.workshop?.hasSite(p.config.portada) ? `\n  <meta name="minijavi-demo-portada" content="/p/${esc(p.config.portada)}/">` : ''}`)
       .replace(/<title>[^<]*<\/title>/, `<title>Asistente de ${esc(p.business)}</title>`);
     return res.type('html').send(out);
   }

@@ -38,6 +38,8 @@
     $('e-texto').textContent = view.message;
     $('e-ref').textContent = `Solicitud #${view.id}`;
     $('e-demo').href = demoLink();
+    const pic = $('e-retrato'); pic.hidden = !view.hasPortrait; if (view.hasPortrait && !pic.src) pic.src = `${API}/retrato?t=${token}`;
+    $('e-otra').hidden = !view.canRetake;
     const c = $('e-contacto'); c.hidden = !/^https:\/\//.test(view.contact || '') || !['PAGO_RECHAZADO', 'ERROR_GENERACION'].includes(view.state); if (!c.hidden) c.href = view.contact;
     say('');
     if (!['COMPLETADO', 'AVATAR_ACTIVADO', 'PAGO_RECHAZADO'].includes(view.state)) timer = setTimeout(async () => { const before = view.state; if (await refresh(true)) render(view.state === before ? undefined : 'comprobante'); }, 15000);
@@ -95,6 +97,19 @@
       if (await refresh()) render();
     } catch { say('No se pudo subir. Revisa la conexión.', 'bad'); }
     finally { $('subir').disabled = false; $('comp').value = ''; }
+  });
+
+  $('e-otra').addEventListener('click', () => $('otra').click());
+  $('otra').addEventListener('change', async () => {
+    const f = $('otra').files && $('otra').files[0]; if (!f) return;
+    $('e-otra').disabled = true; say('Revisando tu foto…', 'busy');
+    try {
+      const r = await json(await fetch(`${API}/foto?t=${token}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: f }));
+      if (!r.ok) return say(r.data.message || 'No se pudo enviar.', 'bad');
+      if (await refresh()) render();
+      say(r.data.message || '', 'ok');
+    } catch { say('No se pudo enviar. Revisa la conexión.', 'bad'); }
+    finally { $('e-otra').disabled = false; $('otra').value = ''; }
   });
 
   start().catch(() => { $('no-texto').textContent = 'No se pudo cargar. Revisa la conexión e intenta de nuevo.'; show('s-no'); });

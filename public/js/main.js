@@ -30,7 +30,9 @@ const DEMO_PAGE = document.querySelector('meta[name="minijavi-demo"]')?.getAttri
 // Que es este servicio: el minijavi de Javier o el asistente de un negocio (modo negocio: su marca, su avatar, su voz).
 const NEGOCIO = await fetch(new URL('/api/modo', location.href), { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((m) => (m && m.modo === 'negocio' ? m : null)).catch(() => null);
 const DEMO_AVATAR = DEMO_PAGE ? document.querySelector('meta[name="minijavi-demo-avatar"]')?.getAttribute('content') || '' : ''; // el avatar del catálogo que eligió esta demo
-const avatar = await createAvatar($('stage'), NEGOCIO ? String(NEGOCIO.avatar || '') : DEMO_AVATAR);
+// Avatar personalizado de esta demo: piel, pelo y ojos del cliente sobre el avatar del catálogo ("#piel,#pelo,#ojos").
+const DEMO_TINT = (() => { const [piel, pelo, ojos] = (document.querySelector('meta[name="minijavi-demo-tinte"]')?.getAttribute('content') || '').split(','); return DEMO_AVATAR && (piel || pelo || ojos) ? { piel, pelo, ojos } : null; })();
+const avatar = await createAvatar($('stage'), NEGOCIO ? String(NEGOCIO.avatar || '') : DEMO_AVATAR, NEGOCIO ? null : DEMO_TINT);
 const missing = REQUIRED.filter((n) => !avatar.morphNames.includes(n));
 if (missing.length) console.warn('Al modelo le faltan morph targets:', missing);
 if (new URLSearchParams(location.search).get('subs') === '0') $('subtitles').classList.add('off'); // subtitulos opcionales: ?subs=0

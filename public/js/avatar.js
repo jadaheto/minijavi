@@ -6,7 +6,36 @@ const rnd = (a, b) => a + Math.random() * (b - a);
 
 const PHONES = { x: 1.0, top: 1.04, earY: -0.05, z: -0.05 }; // proporciones de los audifonos respecto a la caja del modelo
 
-export async function createAvatar(canvas, model = '') {
+/**
+ * Avatar personalizado: cambia piel, pelo y ojos de un avatar del catálogo sin tocar el modelo. La piel y el pelo traen
+ * su color (con el sombreado) pintado por vértice y el material en blanco: el material pasa a ser la razón entre el color
+ * pedido y el original (models/paleta.json), así el sombreado se conserva. Cejas e iris son colores planos: se ponen directo.
+ */
+async function applyTint(root, model, tint) {
+  const hex = (v) => (/^#[0-9a-f]{6}$/i.test(v || '') ? new THREE.Color(v) : null);
+  const skin = hex(tint.piel), hair = hex(tint.pelo), eyes = hex(tint.ojos);
+  if (!skin && !hair && !eyes) return;
+  const pal = await fetch(new URL('../models/paleta.json', import.meta.url)).then((r) => (r.ok ? r.json() : null)).then((p) => p?.[model]).catch(() => null);
+  if (!pal) return; // solo los avatares humanos tienen paleta
+  const ratio = (to, from, pow = 1) => { const a = new THREE.Color(from); return ['r', 'g', 'b'].map((c) => Math.min(40, Math.pow(to[c] / Math.max(a[c], 1e-3), pow))); };
+  const scaled = (to, from, part) => { const f = new THREE.Color(from), p = new THREE.Color(part); return ['r', 'g', 'b'].map((c) => Math.min(1, to[c] * (p[c] / Math.max(f[c], 1e-3)))); };
+  const set = {
+    Skin: skin && pal.Skin && ratio(skin, pal.Skin),
+    Lips: skin && pal.Skin && ratio(skin, pal.Skin, 0.5), // los labios acompañan a la piel a medias
+    Hair: hair && pal.Hair && ratio(hair, pal.Hair),
+    Beard: hair && pal.Beard && ratio(hair, pal.Beard),
+    Brow: hair && [hair.r * 0.78, hair.g * 0.78, hair.b * 0.78],
+    Iris: eyes && [eyes.r, eyes.g, eyes.b],
+    IrisLight: eyes && pal.Iris && pal.IrisLight && scaled(eyes, pal.Iris, pal.IrisLight),
+    IrisDark: eyes && pal.Iris && pal.IrisDark && scaled(eyes, pal.Iris, pal.IrisDark),
+  };
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) { const c = m && set[m.name]; if (c) m.color.setRGB(c[0], c[1], c[2]); }
+  });
+}
+
+export async function createAvatar(canvas, model = '', tint = null) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -22,7 +51,8 @@ export async function createAvatar(canvas, model = '') {
   const base = new URL('../models/avatar-javier.glb', import.meta.url).href, wanted = /^[a-z]{3,12}$/.test(model) ? new URL(`../models/avatar-${model}.glb`, import.meta.url).href : '';
   const loader = new GLTFLoader();
   const gltf = wanted ? await loader.loadAsync(wanted).catch(() => loader.loadAsync(base)) : await loader.loadAsync(base);
-  const root = gltf.scene; const pivot = new THREE.Group(); pivot.add(root); scene.add(pivot);
+  const root = gltf.scene; if (tint && wanted) await applyTint(root, model, tint);
+  const pivot = new THREE.Group(); pivot.add(root); scene.add(pivot);
 
   // Los morph targets estan repartidos en varias mallas: se indexa cada nombre con todas las mallas que lo tienen.
   const morphs = new Map();

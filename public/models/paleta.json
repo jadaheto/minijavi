@@ -1,0 +1,39 @@
+{
+ "hombre": {
+  "Skin": "#D6A07A",
+  "Lips": "#A9705E",
+  "Hair": "#342825",
+  "Brow": "#2B2220",
+  "Iris": "#4A3020",
+  "IrisLight": "#5A3B26",
+  "IrisDark": "#2E1E14"
+ },
+ "mujer": {
+  "Skin": "#D3A07E",
+  "Lips": "#AB645B",
+  "Hair": "#4E392F",
+  "Brow": "#3E2C27",
+  "Iris": "#553D29",
+  "IrisLight": "#644830",
+  "IrisDark": "#33241A"
+ },
+ "joven": {
+  "Skin": "#D8B096",
+  "Lips": "#A9705E",
+  "Hair": "#573C2E",
+  "Brow": "#4E3B2D",
+  "Iris": "#555A28",
+  "IrisLight": "#646A30",
+  "IrisDark": "#33381A"
+ },
+ "mayor": {
+  "Skin": "#E2B595",
+  "Lips": "#B37463",
+  "Hair": "#DAD5D1",
+  "Brow": "#D8D3CF",
+  "Beard": "#D4CFCB",
+  "Iris": "#566675",
+  "IrisLight": "#6A7B8B",
+  "IrisDark": "#39444F"
+ }
+}

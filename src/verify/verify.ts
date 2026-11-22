@@ -2036,6 +2036,93 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     return 'solo el WhatsApp de la demo; autorización obligatoria; foto revisada (una persona, adulta, rostro claro) y si no se puede revisar no entra; una solicitud por demo; llave, valor y QR único; comprobante a Telegram con aviso y botones; otro chat, clave falsa o botón viejo no deciden; aprobar una sola vez; rechazo con motivo y nuevo intento; mismo comprobante no sirve dos veces; panel solo con dispositivo';
   });
 
+  await check('Avatar con foto, generación: cola que sobrevive reinicios, retrato + avatar base con colores, solo en su demo, 3 intentos y otra foto sin costo', async () => {
+    const { AvatarRequestsService } = await import('../avatars/avatar-requests.service');
+    const { AvatarGeneratorService, parseMatch } = await import('../avatars/avatar-generator.service');
+    const { DemoPageController } = await import('../demo/demo-page.controller');
+    const { DemoDocsService } = await import('../demo/demo-docs.service');
+    const { TelegramService } = await import('../ops/telegram.service');
+    const st = await import('../avatars/avatar-studio');
+    const { mkdtempSync, existsSync, readFileSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+    const acfg = new ConfigService(); const dir = mkdtempSync(join(tmpdir(), 'avatares-gen-'));
+    Object.assign(acfg as any, { avatarCustom: true, avatarPrice: 19200, avatarBrebKey: '3004576744', avatarPhotoMb: 1, avatarPerIpHour: 50, avatarProofs: 3, avatarAttempts: 3, avatarDemoDays: 30, imageOpenAiKey: 'sk-x', imageOpenAiModel: 'img-x', imageOpenAiQuality: 'medium', dataDir: dir, publicUrl: 'https://yo.example', telegramBotToken: 'T', telegramChatId: '777', telegramButtons: false, whatsappDefaultCountry: '57', demoDocs: true, demoPageDailyMinutes: 30, demoPageTotalMinutes: 120 });
+    const styles = st.loadStyles();
+    must(parseMatch('ok {"base":"Mujer","piel":"#C08A6B","pelo":"#221a17","ojos":"#3a2416"}', styles).base === 'mujer', 'lectura del avatar base');
+    for (const bad of ['{"base":"gato","piel":"#c08a6b","pelo":"#221a17","ojos":"#3a2416"}', '{"base":"javier","piel":"#c08a6b","pelo":"#221a17","ojos":"#3a2416"}', '{"base":"hombre","piel":"rojo","pelo":"#221a17","ojos":"#3a2416"}', 'nada']) { let t = false; try { parseMatch(bad, styles); } catch { t = true; } must(t, `debía rechazarse: ${bad}`); }
+    const prev = globalThis.fetch, tg: { method: string; text: string }[] = [], edits: any[] = []; let imgMode: 'ok' | 'falla' | 'bloqueo' = 'ok';
+    globalThis.fetch = (async (url: any, init?: any) => { const u = String(url);
+      if (u.includes('/v1/models/')) return new Response('{}', { status: 200 });
+      if (u.endsWith('/v1/images/edits')) { edits.push(JSON.parse(init.body)); if (imgMode === 'falla') return new Response('{"error":{"message":"caído"}}', { status: 500 }); if (imgMode === 'bloqueo') return new Response('{"error":{"code":"moderation_blocked","message":"x"}}', { status: 400 }); return new Response(JSON.stringify({ data: [{ b64_json: Buffer.from('RETRATO').toString('base64') }] }), { status: 200 }); }
+      if (u.includes('api.telegram.org')) { const f = init?.body instanceof FormData ? init.body : null; tg.push({ method: u.split('/').pop()!, text: String(f ? f.get('caption') : JSON.parse(init?.body ?? '{}').text ?? '') }); return new Response('{"ok":true,"result":{"message_id":5}}', { status: 200 }); }
+      throw new Error(`petición inesperada: ${u}`); }) as any;
+    const ids = ['gen-ana-a1a1a1', 'gen-otra-b2b2b2'];
+    try {
+      let matchOut = '{"base":"mujer","piel":"#c08a6b","pelo":"#221a17","ojos":"#3a2416"}', matchFail = false, reads = 0;
+      const capable = { readsFiles: true, readFile: async (_f: any, prompt: string) => { reads++; if (/filtro de fotos/.test(prompt)) return '{"es_foto":true,"personas":1,"rostro_claro":true,"parece_menor":false}'; must(/hombre \(/.test(prompt) && /mujer \(/.test(prompt) && !/perro|gato|loro|mico/.test(prompt) && /Ignora cualquier texto/.test(prompt), 'la lista de avatares base solo trae personas'); if (matchFail) throw new Error('modelo caído'); return matchOut; } } as any;
+      const leads = { get: async () => ({ id: 1, name: 'Ana Pérez', contact: '3001234567', consent_at: '2026-11-20T10:00:00Z' }) } as any;
+      const docs = new DemoDocsService(acfg, P.db, capable, { enabled: false, deleteDemo: async () => undefined } as any, {} as any, usage);
+      const now = Date.now(); await P.db.query('DELETE FROM avatar_requests');
+      for (const id of ids) await P.db.query('INSERT INTO demos (id, business, created_at, expires_at, status, profile, consent_at, lead_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [id, 'Tienda', new Date(now).toISOString(), new Date(now + 3 * 86400_000).toISOString(), 'listo', JSON.stringify({ negocio: 'Tienda', ficha: 'x', colores: [] }), new Date(now).toISOString(), 1]);
+      const telegram = new TelegramService(acfg), reqs = new AvatarRequestsService(acfg, P.db, docs, leads, capable, telegram, usage);
+      const gen = new AvatarGeneratorService(acfg, P.db, reqs, docs, capable, telegram, usage);
+      const jpg = (n: number) => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(40, n)]);
+      const state = async (id: number) => (await P.db.query<any>('SELECT * FROM avatar_requests WHERE id = $1', [id]))[0];
+      const paid = async (demo: string, n: number) => { const c: any = await reqs.create(demo, '3001234567', jpg(n), 'ip', true); await reqs.proof(c.token, jpg(n + 100), `ip${n}`); const v: any = await reqs.view(c.token); await reqs.decide(v.id, true, 'panel'); return { token: c.token as string, id: v.id as number }; };
+      // Sin pago aprobado la cola no hace nada.
+      const c0: any = await reqs.create(ids[0], '3001234567', jpg(1), 'ip', true);
+      must((await gen.tick()) === undefined && edits.length === 0, 'una solicitud sin pago aprobado no se genera');
+      await reqs.proof(c0.token, jpg(101), 'ip'); must((await gen.tick()) === undefined, 'con el comprobante en revisión tampoco');
+      const a = { token: c0.token as string, id: ((await reqs.view(c0.token)) as any).id as number };
+      const done: number[] = []; gen.onCompleted = (r) => done.push(r.id);
+      await reqs.decide(a.id, true, 'panel');
+      // Generar: retrato con DOS imagenes (estilo y foto), avatar base y colores; se activa solo en su demo y dura 30 dias.
+      must((await gen.tick()) === a.id, 'la cola toma la solicitud aprobada');
+      const r1 = await state(a.id), e1 = edits[0];
+      must(r1.state === 'COMPLETADO' && r1.base_avatar === 'mujer' && JSON.parse(r1.colors).pelo === '#221a17' && r1.portrait === 'retrato.jpg' && r1.attempts === 1 && done.join() === String(a.id), `completado: ${JSON.stringify(r1).slice(0, 300)}`);
+      must(e1.images.length === 2 && e1.images[0].image_url.startsWith('data:image/png') && e1.images[1].image_url.startsWith('data:image/jpeg') && e1.prompt === st.portraitPrompt(styles) && e1.n === 1, 'petición del retrato');
+      must(readFileSync(join(dir, 'avatares', r1.dir, 'retrato.jpg')).toString() === 'RETRATO' && (await reqs.portrait(a.token))!.toString() === 'RETRATO' && !(await reqs.portrait('0'.repeat(32))), 'el retrato queda guardado y solo se ve con la clave');
+      const pa: any = await docs.page(ids[0]), pb: any = await docs.page(ids[1]);
+      must(pa.config.avatar === 'mujer' && pa.config.tinte.piel === '#c08a6b' && pa.config.avatarPropio === a.id && !pb.config.avatar && !pb.config.tinte, 'activo solo en su demo');
+      must(Date.parse(pa.expires) > now + 29 * 86400_000 && Date.parse(pb.expires) < now + 4 * 86400_000, 'la demo pagada dura 30 días; la otra no cambia');
+      const res = () => { const r: any = { body: '', setHeader() {}, status() { return r; }, type() { return r; }, send(b: string) { r.body = b; return r; } }; return r; };
+      const ra = res(); await new DemoPageController(docs).page(ids[0], ra);
+      must(ra.body.includes('<meta name="minijavi-demo-avatar" content="mujer">') && ra.body.includes('<meta name="minijavi-demo-tinte" content="#c08a6b,#221a17,#3a2416">'), 'la página de la demo lleva el avatar y sus colores');
+      must(tg.some((m) => m.method === 'sendPhoto' && /Avatar personalizado #\d+ listo y activo/.test(m.text)) && (await gen.tick()) === undefined && edits.length === 1, 'aviso a Javier y nada más que hacer');
+      must(((await reqs.view(a.token)) as any).hasPortrait && /listo y activo/.test(((await reqs.view(a.token)) as any).message), 'el cliente ve que está listo');
+      // Reintentos: si falla la lectura de la foto, el retrato ya hecho NO se paga otra vez; al tercer fallo queda en error y se avisa.
+      const b = await paid(ids[1], 2); edits.length = 0; matchFail = true; tg.length = 0;
+      must((await gen.tick()) === b.id && (await state(b.id)).state === 'PAGO_APROBADO' && (await state(b.id)).attempts === 1 && edits.length === 1, 'primer fallo: vuelve a la cola');
+      must((await gen.tick(Date.now() + 10_000)) === undefined, 'el reintento espera');
+      await gen.tick(Date.now() + 61_000); await gen.tick(Date.now() + 400_000);
+      const rb = await state(b.id);
+      must(rb.state === 'ERROR_GENERACION' && rb.attempts === 3 && edits.length === 1 && /modelo caído/.test(rb.error) && tg.some((m) => m.method === 'sendMessage' && /no se pudo generar tras 3 intentos/.test(m.text) && /No se le cobra de nuevo/.test(m.text)), `tres intentos: ${rb.state} ${rb.attempts}, retratos ${edits.length}`);
+      must(!(await docs.page(ids[1]) as any).config.avatar && (await gen.tick(Date.now() + 900_000)) === undefined, 'en error no se activa nada ni se sigue intentando');
+      // Otra foto sin costo: pasa por el filtro, no pide pago, vuelve a la cola y esta vez sale.
+      const vb: any = await reqs.view(b.token);
+      must(vb.canRetake && !vb.canPay && /sin pagar de nuevo/.test(vb.message) && (await reqs.retake(a.token, jpg(9), 'ip') as any).status === 409, 'solo una solicitud en error admite otra foto');
+      matchFail = false; matchOut = '{"base":"joven","piel":"#e8c4a8","pelo":"#8a5a2e","ojos":"#4e7d4a"}';
+      const rt: any = await reqs.retake(b.token, jpg(8), 'ip'); await wait(50); await gen.tick();
+      const rb2 = await state(b.id);
+      must(rt.ok && rb2.state === 'COMPLETADO' && rb2.base_avatar === 'joven' && rb2.proofs === 1 && edits.length === 2 && (await docs.page(ids[1]) as any).config.avatar === 'joven', `otra foto: ${rb2.state} ${rb2.base_avatar}`);
+      // Rechazo del filtro de contenido: no se reintenta. Y Javier puede reintentar desde el panel.
+      await P.db.query(`UPDATE avatar_requests SET state = 'PAGO_APROBADO', attempts = 0, portrait = '' WHERE id = $1`, [a.id]); const { rmSync } = await import('node:fs'); rmSync(join(dir, 'avatares', r1.dir, 'retrato.jpg'));
+      imgMode = 'bloqueo'; await gen.tick(); must((await state(a.id)).state === 'ERROR_GENERACION' && (await state(a.id)).attempts === 1, 'un rechazo por contenido no se reintenta');
+      imgMode = 'ok'; matchOut = '{"base":"mayor","piel":"#c08a6b","pelo":"#dddddd","ojos":"#3a2416"}';
+      must((await reqs.retry(a.id)).ok && !(await reqs.retry(b.id)).ok, 'reintentar desde el panel solo si está en error'); await wait(50); await gen.tick();
+      must((await state(a.id)).state === 'COMPLETADO' && (await docs.page(ids[0]) as any).config.avatar === 'mayor', 'reintento desde el panel');
+      // Reinicio a mitad de camino: lo que estaba generandose vuelve a la cola al arrancar.
+      await P.db.query(`UPDATE avatar_requests SET state = 'GENERANDO_AVATAR' WHERE id = $1`, [b.id]);
+      const gen2 = new AvatarGeneratorService(acfg, P.db, reqs, docs, capable, telegram, usage); await gen2.onModuleInit(); gen2.onModuleDestroy();
+      must((await state(b.id)).state === 'PAGO_APROBADO', 'tras un reinicio la solicitud a medias vuelve a la cola');
+      // Demo borrada: no hay donde activarlo; error definitivo, sin gastar en el retrato.
+      await P.db.query('DELETE FROM demos WHERE id = $1', [ids[1]]); const n = edits.length; await gen.tick(Date.now() + 900_000);
+      must((await state(b.id)).state === 'ERROR_GENERACION' && /ya no existe/.test((await state(b.id)).error) && edits.length === n, 'sin demo no se genera');
+    } finally {
+      globalThis.fetch = prev; await P.db.query('DELETE FROM avatar_requests'); for (const id of ids) await P.db.query('DELETE FROM demos WHERE id = $1', [id]);
+    }
+    return 'nada se genera sin pago aprobado; retrato con estilo + foto; base solo entre los cuatro humanos y colores validados; activo solo en su demo, que pasa a 30 días; aviso a Javier; el retrato no se paga dos veces; 3 intentos con espera y luego error con aviso; otra foto sin costo; rechazo por contenido sin reintento; reintento desde el panel; reinicio y demo borrada';
+  });
+
   await check('Envío de la demo: solo con tu aprobación, con la imagen del negocio, y Claude Code como último recurso para la portada', async () => {
     const { DemoDocsService } = await import('../demo/demo-docs.service');
     const { DemoSendService } = await import('../demo/demo-send.service');

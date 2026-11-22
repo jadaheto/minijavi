@@ -43,6 +43,23 @@ export class AvatarRequestsController {
     return { ok: true, ...v };
   }
 
+  @Post('foto')
+  @HttpCode(202)
+  @Header('Cache-Control', 'no-store')
+  async retake(@Req() req: Request, @Query('t') t: string) {
+    const out = await this.reqs.retake(String(t ?? ''), await this.body(req), ipOf(req));
+    if (!out.ok) throw new HttpException({ ok: false, message: out.message }, out.status);
+    return out;
+  }
+
+  @Get('retrato')
+  async portrait(@Query('t') t: string, @Res() res: Response) {
+    const img = await this.reqs.portrait(String(t ?? ''));
+    if (!img) throw new HttpException({ ok: false }, 404);
+    res.setHeader('Cache-Control', 'private, no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.type('image/jpeg').send(img);
+  }
+
   @Post('comprobante')
   @HttpCode(202)
   @Header('Cache-Control', 'no-store')
@@ -69,6 +86,7 @@ export class AvatarOwnerController {
   @Post(':id')
   async decide(@Req() req: Request, @Param('id') id: string, @Body() body: { decision?: string; motivo?: string }) {
     this.require(req);
+    if (body?.decision === 'reintentar') { const t = await this.reqs.retry(Number(id) || 0); if (!t.ok) throw new HttpException({ error: 'no_aplica', message: t.text }, 409); return t; }
     if (body?.decision !== 'aprobar' && body?.decision !== 'rechazar') throw new HttpException({ error: 'decision_invalida' }, 400);
     const r = await this.reqs.decide(Number(id) || 0, body.decision === 'aprobar', 'panel', String(body.motivo ?? ''));
     if (!r.ok) throw new HttpException({ error: 'no_aplica', message: r.text }, 409);
@@ -78,7 +96,7 @@ export class AvatarOwnerController {
   @Get(':id/:which')
   async file(@Req() req: Request, @Param('id') id: string, @Param('which') which: string, @Res() res: Response) {
     this.require(req);
-    const f = which === 'foto' || which === 'comprobante' ? await this.reqs.file(Number(id) || 0, which) : undefined;
+    const f = which === 'foto' || which === 'comprobante' || which === 'retrato' ? await this.reqs.file(Number(id) || 0, which) : undefined;
     if (!f) throw new HttpException({ error: 'no_existe' }, 404);
     res.setHeader('Cache-Control', 'private, no-store'); res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
     res.type(f.mime).send(f.data);
