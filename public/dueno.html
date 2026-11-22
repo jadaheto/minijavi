@@ -5,129 +5,78 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
   <title>Panel de Javier</title>
-  <link rel="stylesheet" href="./css/style.css">
-  <style>
-    /* Colores de los graficos: paleta validada para fondo oscuro (azul, naranja, agua, amarillo). */
-    :root { --panel: #171c23; --line: #2b3440; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; }
-    html, body { overflow: auto; }
-    main { max-width: 1080px; margin: 0 auto; padding: 22px 16px 70px; display: grid; gap: 16px; }
-    .top { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
-    .top h1 { margin: 0; font-size: 22px; }
-    a { color: var(--accent); }
-    .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
-    .tabs button { background: transparent; color: var(--muted); padding: 9px 14px; min-height: 40px; border: 1px solid var(--line); font-weight: 600; }
-    .tabs button[aria-selected="true"] { background: var(--panel); color: var(--fg); border-color: var(--accent); }
-    .card { background: var(--panel); border-radius: 16px; padding: 20px; display: grid; gap: 12px; min-width: 0; }
-    .card h2 { margin: 0; font-size: 17px; }
-    .card p { margin: 0; color: var(--muted); }
-    .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
-    .grid.charts { grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); }
-    .tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-    .tile { background: var(--panel); border-radius: 14px; padding: 16px; }
-    .tile b { display: block; font-size: 30px; line-height: 1.1; font-variant-numeric: tabular-nums; }
-    .tile span { color: var(--muted); font-size: 14px; }
-    input, select, textarea { font: inherit; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: #0f1318; color: var(--fg); }
-    textarea { width: 100%; min-height: 44px; resize: vertical; }
-    .filters { display: flex; gap: 8px; flex-wrap: wrap; }
-    .filters input { flex: 1; min-width: 180px; }
-    ul.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-    ul.list > li { background: #0f1318; border-radius: 12px; padding: 12px 14px; display: grid; gap: 8px; }
-    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .row.between { justify-content: space-between; }
-    small, .muted { color: var(--muted); }
-    .tag { background: rgba(79, 140, 255, .22); border-radius: 999px; padding: 2px 10px; font-size: 13px; }
-    button.small { padding: 7px 12px; min-height: 34px; font-size: 14px; }
-    button.small.on { outline: 2px solid var(--accent); }
-    select { font: inherit; padding: 8px 10px; border-radius: 10px; background: #10141a; color: inherit; border: 1px solid rgba(255, 255, 255, .14); }
-    button.danger { background: #5a2630; }
-    .msg { min-height: 1.4em; color: #ff8a8a; }
-    .ok { color: var(--ok); }
-    pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 14px/1.5 system-ui, sans-serif; }
-    table { width: 100%; border-collapse: collapse; font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-    th, td { padding: 6px 10px; text-align: right; border-bottom: 1px solid rgba(128, 128, 128, .22); }
-    th:first-child, td:first-child { text-align: left; }
-    th { color: var(--muted); font-weight: 600; }
-    .scroll { overflow-x: auto; }
-    /* Graficos */
-    .chart { position: relative; }
-    .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
-    .chart .axis { fill: var(--muted); font-size: 11px; }
-    .chart .gridline { stroke: rgba(255, 255, 255, .08); }
-    .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
-    .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; }
-    .tip { position: absolute; pointer-events: none; background: #0b0e12; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 13px; white-space: nowrap; z-index: 3; transform: translate(-50%, -100%); }
-    .tip[hidden] { display: none; }
-    .hbar { display: grid; grid-template-columns: minmax(90px, 34%) 1fr auto; gap: 10px; align-items: center; font-size: 14px; }
-    .hbar div { height: 12px; border-radius: 0 4px 4px 0; background: var(--s1); min-width: 2px; }
-    .hbar b { font-variant-numeric: tabular-nums; font-weight: 600; }
-    .hbar b small { font-weight: 400; margin-left: 6px; }
-    .case-photo { max-width: 260px; width: 100%; border-radius: 10px; display: block; }
-    [hidden] { display: none !important; }
-      .demo-row { display: grid; gap: 8px; }
-      .danger-text { color: #ffb4b0; }
-      .demo-img { display: block; width: min(360px, 100%); border-radius: 10px; }
-      .demo-row .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 6px; }
-      .demo-row pre { margin: 0; white-space: pre-wrap; font: inherit; font-size: 13px; color: #c9d1dc; max-height: 9em; overflow: auto; }
-      .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
-    .image-grid figure { margin: 0; display: grid; gap: 8px; align-content: start; padding: 10px; border-radius: 12px; background: rgba(255, 255, 255, .04); }
-    .image-grid a.pic { display: block; aspect-ratio: 16 / 10; border-radius: 8px; overflow: hidden; background: #0c0f13; }
-    .image-grid img { width: 100%; height: 100%; object-fit: contain; display: block; }
-    .image-grid figcaption { font-size: 14px; overflow-wrap: anywhere; }
-</style>
+  <link rel="stylesheet" href="./css/panel.css">
 </head>
 <body>
-  <main>
-    <section class="card" id="register" hidden>
+  <div class="gate" id="register" hidden>
+    <section class="card">
       <h2>Registrar este dispositivo</h2>
       <p>Solo los dispositivos registrados pueden ver este panel y usar las herramientas privadas del avatar. Escribe tu clave una vez; este dispositivo queda autorizado.</p>
-      <form id="form" style="display:grid;gap:10px;max-width:420px">
+      <form id="form" style="display:grid;gap:10px">
         <input id="name" placeholder="Nombre (ej. Mi iPhone)" maxlength="60" required>
         <input id="secret" type="password" placeholder="Clave del dueño" autocomplete="off" required>
         <button type="submit">Registrar</button>
       </form>
       <p class="msg" id="msg" role="alert"></p>
     </section>
+  </div>
 
-    <div id="panel" hidden>
-      <div style="display:grid;gap:16px">
-        <div class="top">
-          <h1>Panel de Javier</h1>
-          <span class="muted"><span id="db"></span> · <a href="./owner/backup">Descargar respaldo</a> · <a href="./">Ir al avatar</a></span>
-        </div>
-        <nav class="tabs" role="tablist" id="tabs">
+  <div class="app" id="panel" hidden>
+    <aside class="rail" aria-label="Secciones del panel">
+      <div class="brand"><img src="./img/avatares/hombre.jpg" alt="" id="brand-pic"><div><b>minijavi</b><small>Panel de Javier</small></div></div>
+      <div class="groups" id="tabs" role="tablist" aria-orientation="vertical">
+        <div class="group"><h2>Hoy</h2>
           <button role="tab" data-tab="resumen">Resumen</button>
-          <button role="tab" data-tab="interesados">Interesados</button>
+          <button role="tab" data-tab="aprobaciones">Aprobaciones <span class="count" data-count="aprobaciones"></span></button>
+        </div>
+        <div class="group"><h2>Clientes</h2>
+          <button role="tab" data-tab="interesados">Interesados <span class="count" data-count="interesados"></span></button>
           <button role="tab" data-tab="visitas">Visitas</button>
           <button role="tab" data-tab="conversaciones">Conversaciones</button>
-          <button role="tab" data-tab="portafolio">Portafolio</button>
-          <button role="tab" data-tab="imagenes">Imágenes</button>
           <button role="tab" data-tab="demos">Demos</button>
-          <button role="tab" data-tab="conexiones">Conexiones</button>
-          <button role="tab" data-tab="avatares">Avatares <span id="avatar-badge"></span></button>
-          <button role="tab" data-tab="aprobaciones" id="tab-aprobaciones">Aprobaciones</button>
+          <button role="tab" data-tab="avatares">Avatares <span class="count" data-count="avatares"></span></button>
+        </div>
+        <div class="group"><h2>Lo que ofrezco</h2>
+          <button role="tab" data-tab="portafolio">Portafolio</button>
           <button role="tab" data-tab="catalogo">Catálogo</button>
+          <button role="tab" data-tab="imagenes">Imágenes</button>
+          <button role="tab" data-tab="taller">Taller</button>
+        </div>
+        <div class="group"><h2>Control</h2>
           <button role="tab" data-tab="autonomia">Autonomía</button>
           <button role="tab" data-tab="bitacora">Bitácora</button>
           <button role="tab" data-tab="decisiones">Decisiones</button>
+          <button role="tab" data-tab="conexiones">Conexiones</button>
           <button role="tab" data-tab="consumo">Consumo</button>
-          <button role="tab" data-tab="taller">Taller</button>
           <button role="tab" data-tab="dispositivos">Dispositivos</button>
-        </nav>
+        </div>
+      </div>
+      <div class="rail-foot"><span id="db"></span><a href="./owner/backup">Descargar respaldo</a><a href="./">Ir al avatar</a></div>
+    </aside>
 
-        <section data-view="resumen" style="display:grid;gap:16px">
-          <div class="tiles" id="tiles"></div>
-          <p id="features" class="muted" style="margin:0"></p>
-          <p id="services" class="muted" style="margin:0"></p>
-          <div class="grid">
-            <div class="card"><h2>Embudo de las conversaciones, últimos 30 días</h2><div id="funnel" style="display:grid;gap:8px"></div><p id="funnel-note" style="font-size:14px"></p></div>
-            <div class="card"><h2>¿Qué ayuda a que dejen sus datos?</h2><p style="font-size:14px">Entre quienes mostraron interés, cuántos dejaron sus datos.</p><div id="funnel-split" style="display:grid;gap:8px"></div></div>
+    <main>
+        <section data-view="resumen">
+          <div class="head">
+            <div><h1 id="hello">Hola, Javier</h1><p id="hello-sub"></p></div>
+            <div class="services" id="svc-line"></div>
           </div>
-          <div class="card"><h2>Interesados por día, últimos 30 días</h2><div class="chart" id="ch-leads"></div></div>
+          <div class="todo" aria-labelledby="todo-title">
+            <header><h2 id="todo-title">Necesita tu atención</h2><small id="todo-note"></small></header>
+            <ul id="todo"></ul>
+          </div>
+          <div class="tiles" id="tiles"></div>
           <div class="grid">
+            <div class="card"><h2>Interesados por día <small>últimos 30 días</small></h2><div class="chart" id="ch-leads"></div></div>
+            <div class="card"><h2>Camino del visitante <small>30 días</small></h2><div id="funnel" style="display:grid;gap:8px"></div><p id="funnel-note" style="font-size:.87rem"></p></div>
+          </div>
+          <div class="grid quad">
+            <div class="card"><h2>¿Qué ayuda a que dejen sus datos?</h2><p style="font-size:.87rem">Entre quienes mostraron interés, cuántos dejaron sus datos.</p><div id="funnel-split" style="display:grid;gap:8px"></div></div>
             <div class="card"><h2>Por estado</h2><div id="by-status" style="display:grid;gap:8px"></div></div>
             <div class="card"><h2>Por origen</h2><div id="by-source" style="display:grid;gap:8px"></div></div>
             <div class="card"><h2>Por interés</h2><div id="by-interest" style="display:grid;gap:8px"></div></div>
           </div>
+          <p id="services" class="muted" style="font-size:.87rem"></p>
+          <p id="features" class="muted" style="font-size:.87rem"></p>
         </section>
 
         <section data-view="interesados" class="card" hidden>
@@ -344,9 +293,8 @@
             <div class="row"><button type="button" id="spotify-connect">Conectar Spotify</button><button type="button" class="small danger" id="spotify-disconnect" hidden>Desconectar</button></div>
           </div>
         </section>
-      </div>
-    </div>
-  </main>
+    </main>
+  </div>
   <script type="module" src="./js/dueno.js"></script>
 </body>
 </html>

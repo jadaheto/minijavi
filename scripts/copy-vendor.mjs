@@ -20,4 +20,7 @@ for (const f of files) {
 // El taller copia estas librerias de public/vendor a sitio/vendor de cada proyecto: los sitios no cargan nada de internet.
 const gsap = ['gsap.min.js', 'ScrollTrigger.min.js'];
 for (const f of gsap) { mkdirSync(join(root, 'public', 'vendor', 'gsap'), { recursive: true }); cpSync(join(root, 'node_modules', 'gsap', 'dist', f), join(root, 'public', 'vendor', 'gsap', f)); }
-console.log(`vendor: ${files.length} archivos de three y ${gsap.length} de gsap copiados`);
+// Tipografias del panel del dueño (OFL 1.1), servidas desde aqui: el panel no depende de Google Fonts.
+const fonts = [['@fontsource-variable/bricolage-grotesque', 'bricolage-grotesque-latin-wght-normal.woff2'], ['@fontsource-variable/figtree', 'figtree-latin-wght-normal.woff2']];
+for (const [pkg, f] of fonts) { mkdirSync(join(root, 'public', 'vendor', 'fonts'), { recursive: true }); cpSync(join(root, 'node_modules', pkg, 'files', f), join(root, 'public', 'vendor', 'fonts', f)); }
+console.log(`vendor: ${files.length} archivos de three, ${gsap.length} de gsap y ${fonts.length} tipografías copiados`);

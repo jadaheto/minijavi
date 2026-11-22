@@ -71,11 +71,13 @@ const SOURCE = (k) => (k === 'sin dato' ? 'Sin dato (anteriores)' : k === 'voz' 
 const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, demos: loadDemos, avatares: loadAvatars, conexiones: loadConnections, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
-  for (const b of $('tabs').children) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+  for (const b of $('tabs').querySelectorAll('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
   for (const v of document.querySelectorAll('[data-view]')) v.hidden = v.dataset.view !== tab;
   try { history.replaceState(null, '', `#${tab}`); } catch { /* sin historial */ }
   loaders[tab]().catch((e) => console.warn('panel:', e.message));
 }
+/** Contador de pendientes junto al nombre de una sección del menú (vacío = sin pendientes). */
+const badge = (tab, count) => { const b = document.querySelector(`[data-count="${tab}"]`); if (b) b.textContent = count > 0 ? String(count) : ''; };
 window.addEventListener('hashchange', () => { const t = location.hash.slice(1); if (loaders[t] && document.querySelector(`[data-view="${t}"]`).hidden) show(t); });
 $('tabs').addEventListener('click', (ev) => { const t = ev.target.closest('button[data-tab]'); if (t) show(t.dataset.tab); });
 
@@ -85,11 +87,41 @@ async function refresh() {
   $('register').hidden = st.registered; $('panel').hidden = !st.registered;
   if (!st.registered) return;
   $('me').textContent = `Este dispositivo está autorizado como "${st.device}".`;
-  json('summary').then((s) => { $('db').textContent = s.db === 'postgres' ? 'Base de datos: PostgreSQL' : 'Base de datos: SQLite (falta DATABASE_URL)'; }).catch(() => undefined);
+  json('summary').then((s) => { $('db').textContent = s.db === 'postgres' ? 'PostgreSQL' : 'SQLite (falta DATABASE_URL)'; }).catch(() => undefined);
   show(location.hash.slice(1));
 }
 
 // ---------- resumen ----------
+/**
+ * "Necesita tu atención": lo que espera una decisión de Javier, junto en un solo lugar y con lo más antiguo primero.
+ * No agrega datos nuevos: lee las mismas rutas que cada sección. Si una falla, esa parte se omite.
+ */
+async function drawAttention(sum) {
+  const hour = new Date().getHours();
+  $('hello').textContent = `${hour < 12 ? 'Buenos días' : hour < 19 ? 'Buenas tardes' : 'Buenas noches'}, Javier`;
+  const items = [], go = (tab) => () => show(tab), ago = (iso) => { const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000)); return m < 60 ? `hace ${m} min` : m < 1440 ? `hace ${Math.round(m / 60)} h` : `hace ${Math.round(m / 1440)} día${Math.round(m / 1440) === 1 ? '' : 's'}`; };
+  const cop = (v) => `$${Number(v).toLocaleString('es-CO')}`;
+  const [av, ap] = await Promise.all([json('avatares').catch(() => null), json('approvals').catch(() => null)]);
+  for (const a of av?.items || []) {
+    if (a.state === 'PENDIENTE_VALIDACION') items.push({ at: a.updated_at, tone: 'warn', chip: 'Pago por revisar', title: `${a.name || 'Un cliente'} envió un comprobante de ${cop(a.price)}`, meta: `Avatar personalizado · ${ago(a.updated_at)} · revisa tu cuenta antes de aprobar`, action: 'Revisar', primary: true, run: go('avatares') });
+    else if (a.state === 'ERROR_GENERACION') items.push({ at: a.updated_at, tone: 'bad', chip: 'Error al generar', title: `No se pudo crear el avatar de ${a.name || 'un cliente'}`, meta: `Ya pagó · ${ago(a.updated_at)} · puedes reintentar o pedirle otra foto`, action: 'Abrir', run: go('avatares') });
+    else if (a.state === 'COMPLETADO' && a.wa_status && a.wa_status !== 'enviada' && a.wa_status !== 'simulada') items.push({ at: a.wa_at || a.updated_at, tone: 'info', chip: 'Aviso sin enviar', title: `${a.name || 'Un cliente'} no ha recibido el WhatsApp de su avatar`, meta: a.wa_status, action: 'Abrir', run: go('avatares') });
+  }
+  if (av) badge('avatares', av.items.filter((a) => a.state === 'PENDIENTE_VALIDACION').length);
+  for (const a of ap?.pending || []) items.push({ at: a.created_at, tone: 'info', chip: 'Aprobación', title: `${ap.kinds?.[a.kind]?.label || a.kind} → ${a.contact.includes('@') ? a.contact : '+' + a.contact}`, meta: `Pendiente ${ago(a.created_at)}`, action: 'Decidir', run: go('aprobaciones') });
+  if (sum.pending > 0) items.push({ at: '', tone: 'bad', chip: 'Esperando hace días', title: `${n(sum.pending)} interesado${sum.pending === 1 ? '' : 's'} sin contactar`, meta: 'Dejaron sus datos y nadie les ha escrito', action: 'Abrir', run: go('interesados') });
+  const down = Object.entries(sum.services || {}).filter(([, st]) => !st.ok);
+  for (const [name, st] of down) items.push({ at: '', tone: 'bad', chip: 'Servicio caído', title: `${name} no responde`, meta: st.detail || 'Revisa su clave o su estado', action: 'Ver', run: () => $('services').scrollIntoView({ block: 'center' }) });
+  items.sort((a, b) => (a.at || '9').localeCompare(b.at || '9'));
+  $('hello-sub').textContent = `${new Date().toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, (c) => c.toUpperCase())}. ${items.length ? `${items.length === 1 ? 'Una cosa espera' : `${items.length} cosas esperan`} una decisión tuya.` : 'No hay nada esperando una decisión tuya.'}`;
+  $('todo-note').textContent = items.length > 1 ? 'Lo más antiguo primero' : '';
+  $('todo').replaceChildren(...(items.length ? items.slice(0, 12).map((it) => {
+    const b = el('button', { type: 'button', className: it.primary ? 'small primary' : 'small', textContent: it.action }); b.addEventListener('click', it.run);
+    return el('li', {}, el('span', { className: `chip ${it.tone}`, textContent: it.chip }), el('div', {}, el('strong', { textContent: it.title }), el('span', { className: 'meta', textContent: it.meta })), b);
+  }) : [el('li', { className: 'empty', textContent: 'Todo al día. Aquí aparecen los pagos por revisar, las aprobaciones y los interesados que llevan días esperando.' })]));
+  const known = Object.keys(sum.services || {}).length;
+  $('svc-line').replaceChildren(el('span', { className: `dot ${!known ? 'unknown' : down.length ? 'bad' : ''}` }), !known ? 'Servicios aún sin comprobar' : down.length ? `${down.length} servicio${down.length === 1 ? '' : 's'} sin responder` : 'Todos los servicios responden');
+}
 let summary = null;
 async function loadSummary() {
   summary = await json('summary');
@@ -101,10 +133,11 @@ async function loadSummary() {
     ...(summary.workshop.enabled ? [tile(n(summary.workshop.projects), 'Proyectos del taller')] : []));
   $('features').replaceChildren('Funciones: ', ...Object.entries(summary.features || {}).flatMap(([name, on], i) => [i ? ' · ' : '', el('span', { style: `color:${on ? 'var(--ok)' : 'var(--warn)'}`, textContent: `${on ? '✓' : '✗'} ${name}${on ? '' : ' (falta su clave)'}` })]));
   const sv = Object.entries(summary.services || {});
-  $('services').replaceChildren(sv.length ? 'Servicios: ' : 'Servicios: aún sin comprobar (la primera revisión tarda unos segundos).', ...sv.flatMap(([name, st], i) => [i ? ' · ' : '', el('span', { style: `color:${st.ok ? 'var(--ok)' : '#ff8a8a'}`, title: st.detail || '', textContent: `${st.ok ? '✓' : '✗'} ${name}${st.detail && (!st.ok || /saldo/i.test(name)) ? ` (${st.detail})` : ''}` })]),
+  $('services').replaceChildren(sv.length ? 'Servicios: ' : 'Servicios: aún sin comprobar (la primera revisión tarda unos segundos).', ...sv.flatMap(([name, st], i) => [i ? ' · ' : '', el('span', { style: `color:${st.ok ? 'var(--ok)' : 'var(--bad-ink)'}`, title: st.detail || '', textContent: `${st.ok ? '✓' : '✗'} ${name}${st.detail && (!st.ok || /saldo/i.test(name)) ? ` (${st.detail})` : ''}` })]),
     summary.alerts ? '' : ' · Los avisos por Telegram están apagados (falta configurarlo).');
   drawFunnel(summary.funnel, summary.reports);
-  $('tab-aprobaciones').textContent = summary.approvals ? `Aprobaciones (${summary.approvals})` : 'Aprobaciones'; // que se note al entrar al panel
+  badge('aprobaciones', summary.approvals); badge('interesados', summary.pending); // que se note al entrar al panel
+  void drawAttention(summary);
   barChart($('ch-leads'), s.days.map((d) => d.day), [{ name: 'Interesados', values: s.days.map((d) => d.leads) }], 'interesados');
   hbars($('by-status'), s.byStatus, pretty); hbars($('by-source'), s.bySource, SOURCE); hbars($('by-interest'), s.byInterest, pretty);
 }
@@ -341,7 +374,7 @@ async function loadApprovals() {
   $('apr-waiting-card').hidden = !waiting.length; $('apr-waiting-count').textContent = `(${waiting.length})`;
   $('apr-waiting').replaceChildren(...waiting.map((a) => { const no = el('button', { type: 'button', className: 'small danger', textContent: 'Cancelar' }); no.addEventListener('click', async () => { no.disabled = true; await api(`approvals/${a.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: 'rechazar' }) }); loadApprovals(); }); return el('li', {}, ...approvalBody(a, kinds), a.result ? el('small', { textContent: a.result }) : null, el('div', { className: 'row' }, no)); }));
   $('apr-count').textContent = `(${pending.length})`;
-  $('tab-aprobaciones').textContent = pending.length ? `Aprobaciones (${pending.length})` : 'Aprobaciones';
+  badge('aprobaciones', pending.length);
   $('apr-note').textContent = (simulation ? 'Estás en modo simulación: aunque apruebes, nada sale de verdad; queda en la bitácora. ' : 'Al aprobar se vuelven a comprobar el horario, los topes y si la persona pidió no ser contactada. ')
     + (!telegram.enabled ? 'Telegram no está configurado: se decide solo aquí.' : telegram.buttons && !telegram.problem ? 'También puedes decidir con los botones del mensaje de Telegram.' : `Los botones de Telegram no están funcionando: ${telegram.problem || 'aún no arrancan'}.`);
   $('apr-pending').replaceChildren(...(pending.length ? pending.map((a) => {
@@ -516,7 +549,7 @@ async function loadAvatars() {
   const cop = (v) => `$${Number(v).toLocaleString('es-CO')}`;
   $('avatar-count').textContent = `(${items.length})`;
   const waiting = items.filter((a) => a.state === 'PENDIENTE_VALIDACION').length;
-  $('avatar-badge').textContent = waiting ? `(${waiting})` : '';
+  badge('avatares', waiting);
   $('avatar-note').textContent = d.problem ? `La función está apagada en este servidor: ${d.problem}.`
     : `Precio ${cop(d.price)} por Bre-B a la llave ${d.key}. Antes de aprobar un pago, revisa tu cuenta: el comprobante es solo una imagen que envía el cliente. La foto se borra a los ${d.photoDays} días de completado y el comprobante a los ${d.proofDays}; el retrato dura lo que dure la demo.`;
   $('avatar-list').replaceChildren(...items.map((a) => {
@@ -524,8 +557,9 @@ async function loadAvatars() {
     const btn = (text, fn, cls = 'small') => { const b = el('button', { type: 'button', className: cls, textContent: text }); b.addEventListener('click', fn); return b; };
     const link = (which, text) => el('a', { href: `owner/avatares/${a.id}/${which}`, target: '_blank', rel: 'noopener', textContent: text });
     const note = el('small', { className: 'danger-text' });
-    const kids = [el('strong', { textContent: `#${a.id} · ${a.name || 'Sin nombre'}` }),
-      el('small', { className: 'muted', textContent: [AVATAR_STATES[a.state] || a.state, a.phone, `demo ${a.demo}`, cop(a.price), `creada ${fecha(a.created_at)}`, a.proofs ? `${a.proofs} comprobante${a.proofs === 1 ? '' : 's'}` : '', a.decided_at ? `decidido ${fecha(a.decided_at)} desde ${a.decided_by}` : ''].filter(Boolean).join(' · ') })];
+    const tone = { PENDIENTE_VALIDACION: 'warn', COMPLETADO: 'ok', AVATAR_ACTIVADO: 'ok', ERROR_GENERACION: 'bad', PAGO_RECHAZADO: 'bad', PAGO_APROBADO: 'info', GENERANDO_AVATAR: 'info', AVATAR_GENERADO: 'info' }[a.state] || '';
+    const kids = [el('div', { className: 'row' }, el('strong', { textContent: `#${a.id} · ${a.name || 'Sin nombre'}` }), el('span', { className: `chip ${tone}`, textContent: AVATAR_STATES[a.state] || a.state })),
+      el('small', { className: 'muted', textContent: [a.phone, `demo ${a.demo}`, cop(a.price), `creada ${fecha(a.created_at)}`, a.proofs ? `${a.proofs} comprobante${a.proofs === 1 ? '' : 's'}` : '', a.decided_at ? `decidido ${fecha(a.decided_at)} desde ${a.decided_by}` : ''].filter(Boolean).join(' · ') })];
     if (a.reject_reason) kids.push(el('small', { textContent: `Motivo del rechazo: ${a.reject_reason}` }));
     if (a.error) kids.push(el('small', { className: 'danger-text', textContent: `Error (${a.attempts} intento${a.attempts === 1 ? '' : 's'}): ${a.error}` }));
     if (a.base_avatar) { let c = {}; try { c = JSON.parse(a.colors || '{}'); } catch { /* sin colores */ }
@@ -537,7 +571,7 @@ async function loadAvatars() {
     kids.push(el('div', { className: 'row' }, ...files));
     const actions = [];
     if (a.state === 'PENDIENTE_VALIDACION') {
-      actions.push(btn('Aprobar pago', (e) => { const b = e.currentTarget; if (b.dataset.sure) act('aprobar'); else { b.dataset.sure = '1'; b.textContent = '¿Ya viste el dinero en tu cuenta? Aprobar'; } }));
+      actions.push(btn('Aprobar pago', (e) => { const b = e.currentTarget; if (b.dataset.sure) act('aprobar'); else { b.dataset.sure = '1'; b.textContent = '¿Ya viste el dinero en tu cuenta? Aprobar'; } }, 'small primary'));
       const why = el('input', { type: 'text', placeholder: 'Motivo (lo verá el cliente)', maxLength: 160 });
       actions.push(why, btn('Rechazar pago', () => act('rechazar', { motivo: why.value }), 'small danger'));
     }
