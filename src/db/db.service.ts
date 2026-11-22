@@ -100,6 +100,16 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS handoffs (phone TEXT PRIMARY KEY, until_at TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '')`,
   // Uso del enlace de cada demo por dia (segundos de voz y charlas): para los topes y para saber si el cliente la abrio.
   `CREATE TABLE IF NOT EXISTS demo_usage (day TEXT NOT NULL, demo TEXT NOT NULL, seconds {{REAL}} NOT NULL DEFAULT 0, sessions INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, demo))`,
+  // Conexiones con otras aplicaciones (etapa A, 2026-11-22). `secret` va CIFRADO con VAULT_KEY (boveda). Fuera del respaldo
+  // diario: sin la clave maestra no sirve, y con ella no debe viajar en un archivo. connection_log = cada llamada o bloqueo.
+  `CREATE TABLE IF NOT EXISTS connections (
+     id {{ID}}, business TEXT NOT NULL, slug TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL, auth_kind TEXT NOT NULL DEFAULT 'ninguna', auth_header TEXT NOT NULL DEFAULT '',
+     secret TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, last_used_at TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '', tools_at TEXT NOT NULL DEFAULT '')`,
+  `CREATE TABLE IF NOT EXISTS connection_tools (
+     connection_id INTEGER NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', schema TEXT NOT NULL DEFAULT '', klass TEXT NOT NULL DEFAULT 'escritura', confirmed INTEGER NOT NULL DEFAULT 0,
+     suggested TEXT NOT NULL DEFAULT 'escritura', hint TEXT NOT NULL DEFAULT '', fingerprint TEXT NOT NULL DEFAULT '', seen_at TEXT NOT NULL DEFAULT '', gone INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (connection_id, name))`,
+  `CREATE TABLE IF NOT EXISTS connection_log (
+     id {{ID}}, business TEXT NOT NULL, at TEXT NOT NULL, connection TEXT NOT NULL, tool TEXT NOT NULL, klass TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, ms INTEGER NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '')`,
   // Avatares personalizados (2026-11-21): una fila por solicitud. Los archivos (foto y comprobantes) viven en DATA_DIR/avatares.
   // token = la clave del cliente para seguir su solicitud (va en el QR del comprobante); nonce = va en los botones de Telegram.
   // Fuera del respaldo diario: son datos personales de terceros con plazo de borrado.

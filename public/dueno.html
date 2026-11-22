@@ -102,6 +102,7 @@
           <button role="tab" data-tab="portafolio">Portafolio</button>
           <button role="tab" data-tab="imagenes">Imágenes</button>
           <button role="tab" data-tab="demos">Demos</button>
+          <button role="tab" data-tab="conexiones">Conexiones</button>
           <button role="tab" data-tab="avatares">Avatares <span id="avatar-badge"></span></button>
           <button role="tab" data-tab="aprobaciones" id="tab-aprobaciones">Aprobaciones</button>
           <button role="tab" data-tab="catalogo">Catálogo</button>
@@ -277,6 +278,23 @@
           <h2>Demos de negocios <small id="demo-count"></small></h2>
           <p class="muted" id="demo-note">Cada visitante que sube el documento de su negocio en una demostración deja aquí su enlace.</p>
           <ul class="list" id="demo-list"></ul>
+        </section>
+
+        <section data-view="conexiones" class="card" hidden>
+          <h2>Conexiones <small id="conn-count"></small></h2>
+          <p class="muted" id="conn-note"></p>
+          <form id="conn-form" class="row" autocomplete="off">
+            <input id="conn-name" placeholder="Nombre (ej. Notion)" maxlength="60" required>
+            <input id="conn-url" placeholder="https://… (dirección del conector MCP)" required>
+            <select id="conn-auth"><option value="bearer">Clave tipo Bearer</option><option value="cabecera">Clave en otra cabecera</option><option value="ninguna">Sin clave</option></select>
+            <input id="conn-header" placeholder="Nombre de la cabecera" hidden>
+            <input id="conn-secret" type="password" placeholder="Clave (no se vuelve a mostrar)" autocomplete="new-password">
+            <button type="submit" class="small">Conectar</button>
+          </form>
+          <small class="danger-text" id="conn-msg"></small>
+          <ul class="list" id="conn-list"></ul>
+          <h3>Últimas llamadas y bloqueos</h3>
+          <ul class="list" id="conn-log"></ul>
         </section>
 
         <section data-view="avatares" class="card" hidden>

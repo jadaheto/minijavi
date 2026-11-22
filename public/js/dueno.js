@@ -68,7 +68,7 @@ const pretty = (k) => String(k).replace(/_/g, ' ').replace(/^formulario:/, 'form
 const SOURCE = (k) => (k === 'sin dato' ? 'Sin dato (anteriores)' : k === 'voz' ? 'Conversación en el sitio' : k === 'llamada' ? 'Llamada de WhatsApp' : pretty(k));
 
 // ---------- pestañas ----------
-const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, demos: loadDemos, avatares: loadAvatars, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
+const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, demos: loadDemos, avatares: loadAvatars, conexiones: loadConnections, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
   for (const b of $('tabs').children) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
@@ -448,6 +448,65 @@ $('dec-test').addEventListener('submit', async (ev) => {
   const d = await r.json(); let logged = {}; try { logged = JSON.parse(d.logged?.detail || '{}'); } catch { /* sin detalle */ }
   out.textContent = `${n(d.ms)} ms${d.shadow ? ' · en modo sombra: esto es lo que Jev decidió, pero el código sigue usando el valor por defecto' : ''}\n` + Object.entries(d.shadow ? logged : d.answers).map(([id, a]) => answerLine(id, a)).join('\n');
   loadDecisions();
+});
+
+/**
+ * Conexiones con otras aplicaciones (etapa A). Cada herramienta nace SIN confirmar y bloqueada: solo se puede usar la que
+ * confirmes como lectura. La clave se escribe aquí y no se vuelve a mostrar.
+ */
+async function loadConnections() {
+  const d = await json('connections'), items = d.items || [];
+  const post = async (path, body, method = 'POST') => { const r = await api(`connections${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }); return { ok: r.ok, data: await r.json().catch(() => ({})) }; };
+  $('conn-count').textContent = `(${items.length})`;
+  $('conn-form').hidden = !!d.problem;
+  $('conn-note').textContent = d.problem ? `Las conexiones están apagadas: ${d.problem}.`
+    : 'Solo existen en modo dueño y solo LEEN. Cada herramienta de un conector empieza bloqueada: mira qué hace y confírmala como lectura para poder usarla. Lo que escribe, publica o borra no se ejecuta nunca, lo pida quien lo pida. Lo que se lea pasa por el modelo para resumirlo.';
+  $('conn-list').replaceChildren(...items.map((c) => {
+    const msg = el('small', { className: 'danger-text' });
+    const pending = c.tools.filter((t) => !t.confirmed && !t.gone).length, reads = c.tools.filter((t) => t.confirmed && t.klass === 'lectura' && !t.gone).length;
+    const head = [el('strong', { textContent: c.name }), el('small', { className: 'muted', textContent: [c.enabled ? 'Activa' : 'Desactivada', new URL(c.url).host, c.auth_kind === 'ninguna' ? 'sin clave' : 'clave guardada', `${reads} de lectura`, pending ? `${pending} sin confirmar` : '', c.last_used_at ? `último uso ${fecha(c.last_used_at)}` : 'sin usar'].filter(Boolean).join(' · ') })];
+    if (c.last_error) head.push(el('small', { className: 'danger-text', textContent: `Último error: ${c.last_error}` }));
+    const btn = (text, fn, cls = 'small') => { const b = el('button', { type: 'button', className: cls, textContent: text }); b.addEventListener('click', fn); return b; };
+    const tools = el('ul', { className: 'list' }, ...c.tools.map((t) => {
+      const out = el('pre', { hidden: true });
+      const sel = el('select', {}, ...['lectura', 'borrador', 'escritura'].map((k) => el('option', { value: k, textContent: k, selected: (t.confirmed ? t.klass : t.suggested) === k })));
+      const ok = btn(t.confirmed ? 'Cambiar' : 'Confirmar', async () => {
+        let r = await post(`/${c.id}/clasificar`, { tool: t.name, klass: sel.value, sure: ok.dataset.sure === '1' });
+        if (r.data.needsSure) { ok.dataset.sure = '1'; ok.textContent = 'Sí, solo lee: confirmar'; msg.textContent = r.data.text; return; }
+        if (!r.ok || r.data.ok === false) { msg.textContent = r.data.message || r.data.text || 'No se pudo.'; return; }
+        loadConnections();
+      });
+      const kids = [el('strong', { textContent: t.name }), el('small', { className: t.confirmed && t.klass === 'lectura' ? 'muted' : 'danger-text', textContent: t.gone ? 'ya no la ofrece el conector' : t.confirmed ? (t.klass === 'lectura' ? 'lectura confirmada: se puede usar' : `${t.klass}: bloqueada`) : `sin confirmar: bloqueada (sugerida: ${t.suggested})` }),
+        el('small', { textContent: [t.description, t.params.length ? `Parámetros: ${t.params.join(', ')}` : '', t.hint].filter(Boolean).join(' · ') })];
+      const row = [sel, ok];
+      if (t.confirmed && t.klass === 'lectura' && !t.gone) {
+        const args = el('input', { type: 'text', placeholder: 'Datos en JSON, ej. {"query":"hola"}' });
+        row.push(args, btn('Probar', async () => {
+          let parsed = {}; try { parsed = args.value.trim() ? JSON.parse(args.value) : {}; } catch { msg.textContent = 'Los datos deben ser JSON válido.'; return; }
+          const r = await post(`/${c.id}/probar`, { tool: t.name, args: parsed }); out.hidden = false; out.textContent = r.data.text || '(sin respuesta)';
+        }));
+      }
+      if (!t.gone) kids.push(el('div', { className: 'row' }, ...row));
+      kids.push(out);
+      return el('li', {}, ...kids);
+    }));
+    const del = btn('Desconectar', async () => { if (del.dataset.sure) { await post(`/${c.id}`, {}, 'DELETE'); loadConnections(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Borra la clave guardada'; } }, 'small danger');
+    const actions = el('div', { className: 'row' },
+      btn('Volver a leer herramientas', async () => { const r = await post(`/${c.id}/descubrir`); if (!r.ok) { msg.textContent = r.data.message || 'No se pudo.'; return; } loadConnections(); }),
+      btn(c.enabled ? 'Desactivar' : 'Activar', async () => { await post(`/${c.id}`, { enabled: !c.enabled }, 'PATCH'); loadConnections(); }), del);
+    return el('li', { className: 'demo-row' }, ...head, actions, msg, tools);
+  }));
+  $('conn-log').replaceChildren(...(d.log || []).map((l) => el('li', {}, el('small', { className: l.status === 'ok' ? 'muted' : 'danger-text', textContent: `${fecha(l.at)} · ${l.connection} · ${l.tool} (${l.klass}) · ${l.status}${l.ms ? ` · ${l.ms} ms` : ''} · ${l.detail}` }))));
+}
+$('conn-auth')?.addEventListener('change', () => { $('conn-header').hidden = $('conn-auth').value !== 'cabecera'; $('conn-secret').hidden = $('conn-auth').value === 'ninguna'; });
+$('conn-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault(); $('conn-msg').textContent = 'Conectando…';
+  const r = await api('connections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: $('conn-name').value, url: $('conn-url').value, authKind: $('conn-auth').value, authHeader: $('conn-header').value, secret: $('conn-secret').value }) });
+  const j = await r.json().catch(() => ({}));
+  $('conn-secret').value = ''; // la clave no se queda en la página
+  if (!r.ok) { $('conn-msg').textContent = j.message || 'No se pudo conectar.'; return; }
+  $('conn-msg').textContent = j.found?.error ? `Guardada, pero ${j.found.error}` : ''; $('conn-name').value = $('conn-url').value = '';
+  loadConnections();
 });
 
 /** Avatares personalizados: cada solicitud con su estado, el pago por decidir, el aviso por WhatsApp y sus archivos. */

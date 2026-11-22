@@ -24,7 +24,9 @@ export const ACTION_KINDS = {
   // Avatar personalizado listo: el cliente pago y lo espera. Plantilla aprobada en Meta con su retrato; no pide aprobacion,
   // pero pasa por todo lo demas (pausa, no contactar, horario, topes, simulacion).
   avatar_listo: { label: 'Aviso de avatar personalizado listo por WhatsApp', channel: 'mensaje', class: 'autonoma', literal: false },
-} as const satisfies Record<string, { label: string; channel: 'mensaje' | 'llamada'; class: 'libre' | 'autonoma' | 'aprobacion'; literal: boolean }>;
+  // Conexiones (etapa A): un intento de ESCRIBIR en una aplicacion conectada. Nunca se ejecuta; solo se anota como bloqueada.
+  conexion_escritura: { label: 'Escritura en una aplicación conectada', channel: 'conexion', class: 'aprobacion', literal: false },
+} as const satisfies Record<string, { label: string; channel: 'mensaje' | 'llamada' | 'conexion'; class: 'libre' | 'autonoma' | 'aprobacion'; literal: boolean }>;
 /** En todo contacto saliente minijavi dice que es el asistente con IA de Javier. Asi se reconoce esa frase en un texto. */
 export const SAYS_AI = /asistente\s+(?:virtual\s+|digital\s+)?(?:con|de)\s+(?:ia|inteligencia\s+artificial)\b|\b(?:ia|inteligencia\s+artificial)\s+de\s+javier\b|\bsoy\s+una?\s+(?:ia|inteligencia\s+artificial)\b/i;
 export type ActionKind = keyof typeof ACTION_KINDS;
@@ -81,6 +83,11 @@ export class ActionsService {
       this.log.error(`acción ${req.kind} no evaluada: ${(e as Error).message}`);
       return { status: 'bloqueada', reason: 'no se pudo comprobar la política; ante la duda no se actúa', id: null };
     }
+  }
+
+  /** Algo que se bloqueo fuera de `run()` (una escritura en una conexion): queda en la bitacora encadenada, sin evaluar nada. */
+  noteBlocked(req: ActionRequest, reason: string): Promise<number | null> {
+    return this.append(req, ACTION_KINDS[req.kind]?.channel ?? '', 'bloqueada', reason, false).catch(() => null);
   }
 
   /** El contacto como se guarda en la bitacora y en la bandeja (digitos con indicativo, o correo). */

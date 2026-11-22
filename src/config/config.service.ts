@@ -193,6 +193,8 @@ export class ConfigService {
   /** Ciclo del encargo: pasadas como maximo, comprobaciones seguidas sin cambios que lo detienen, y tope por comando de comprobacion. */
   readonly tallerMaxPasses: number;
   readonly tallerNoProgress: number;
+  /** Clave maestra de la boveda de conexiones (VAULT_KEY, minimo 32 caracteres). Vacia = conexiones apagadas. */
+  readonly vaultKey: string;
   readonly tallerGateSeconds: number;
   /** Reglas de diseño en cada encargo y comprobacion «diseño» al cerrar (TALLER_DISENO=0 lo apaga). */
   readonly tallerDesign: boolean;
@@ -385,6 +387,7 @@ export class ConfigService {
     this.tallerSessionJobs = int('TALLER_SESSION_JOBS', 4, 1);
     this.tallerMaxPasses = Math.min(10, int('TALLER_MAX_PASSES', 4, 1));
     this.tallerNoProgress = int('TALLER_NO_PROGRESS', 2, 2);
+    this.vaultKey = str('VAULT_KEY').length >= 32 ? str('VAULT_KEY') : '';
     this.tallerGateSeconds = int('TALLER_GATE_SECONDS', 300, 5);
     this.tallerDesign = process.env.TALLER_DISENO !== '0';
     this.npmBin = str('NPM_BIN', this.tallerUser ? '/usr/local/bin/npm' : 'npm');
@@ -507,7 +510,7 @@ ${readFileSync(costenoFile, 'utf8').trim()}` : '';
         business: b, greeting: b.saludo, elevenVoiceId: b.voz || this.elevenVoiceId, costenoPrompt: '',
         ownerSecret: '', claudeToken: '', planeMcpUrl: '', youtubeApiKey: '', spotifyClientId: '', spotifyClientSecret: '', teslaClientId: '', teslaClientSecret: '',
         googleMapsKey: '', openChargeMapKey: '', polymarket: false, newsUrl: '', newsColombia: false, unsplashAccessKey: '', magnificApiKey: '', imageOpenAiKey: '',
-        briefHour: -1, followupHour: -1, demoDocs: false, avatarCustom: false, callMode: 'rechazar', whatsappReplies: this.whatsappReplies === 'avatar' ? 'avatar' : 'off', n8nWebhookUrl: '', leadsWebhookUrl: '', visitorMemoryDays: 0, visitReports: false,
+        briefHour: -1, followupHour: -1, demoDocs: false, avatarCustom: false, vaultKey: '', callMode: 'rechazar', whatsappReplies: this.whatsappReplies === 'avatar' ? 'avatar' : 'off', n8nWebhookUrl: '', leadsWebhookUrl: '', visitorMemoryDays: 0, visitReports: false,
       });
     }
   }
