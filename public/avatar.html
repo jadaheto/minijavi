@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Tu avatar personalizado</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; padding: 16px; display: grid; place-items: center; background: #0f1420; color: #eef2f8; font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { width: min(460px, 100%); display: grid; gap: 14px; padding: 22px; border-radius: 20px; background: #182031; box-shadow: 0 20px 60px rgba(0, 0, 0, .4); }
+    section { display: grid; gap: 14px; } section[hidden] { display: none; }
+    h1 { margin: 0; font-size: 21px; } h2 { margin: 0; font-size: 16px; }
+    p { margin: 0; color: #b8c2d3; }
+    label.check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: #d7deea; }
+    input[type=checkbox] { width: 20px; height: 20px; margin-top: 1px; flex: none; }
+    input[type=tel] { width: 100%; padding: 13px; border-radius: 12px; border: 1px solid #2b3650; background: #0f1420; color: inherit; font: inherit; }
+    label.field { display: grid; gap: 6px; font-size: 14px; color: #d7deea; }
+    button, a.btn { display: block; width: 100%; padding: 14px; border: 0; border-radius: 14px; background: #3987e5; color: #fff; font: inherit; font-weight: 700; text-align: center; text-decoration: none; cursor: pointer; }
+    button.ghost, a.ghost { background: transparent; border: 1px solid #3a4763; color: #d7deea; font-weight: 600; }
+    button:disabled { opacity: .5; cursor: default; }
+    small { color: #8f9aac; }
+    .box { display: grid; gap: 4px; padding: 14px; border-radius: 14px; background: #0f1420; border: 1px solid #2b3650; }
+    .box b { font-size: 24px; letter-spacing: .5px; }
+    .row { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+    .row button { width: auto; padding: 9px 14px; border-radius: 10px; font-size: 14px; }
+    .note { padding: 10px 12px; border-radius: 12px; background: rgba(201, 133, 0, .14); border: 1px solid rgba(201, 133, 0, .5); color: #f0d9a4; font-size: 14px; }
+    #qr { width: 200px; height: 200px; justify-self: center; border-radius: 12px; background: #fff; padding: 6px; }
+    #qr[hidden] { display: none; }
+    #estado { min-height: 1.4em; } #estado[data-tone=bad] { color: #ffb4b0; } #estado[data-tone=ok] { color: #7dffc0; } #estado[data-tone=busy] { color: #f0d07a; }
+    ol { margin: 0; padding-left: 20px; color: #b8c2d3; display: grid; gap: 4px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>🧑‍🎨 Tu avatar personalizado</h1>
+
+    <section id="s-cargando"><p>Cargando…</p></section>
+
+    <section id="s-no" hidden>
+      <p id="no-texto"></p>
+      <a class="btn ghost" id="no-volver" href="/">Volver a la demostración</a>
+    </section>
+
+    <section id="s-foto" hidden>
+      <p id="get"></p>
+      <div class="box"><small>Precio único</small><b id="precio"></b><small>Se paga por Bre-B en el paso siguiente. Mientras lo creamos sigues usando un avatar del catálogo.</small></div>
+      <label class="field">Tu WhatsApp (el mismo que dejaste en esta demostración)
+        <input type="tel" id="tel" inputmode="numeric" autocomplete="tel" placeholder="300 123 4567" maxlength="20">
+      </label>
+      <label class="check"><input type="checkbox" id="ok"> <span id="consent"></span></label>
+      <input type="file" id="foto" accept="image/jpeg,image/png,image/webp" hidden>
+      <button type="button" id="elegir">Elegir mi foto</button>
+      <small>Una foto tuya de frente, con buena luz, sin gafas oscuras. Solo tú en la foto. <span id="mb"></span></small>
+      <button type="button" class="ghost" id="ya">Ya envié mi foto: continuar</button>
+    </section>
+
+    <section id="s-pago" hidden>
+      <h2>Paso 2 de 3 · Paga por Bre-B</h2>
+      <div class="box"><small>Valor exacto</small><b id="p-valor"></b></div>
+      <div class="box"><small>Llave Bre-B</small><div class="row"><b id="p-llave"></b><button type="button" id="copiar">Copiar</button></div></div>
+      <ol><li>Abre la app de tu banco y elige pagar con Bre-B a una llave.</li><li>Pega la llave y escribe el valor exacto.</li><li>Guarda el comprobante (captura o PDF).</li></ol>
+      <button type="button" id="pague">Ya realicé mi pago</button>
+    </section>
+
+    <section id="s-comprobante" hidden>
+      <h2>Paso 3 de 3 · Sube tu comprobante</h2>
+      <p id="c-texto">Sube la captura o el PDF donde se vean el valor, la fecha y la llave de destino.</p>
+      <input type="file" id="comp" accept="image/jpeg,image/png,image/webp,application/pdf,.pdf" hidden>
+      <button type="button" id="subir">Subir comprobante desde este dispositivo</button>
+      <img id="qr" alt="Código QR para subir el comprobante desde otro dispositivo" hidden>
+      <small id="qr-texto" hidden>¿El comprobante está en tu celular? Escanea este código; es único para tu solicitud.</small>
+      <div class="note">Enviar el comprobante no confirma el pago: Javier lo revisa contra su cuenta antes de aprobarlo.</div>
+      <button type="button" class="ghost" id="c-volver">Ver los datos de pago otra vez</button>
+    </section>
+
+    <section id="s-estado" hidden>
+      <h2 id="e-titulo"></h2>
+      <p id="e-texto"></p>
+      <small id="e-ref"></small>
+      <a class="btn" id="e-demo" href="/">Volver a mi demostración</a>
+      <a class="btn ghost" id="e-contacto" href="#" target="_blank" rel="noopener" hidden>Hablar con Javier</a>
+    </section>
+
+    <p id="estado" aria-live="polite"></p>
+  </main>
+  <script src="./js/avatar-propio.js"></script>
+</body>
+</html>

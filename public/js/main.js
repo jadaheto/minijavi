@@ -447,6 +447,13 @@ if (DEMO_PAGE) {
       row.append(b);
     }
     $('gate-text').after(box);
+    // Avatar con la foto del cliente (de pago): solo se ofrece si el servidor dice que se puede en esta demo.
+    fetch(new URL(`/demo/avatar-propio/info?d=${encodeURIComponent(DEMO_PAGE)}`, location.href), { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((info) => {
+      if (!info || !info.available) return;
+      const a = document.createElement('a'); a.className = 'avatar-own'; a.href = `/avatar.html?d=${encodeURIComponent(DEMO_PAGE)}`;
+      a.textContent = info.inProgress ? 'Ver cómo va mi avatar personalizado' : `¿Quieres un avatar personalizado con tu propia foto? (${info.price})`;
+      box.append(a);
+    }).catch(() => undefined);
   }
   if (!pic && /^\/p\/[a-z0-9-]+\/$/.test(cover)) { const f = document.createElement('iframe'); f.className = 'gate-hero'; f.src = cover; f.setAttribute('sandbox', ''); f.title = 'Portada'; f.loading = 'lazy'; $('gate-form').prepend(f); }
 }

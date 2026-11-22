@@ -100,6 +100,18 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS handoffs (phone TEXT PRIMARY KEY, until_at TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '')`,
   // Uso del enlace de cada demo por dia (segundos de voz y charlas): para los topes y para saber si el cliente la abrio.
   `CREATE TABLE IF NOT EXISTS demo_usage (day TEXT NOT NULL, demo TEXT NOT NULL, seconds {{REAL}} NOT NULL DEFAULT 0, sessions INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, demo))`,
+  // Avatares personalizados (2026-11-21): una fila por solicitud. Los archivos (foto y comprobantes) viven en DATA_DIR/avatares.
+  // token = la clave del cliente para seguir su solicitud (va en el QR del comprobante); nonce = va en los botones de Telegram.
+  // Fuera del respaldo diario: son datos personales de terceros con plazo de borrado.
+  `CREATE TABLE IF NOT EXISTS avatar_requests (
+     id {{ID}}, demo TEXT NOT NULL, lead_id INTEGER NOT NULL DEFAULT 0, name TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '', token TEXT NOT NULL, state TEXT NOT NULL,
+     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, price INTEGER NOT NULL DEFAULT 0, consent_at TEXT NOT NULL DEFAULT '', consent_text TEXT NOT NULL DEFAULT '', dir TEXT NOT NULL DEFAULT '',
+     photo TEXT NOT NULL DEFAULT '', proof TEXT NOT NULL DEFAULT '', proof_hash TEXT NOT NULL DEFAULT '', proofs INTEGER NOT NULL DEFAULT 0, nonce TEXT NOT NULL DEFAULT '', tg_message INTEGER,
+     decided_at TEXT NOT NULL DEFAULT '', decided_by TEXT NOT NULL DEFAULT '', reject_reason TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0, portrait TEXT NOT NULL DEFAULT '',
+     base_avatar TEXT NOT NULL DEFAULT '', colors TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', wa_status TEXT NOT NULL DEFAULT '', wa_at TEXT NOT NULL DEFAULT '',
+     photo_deleted_at TEXT NOT NULL DEFAULT '', proof_deleted_at TEXT NOT NULL DEFAULT '')`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS avatar_requests_token ON avatar_requests (token)`,
+  `CREATE INDEX IF NOT EXISTS avatar_requests_demo ON avatar_requests (demo)`,
   `CREATE TABLE IF NOT EXISTS demos (id TEXT PRIMARY KEY, business TEXT NOT NULL, created_at {{TS}} NOT NULL, expires_at {{TS}} NOT NULL, status TEXT NOT NULL, profile TEXT NOT NULL DEFAULT '', chunks INTEGER NOT NULL DEFAULT 0, pages INTEGER NOT NULL DEFAULT 0, kind TEXT NOT NULL DEFAULT '', lead_id INTEGER NOT NULL DEFAULT 0, consent_at {{TS}} NOT NULL, error TEXT NOT NULL DEFAULT '')`,
 ];
 

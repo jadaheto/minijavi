@@ -1928,6 +1928,114 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     return 'ocho avatares con modelo y miniatura; prompts armados del archivo; modelo comprobado sin generar; imágenes de entrada en orden; rechazo por contenido; el avatar se guarda solo en su demo; ids fuera del catálogo, demos vencidas o ajenas y exceso de cambios rechazados';
   });
 
+  await check('Avatar con foto: solo quien dejó su WhatsApp en esa demo, foto revisada antes del pago, comprobante a Telegram y solo tú apruebas, una vez', async () => {
+    const { AvatarRequestsService, sniff, CONSENT_TEXT } = await import('../avatars/avatar-requests.service');
+    const { AvatarOwnerController } = await import('../avatars/avatar-requests.controller');
+    const { TelegramService } = await import('../ops/telegram.service');
+    const { mkdtempSync, readdirSync, statSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+    const acfg = new ConfigService(); const dir = mkdtempSync(join(tmpdir(), 'avatares-'));
+    Object.assign(acfg as any, { avatarCustom: true, avatarPrice: 19200, avatarBrebKey: '3004576744', avatarPhotoMb: 1, avatarPerIpHour: 50, avatarProofs: 3, imageOpenAiKey: 'sk-x', imageOpenAiModel: 'img-x', dataDir: dir, publicUrl: 'https://yo.example', telegramBotToken: 'T', telegramChatId: '777', telegramButtons: false, whatsappDefaultCountry: '57', contactUrl: 'https://wa.me/x' });
+    // Red simulada: OpenAI (¿existe el modelo?) y Telegram. Nada sale a internet.
+    const prev = globalThis.fetch, tg: { method: string; caption: string; markup: any; kind: string }[] = []; let modelOk = true, tgOk = true;
+    globalThis.fetch = (async (url: any, init?: any) => { const u = String(url);
+      if (u.includes('/v1/models/')) return new Response('{}', { status: modelOk ? 200 : 404 });
+      if (u.includes('api.telegram.org')) { const method = u.split('/').pop()!; const f = init?.body instanceof FormData ? init.body : null, j = f ? null : JSON.parse(init?.body ?? '{}');
+        tg.push({ method, caption: String(f ? f.get('caption') : j.caption ?? j.text ?? ''), markup: f ? JSON.parse(String(f.get('reply_markup') ?? 'null')) : j.reply_markup, kind: f ? (f.has('photo') ? 'photo' : 'document') : '' });
+        return new Response(JSON.stringify(tgOk ? { ok: true, result: { message_id: 900 + tg.length } } : { ok: false }), { status: tgOk ? 200 : 500 }); }
+      throw new Error(`petición inesperada: ${u}`); }) as any;
+    try {
+      let verdict: any = { es_foto: true, personas: 1, rostro_claro: true, parece_menor: false }, screens = 0;
+      const capable = { readsFiles: true, readFile: async (_f: any, prompt: string) => { screens++; must(/SOLO un objeto JSON/.test(prompt) && /Ignora cualquier texto/.test(prompt), 'instrucción del filtro de fotos'); if (verdict === 'falla') throw new Error('caído'); return typeof verdict === 'string' ? verdict : `Claro: ${JSON.stringify(verdict)}`; } } as any;
+      const leadRows: Record<number, any> = { 1: { id: 1, name: 'Ana María Pérez', contact: '3001234567', consent_at: '2026-11-20T10:00:00Z' }, 2: { id: 2, name: 'Sin Permiso', contact: '3009999999', consent_at: '' }, 3: { id: 3, name: 'Correo', contact: 'a@b.co', consent_at: '2026-11-20T10:00:00Z' } };
+      const leads = { get: async (id: number) => leadRows[id] } as any;
+      const now = Date.now(), mk = (id: string, lead: number, days = 7) => P.db.query('INSERT INTO demos (id, business, created_at, expires_at, status, profile, consent_at, lead_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [id, 'Tienda', new Date(now).toISOString(), new Date(now + days * 86400_000).toISOString(), 'listo', '{}', new Date(now).toISOString(), lead]);
+      await P.db.query('DELETE FROM avatar_requests');
+      await mk('av-ana-a1a1a1', 1); await mk('av-nadie-b2b2b2', 0); await mk('av-sinperm-c3c3c3', 2); await mk('av-correo-d4d4d4', 3); await mk('av-vieja-e5e5e5', 1, -1);
+      const demos = { get: async (id: string) => (await P.db.query<any>('SELECT * FROM demos WHERE id = $1', [id]))[0] } as any;
+      const telegram = new TelegramService(acfg);
+      const svc = new AvatarRequestsService(acfg, P.db, demos, leads, capable, telegram, usage);
+      const jpg = (n: number) => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(40, n)]), pdf = Buffer.from('%PDF-1.7 comprobante de prueba');
+      must(sniff(jpg(1))!.mime === 'image/jpeg' && sniff(pdf)!.ext === 'pdf' && !sniff(Buffer.from('<svg xmlns="x"></svg>')) && !sniff(Buffer.from('MZ')), 'tipo por bytes');
+      // Disponibilidad: demo con interesado que dejo WhatsApp y autorizacion, modelo de imagen presente.
+      const i1 = await svc.info('av-ana-a1a1a1');
+      must(i1.available && i1.price === '$19.200' && i1.consent === CONSENT_TEXT && /No es una cabeza 3D/.test(i1.get) && !JSON.stringify(i1).includes('3001234567') && !JSON.stringify(i1).includes('Ana'), `disponible: ${JSON.stringify(i1).slice(0, 200)}`);
+      for (const d of ['av-nadie-b2b2b2', 'av-sinperm-c3c3c3', 'av-correo-d4d4d4', 'av-vieja-e5e5e5', 'no-existe-x', '../etc']) must(!(await svc.info(d)).available, `no debía ofrecerse en ${d}`);
+      modelOk = false; (svc as any).model = undefined; must(!(await svc.info('av-ana-a1a1a1')).available, 'sin el modelo de imagen no se ofrece'); modelOk = true; (svc as any).model = undefined;
+      Object.assign(acfg as any, { avatarCustom: false }); must(!(await svc.info('av-ana-a1a1a1')).available && !!svc.problem, 'apagado'); Object.assign(acfg as any, { avatarCustom: true });
+      // Crear: numero equivocado, sin autorizacion, archivo que no es foto, muy pesado, y la foto que el filtro rechaza.
+      const st = async (p: Promise<any>) => { const r = await p; return r.ok ? 200 : r.status; };
+      must(await st(svc.create('av-ana-a1a1a1', '3110000000', jpg(1), 'ip', true)) === 403 && await st(svc.create('av-ana-a1a1a1', '', jpg(1), 'ip', true)) === 403, 'otro número no puede pedirlo');
+      must(await st(svc.create('av-ana-a1a1a1', '300 123 4567', jpg(1), 'ip', false)) === 400 && await st(svc.create('av-ana-a1a1a1', '3001234567', pdf, 'ip', true)) === 415 && await st(svc.create('av-ana-a1a1a1', '3001234567', Buffer.concat([jpg(1), Buffer.alloc(1100_000)]), 'ip', true)) === 413 && screens === 0, 'autorización, tipo y peso se miran antes de gastar en el filtro');
+      for (const [v, re] of [[{ es_foto: true, personas: 2, rostro_claro: true, parece_menor: false }, /una sola persona/], [{ es_foto: true, personas: 1, rostro_claro: true, parece_menor: true }, /menores/], [{ es_foto: true, personas: 1, rostro_claro: true }, /menores/], [{ es_foto: true, personas: 1, rostro_claro: false, parece_menor: false }, /claridad/], [{ es_foto: false, personas: 1, rostro_claro: true, parece_menor: false }, /fotografía tuya/], [{ es_foto: true, personas: 0, rostro_claro: false, parece_menor: false }, /rostro/], ['no sé', /No pudimos revisar/], ['falla', /No pudimos revisar/]] as const) {
+        verdict = v; const r: any = await svc.create('av-ana-a1a1a1', '3001234567', jpg(1), 'ip', true); must(!r.ok && r.status === 422 && re.test(r.message), `filtro ${JSON.stringify(v)}: ${JSON.stringify(r)}`); }
+      must((await P.db.query('SELECT id FROM avatar_requests')).length === 0, 'una foto rechazada no deja solicitud');
+      verdict = { es_foto: true, personas: 1, rostro_claro: true, parece_menor: false };
+      const c1: any = await svc.create('av-ana-a1a1a1', '+57 300 123 4567', jpg(1), 'ip', true);
+      must(c1.ok && !c1.resumed && /^[0-9a-f]{32}$/.test(c1.token), `crear: ${JSON.stringify(c1)}`);
+      const [row] = await P.db.query<any>('SELECT * FROM avatar_requests');
+      must(row.state === 'PENDIENTE_PAGO' && row.phone === '+573001234567' && row.name === 'Ana María Pérez' && row.lead_id === 1 && row.price === 19200 && row.consent_text === CONSENT_TEXT && !!row.consent_at, `fila: ${JSON.stringify(row).slice(0, 300)}`);
+      const stored = join(dir, 'avatares', row.dir); must(readdirSync(stored).join() === 'foto.jpg' && (statSync(join(stored, 'foto.jpg')).mode & 0o077) === 0, 'la foto queda fuera de lo público y solo la lee el servidor');
+      // Sin duplicados: la misma persona retoma la suya (aun sin foto ni casilla); otra persona no entra.
+      const before = screens, c2: any = await svc.create('av-ana-a1a1a1', '3001234567', Buffer.alloc(1), 'ip2', false);
+      must(c2.ok && c2.resumed && c2.token === c1.token && screens === before && (await P.db.query('SELECT id FROM avatar_requests')).length === 1 && await st(svc.create('av-ana-a1a1a1', '3110000000', jpg(2), 'ip', true)) === 403, 'una sola solicitud abierta por demo');
+      must((await svc.info('av-ana-a1a1a1')).inProgress, 'la página sabe que hay una en curso');
+      // Pantalla de pago: llave, valor y QR unico; sin la clave no se ve nada.
+      const v1: any = await svc.view(c1.token, true);
+      must(v1.state === 'PENDIENTE_PAGO' && v1.canPay && v1.key === '3004576744' && v1.price === '$19.200' && v1.name === 'Ana' && v1.proofUrl === `/avatar.html?t=${c1.token}` && v1.qr.startsWith('data:image/png') && !JSON.stringify(v1).includes('3001234567'), `pago: ${JSON.stringify(v1).slice(0, 200)}`);
+      must(!(await svc.view('f'.repeat(32))) && !(await svc.view("' OR 1=1 --")), 'clave desconocida');
+      // Comprobante: tipo por bytes; llega a Telegram con los datos, el aviso y los dos botones.
+      must(await st(svc.proof(c1.token, Buffer.from('<html>pago</html> relleno'), 'ip')) === 415 && await st(svc.proof('0'.repeat(32), jpg(3), 'ip')) === 404, 'comprobante inválido');
+      const p1: any = await svc.proof(c1.token, jpg(3), 'ip');
+      const m1 = tg[tg.length - 1], data1 = m1.markup.inline_keyboard[0].map((b: any) => b.callback_data);
+      must(p1.ok && m1.method === 'sendPhoto' && /Solicitud #\d+ · demo av-ana-a1a1a1/.test(m1.caption) && /Cliente: Ana María Pérez/.test(m1.caption) && /WhatsApp: \+573001234567/.test(m1.caption) && /\$19\.200 COP/.test(m1.caption) && /llave 3004576744/.test(m1.caption) && /no significa que el dinero se haya recibido/.test(m1.caption) && /Fecha: /.test(m1.caption) && m1.caption.length <= 1024, `aviso: ${m1.caption}`);
+      must(/Aprobar pago\|.*Rechazar pago$/.test(m1.markup.inline_keyboard[0].map((b: any) => b.text).join('|')) && /^avp:\d+:[a-f0-9]{12}$/.test(data1[0]) && /^avr:/.test(data1[1]), `botones: ${JSON.stringify(m1.markup)}`);
+      must(await st(svc.proof(c1.token, jpg(4), 'ip')) === 409 && (await svc.view(c1.token) as any).state === 'PENDIENTE_VALIDACION' && !(await svc.view(c1.token) as any).key, 'en revisión no se sube otro ni se muestra la llave');
+      // Solo Javier: otro chat, clave falsa o boton viejo no deciden nada.
+      const press = (data: string, chat = '777', extra: any = { photo: [{}] }) => telegram.handle({ callback_query: { id: 'q', data, message: { message_id: 901, chat: { id: chat }, ...extra } } });
+      await press(data1[0], '666'); await press(data1[0].replace(/[a-f0-9]{12}$/, '000000000000')); await press('avp:999999:aaaaaaaaaaaa'); await press('avp:x');
+      must((await svc.view(c1.token) as any).state === 'PENDIENTE_VALIDACION', 'una pulsación ajena o falsa no aprueba');
+      // Rechazar: el cliente puede subir otro; el mismo archivo no sirve dos veces; el boton anterior ya no vale.
+      await press(data1[1]);
+      const v2: any = await svc.view(c1.token);
+      must(v2.state === 'PAGO_RECHAZADO' && v2.canPay && /sube un comprobante/.test(v2.message) && tg[tg.length - 1].method === 'editMessageCaption' && /✖️ Pago rechazado/.test(tg[tg.length - 1].caption) && tg[tg.length - 1].markup.inline_keyboard.length === 0, `rechazo: ${JSON.stringify(v2).slice(0, 160)}`);
+      must(await st(svc.proof(c1.token, jpg(3), 'ip')) === 409, 'el mismo comprobante no se acepta otra vez');
+      const p2: any = await svc.proof(c1.token, pdf, 'ip'); const m2 = tg[tg.length - 1], data2 = m2.markup.inline_keyboard[0].map((b: any) => b.callback_data);
+      must(p2.ok && m2.method === 'sendDocument' && /Comprobante 2 de 3/.test(m2.caption) && data2[0] !== data1[0], 'segundo comprobante (PDF) como documento y con clave nueva');
+      await press(data1[0]); must((await svc.view(c1.token) as any).state === 'PENDIENTE_VALIDACION', 'el botón del comprobante anterior ya no aprueba');
+      // Aprobar: una sola vez, aunque se pulse dos veces o tambien desde el panel; avisa a la cola.
+      const queued: number[] = []; svc.onApproved = (r) => queued.push(r.id);
+      await Promise.all([press(data2[0], '777', { document: {} }), press(data2[0], '777', { document: {} })]);
+      const again = await svc.decide(row.id, false, 'panel', 'tarde');
+      const [fin] = await P.db.query<any>('SELECT * FROM avatar_requests WHERE id = $1', [row.id]);
+      must(fin.state === 'PAGO_APROBADO' && fin.decided_by === 'telegram' && queued.length === 1 && !again.ok && /Ya estaba decidida \(aprobada/.test(again.text), `aprobar una vez: ${fin.state}, cola ${queued.length}, ${again.text}`);
+      must(await st(svc.proof(c1.token, jpg(9), 'ip')) === 409 && !(await svc.view(c1.token) as any).canPay && await st(svc.create('av-ana-a1a1a1', '3001234567', jpg(5), 'ip', true)) === 200 && (await P.db.query('SELECT id FROM avatar_requests')).length === 1, 'pagada: no se cobra ni se crea otra');
+      // Panel: decide cuando Telegram no entrego el aviso; el motivo llega al cliente; tope de comprobantes; sin cookie no entra.
+      await mk('av-luis-f6f6f6', 1); tgOk = false;
+      const c3: any = await svc.create('av-luis-f6f6f6', '3001234567', jpg(6), 'ip', true); const p3: any = await svc.proof(c3.token, jpg(7), 'ip');
+      must(c3.ok && p3.ok && (await svc.view(c3.token) as any).state === 'PENDIENTE_VALIDACION', 'si Telegram falla, el comprobante igual queda en revisión (se decide en el panel)');
+      tgOk = true;
+      const id3 = (await svc.view(c3.token) as any).id, own = new AvatarOwnerController(svc, { verify: (c?: string) => (c === 'buena' ? {} : null) } as any), rq = (cookie?: string) => ({ headers: { cookie } }) as any;
+      const code = async (fn: () => Promise<unknown>) => { try { await fn(); return 200; } catch (e: any) { return e.getStatus?.() ?? 500; } };
+      must(await code(() => own.list(rq())) === 401 && await code(() => own.decide(rq('mala'), String(id3), { decision: 'aprobar' })) === 401 && await code(() => own.file(rq(), String(id3), 'foto', {} as any)) === 401, 'panel sin dispositivo registrado');
+      const listed: any = await own.list(rq('buena'));
+      must(listed.items.length === 2 && listed.items.every((x: any) => !('token' in x) && !('nonce' in x) && !('dir' in x)) && await code(() => own.decide(rq('buena'), String(id3), { decision: 'quizas' })) === 400, 'lista del panel sin claves');
+      const out: any = { h: {} as any, setHeader(k: string, v: string) { out.h[k] = v; }, type(t: string) { out.t = t; return out; }, send(b: Buffer) { out.b = b; } };
+      await own.file(rq('buena'), String(id3), 'comprobante', out); must(out.t === 'image/jpeg' && out.b.equals(jpg(7)) && /sandbox/.test(out.h['Content-Security-Policy']) && await code(() => own.file(rq('buena'), String(id3), '../x', out)) === 404, 'ver el comprobante desde el panel');
+      await own.decide(rq('buena'), String(id3), { decision: 'rechazar', motivo: 'el valor no coincide' });
+      must(/Motivo: el valor no coincide/.test((await svc.view(c3.token) as any).message), 'el motivo del rechazo llega al cliente');
+      await svc.proof(c3.token, jpg(10), 'ip'); await svc.decide(id3, false, 'panel'); await svc.proof(c3.token, jpg(11), 'ip'); await svc.decide(id3, false, 'panel');
+      const v3: any = await svc.view(c3.token);
+      must(v3.proofs === 3 && !v3.canPay && /Escríbele a Javier/.test(v3.message) && await st(svc.proof(c3.token, jpg(12), 'ip-b')) === 409, `tope de comprobantes: ${JSON.stringify(v3).slice(0, 200)}`);
+      // Tope por IP al crear.
+      Object.assign(acfg as any, { avatarPerIpHour: 2 }); await mk('av-tope-a7a7a7', 1);
+      let last = 0; for (let i = 0; i < 3; i++) last = await st(svc.create('av-tope-a7a7a7', '3110000000', jpg(1), 'ip-tope', true)); must(last === 429, 'tope de intentos por IP');
+    } finally {
+      globalThis.fetch = prev;
+      await P.db.query('DELETE FROM avatar_requests'); for (const id of ['av-ana-a1a1a1', 'av-nadie-b2b2b2', 'av-sinperm-c3c3c3', 'av-correo-d4d4d4', 'av-vieja-e5e5e5', 'av-luis-f6f6f6', 'av-tope-a7a7a7']) await P.db.query('DELETE FROM demos WHERE id = $1', [id]);
+    }
+    return 'solo el WhatsApp de la demo; autorización obligatoria; foto revisada (una persona, adulta, rostro claro) y si no se puede revisar no entra; una solicitud por demo; llave, valor y QR único; comprobante a Telegram con aviso y botones; otro chat, clave falsa o botón viejo no deciden; aprobar una sola vez; rechazo con motivo y nuevo intento; mismo comprobante no sirve dos veces; panel solo con dispositivo';
+  });
+
   await check('Envío de la demo: solo con tu aprobación, con la imagen del negocio, y Claude Code como último recurso para la portada', async () => {
     const { DemoDocsService } = await import('../demo/demo-docs.service');
     const { DemoSendService } = await import('../demo/demo-send.service');

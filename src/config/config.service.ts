@@ -167,6 +167,13 @@ export class ConfigService {
   readonly demoDocDays: number;
   /** Enlace /demo/<id> (B2): voz del asistente del negocio, minutos por conversacion y minutos por dia de cada demo. */
   readonly demoVoiceId: string;
+  /** Avatares personalizados con foto (pago por Bre-B, aprobacion de Javier). */
+  readonly avatarCustom: boolean;
+  readonly avatarPrice: number;
+  readonly avatarBrebKey: string;
+  readonly avatarPhotoMb: number;
+  readonly avatarPerIpHour: number;
+  readonly avatarProofs: number;
   readonly demoPageMinutes: number;
   readonly demoPageDailyMinutes: number;
   /** Tope de minutos de voz al dia entre TODAS las demos (cada minuto cuesta escucha, modelo y voz). */
@@ -416,6 +423,12 @@ export class ConfigService {
     this.demoDocDaily = int('DEMO_DOC_DIA', 30, 1);
     this.demoDocDays = int('DEMO_DOC_DIAS', 7, 1);
     this.demoVoiceId = /^[A-Za-z0-9]{10,40}$/.test(str('DEMO_VOZ_ID', 'k1LcwPlB8fqtr2BOqzNo')) ? str('DEMO_VOZ_ID', 'k1LcwPlB8fqtr2BOqzNo') : '';
+    this.avatarCustom = str('AVATAR_PROPIO', '1') !== '0';
+    this.avatarPrice = int('AVATAR_PRECIO', 19200, 1);
+    this.avatarBrebKey = str('AVATAR_BREB_LLAVE', '3004576744').replace(/[^0-9A-Za-z@._+-]/g, '').slice(0, 60);
+    this.avatarPhotoMb = Math.min(20, int('AVATAR_FOTO_MB', 8, 1));
+    this.avatarPerIpHour = int('AVATAR_POR_IP_HORA', 5, 1);
+    this.avatarProofs = int('AVATAR_COMPROBANTES', 3, 1);
     this.demoPageMinutes = int('DEMO_MIN_CHARLA', 5, 1);
     this.demoPageDailyMinutes = int('DEMO_MIN_DIA', 30, 1);
     this.demoPageTotalMinutes = int('DEMO_MIN_DIA_TOTAL', 120, 1);
@@ -479,7 +492,7 @@ ${readFileSync(costenoFile, 'utf8').trim()}` : '';
         business: b, greeting: b.saludo, elevenVoiceId: b.voz || this.elevenVoiceId, costenoPrompt: '',
         ownerSecret: '', claudeToken: '', planeMcpUrl: '', youtubeApiKey: '', spotifyClientId: '', spotifyClientSecret: '', teslaClientId: '', teslaClientSecret: '',
         googleMapsKey: '', openChargeMapKey: '', polymarket: false, newsUrl: '', newsColombia: false, unsplashAccessKey: '', magnificApiKey: '', imageOpenAiKey: '',
-        briefHour: -1, followupHour: -1, demoDocs: false, callMode: 'rechazar', whatsappReplies: this.whatsappReplies === 'avatar' ? 'avatar' : 'off', n8nWebhookUrl: '', leadsWebhookUrl: '', visitorMemoryDays: 0, visitReports: false,
+        briefHour: -1, followupHour: -1, demoDocs: false, avatarCustom: false, callMode: 'rechazar', whatsappReplies: this.whatsappReplies === 'avatar' ? 'avatar' : 'off', n8nWebhookUrl: '', leadsWebhookUrl: '', visitorMemoryDays: 0, visitReports: false,
       });
     }
   }

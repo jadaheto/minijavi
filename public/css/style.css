@@ -514,3 +514,4 @@ body.demo-page .gate-card .avatar-opt:focus-visible { outline: 2px solid #fff; o
 body.demo-page .gate-card .avatar-opt.loading { opacity: .5; }
 .avatar-row[data-busy] .avatar-opt { cursor: progress; }
 .gate.standby .avatar-pick { display: none; }
+.avatar-own { font-size: 14px; font-weight: 600; color: #cfe0ff; text-decoration: underline; text-underline-offset: 3px; }

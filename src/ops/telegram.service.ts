@@ -25,6 +25,7 @@ export interface TgPress { data: string; answer(text: string): Promise<void>; ed
 export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly log = new Logger(TelegramService.name);
   private handler?: (press: TgPress) => Promise<void>;
+  private prefixed = new Map<string, (press: TgPress) => Promise<void>>();
   private stop = new AbortController();
   private offset = 0;
   /** Por que no hay botones ('' = funcionando o aun sin arrancar). Lo muestra el panel. */
@@ -39,6 +40,33 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
 
   /** Quien atiende las pulsaciones (la bandeja de aprobaciones). */
   onPress(fn: (press: TgPress) => Promise<void>) { this.handler = fn; }
+  /** Otro modulo atiende los botones cuyo dato empieza por `prefix` (por ejemplo "avp:"); el resto sigue yendo a la bandeja. */
+  onPrefix(prefix: string, fn: (press: TgPress) => Promise<void>) { this.prefixed.set(prefix, fn); }
+
+  /**
+   * Foto (JPG, PNG, WebP) o documento a Javier, con pie y botones. Bot API leida el 2026-11-21: sendPhoto (hasta 10 MB) y
+   * sendDocument (hasta 50 MB) aceptan `caption` (0 a 1024) y `reply_markup`; en multipart el teclado va como texto JSON
+   * (la pagina lo describe como "objeto serializado en JSON"; no dice mas). Devuelve el id del mensaje o null.
+   */
+  async sendMedia(file: Buffer, mime: string, filename: string, caption: string, buttons: TgButton[] = []): Promise<number | null> {
+    if (!this.enabled) return null;
+    const photo = /^image\/(jpeg|png|webp)$/.test(mime) && file.length < 10 * 1024 * 1024;
+    try {
+      const form = new FormData();
+      form.append('chat_id', this.cfg.telegramChatId); form.append('caption', caption.slice(0, 1024));
+      if (buttons.length) form.append('reply_markup', JSON.stringify({ inline_keyboard: [buttons.map((b) => ({ text: b.text, callback_data: b.data.slice(0, 64) }))] }));
+      form.append(photo ? 'photo' : 'document', new Blob([new Uint8Array(file)], { type: mime }), filename);
+      const res = await fetch(`https://api.telegram.org/bot${this.cfg.telegramBotToken}/${photo ? 'sendPhoto' : 'sendDocument'}`, { method: 'POST', body: form, signal: AbortSignal.timeout(60_000) });
+      const d: any = await res.json().catch(() => ({}));
+      if (!res.ok || !d.ok) { this.log.warn(`Telegram respondió ${res.status} al enviar un archivo`); return null; }
+      return Number(d.result?.message_id) || null;
+    } catch (e) { this.log.warn(`no se pudo enviar el archivo por Telegram (${(e as Error).name})`); return null; }
+  }
+  /** Cambia el pie de una foto o documento ya enviado y le quita los botones (editMessageCaption). */
+  async editCaption(messageId: number, caption: string): Promise<void> {
+    if (!this.enabled || !messageId) return;
+    await this.api('editMessageCaption', { chat_id: this.cfg.telegramChatId, message_id: messageId, caption: caption.slice(0, 1024), reply_markup: { inline_keyboard: [] } }).catch(() => undefined);
+  }
 
   /** Mensaje a Javier, con botones si se dan. Devuelve el id del mensaje, o null si no salio. Los errores no llevan la direccion (trae el token). */
   async send(text: string, buttons: TgButton[] = []): Promise<number | null> {
@@ -56,7 +84,7 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
     await this.api('editMessageText', { chat_id: this.cfg.telegramChatId, message_id: messageId, text: text.slice(0, 3900), reply_markup: { inline_keyboard: [] } }).catch(() => undefined);
   }
 
-  onApplicationBootstrap() { if (this.enabled && this.cfg.telegramButtons && this.handler) void this.start(); else if (this.enabled && !this.cfg.telegramButtons) this.problem = 'los botones están apagados (TELEGRAM_BUTTONS=0)'; }
+  onApplicationBootstrap() { if (this.enabled && this.cfg.telegramButtons && (this.handler || this.prefixed.size)) void this.start(); else if (this.enabled && !this.cfg.telegramButtons) this.problem = 'los botones están apagados (TELEGRAM_BUTTONS=0)'; }
   onModuleDestroy() { this.stop.abort(); }
 
   private async start() {
@@ -94,8 +122,12 @@ export class TelegramService implements OnApplicationBootstrap, OnModuleDestroy 
     // Solo vale una pulsacion hecha en el chat de Javier. Cualquier otra se contesta sin efecto.
     if (String(q.message?.chat?.id ?? '') !== String(this.cfg.telegramChatId)) { this.log.warn('pulsación de un chat que no es el configurado: ignorada'); await answer('No autorizado.'); return; }
     const messageId = Number(q.message?.message_id) || 0;
+    const media = !!(q.message?.photo || q.message?.document); // una foto o un documento se editan por su pie
+    const press: TgPress = { data: q.data, answer, edit: (text) => (media ? this.editCaption(messageId, text) : this.edit(messageId, text)) };
+    const own = [...this.prefixed.entries()].find(([p]) => q.data.startsWith(p));
+    if (own) { await own[1](press); return; }
     if (!this.handler) { await answer('Sin efecto.'); return; }
-    await this.handler({ data: q.data, answer, edit: (text) => this.edit(messageId, text) });
+    await this.handler(press);
   }
 }
 const sleep = (ms: number, signal: AbortSignal) => new Promise<void>((r) => { const t = setTimeout(r, ms); signal.addEventListener('abort', () => { clearTimeout(t); r(); }, { once: true }); });
