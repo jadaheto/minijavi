@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@ne
 import { randomBytes } from 'node:crypto';
 import QRCode from 'qrcode';
 import { ConfigService } from '../config/config.service';
+import { AVATARS } from '../business/business';
 import { DbService } from '../db/db.service';
 import { CapableModelService } from '../llm/capable.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
@@ -50,7 +51,8 @@ export interface DemoDoc { id: string; business: string; created_at: string; exp
 export interface DemoConfig { saludo: string; personalidad: string; preguntas: string[]; color: string; auto: boolean; escena?: string; imagen?: string;
   /** Ya se intento la imagen (con o sin exito): el envio por WhatsApp no espera mas. */ imagenLista?: boolean; imagenError?: string;
   /** Ya se le propuso a Javier enviar esta demo por WhatsApp. */ propuesta?: boolean;
-  /** Proyecto del taller con la portada hecha por Claude Code (ultimo recurso si OpenAI y Magnific fallaron). */ portada?: string }
+  /** Proyecto del taller con la portada hecha por Claude Code (ultimo recurso si OpenAI y Magnific fallaron). */ portada?: string;
+  /** Avatar del catalogo elegido para ESTA demo ('' o ausente = el de Javier). */ avatar?: string }
 export interface DemoProfile { negocio: string; ficha: string; colores: string[]; extra?: string; config?: DemoConfig }
 export interface DemoPage { id: string; business: string; profile: DemoProfile; config: DemoConfig; expires: string; usedMin: number }
 export interface DocUpdate { state: DocState; message: string; id?: string; business?: string; profile?: DemoProfile }
@@ -300,6 +302,15 @@ ${p.ficha}`) },
     await this.knowledge.deleteDemo(id).catch((e) => this.log.warn(`demo ${id}: no se borraron sus fragmentos (${(e as Error).message})`));
     await this.db.query('DELETE FROM demos WHERE id = $1', [id]);
     await this.db.query('DELETE FROM demo_usage WHERE demo = $1', [id]).catch(() => undefined);
+    return true;
+  }
+
+  /** Elige el avatar del catalogo de ESTA demo (solo de ella). Devuelve false si la demo no existe, vencio o aun no esta lista. */
+  async setAvatar(id: string, avatar: string): Promise<boolean> {
+    if (!/^[a-z0-9-]{3,48}$/.test(id) || !(AVATARS as readonly string[]).includes(avatar)) return false;
+    const d = await this.get(id);
+    if (!d || d.status !== 'listo' || Date.parse(d.expires_at) < Date.now()) return false;
+    await this.patchConfig(id, { avatar });
     return true;
   }
 

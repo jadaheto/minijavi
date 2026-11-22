@@ -29,7 +29,8 @@ const DEMO_PAGE = document.querySelector('meta[name="minijavi-demo"]')?.getAttri
 
 // Que es este servicio: el minijavi de Javier o el asistente de un negocio (modo negocio: su marca, su avatar, su voz).
 const NEGOCIO = await fetch(new URL('/api/modo', location.href), { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((m) => (m && m.modo === 'negocio' ? m : null)).catch(() => null);
-const avatar = await createAvatar($('stage'), NEGOCIO ? String(NEGOCIO.avatar || '') : '');
+const DEMO_AVATAR = DEMO_PAGE ? document.querySelector('meta[name="minijavi-demo-avatar"]')?.getAttribute('content') || '' : ''; // el avatar del catálogo que eligió esta demo
+const avatar = await createAvatar($('stage'), NEGOCIO ? String(NEGOCIO.avatar || '') : DEMO_AVATAR);
 const missing = REQUIRED.filter((n) => !avatar.morphNames.includes(n));
 if (missing.length) console.warn('Al modelo le faltan morph targets:', missing);
 if (new URLSearchParams(location.search).get('subs') === '0') $('subtitles').classList.add('off'); // subtitulos opcionales: ?subs=0
@@ -427,6 +428,26 @@ if (DEMO_PAGE) {
   if (/^\/imagenes\/[A-Za-z0-9._-]+$/.test(pic)) { const img = document.createElement('img'); img.className = 'gate-hero'; img.src = pic; img.alt = ''; $('gate-form').prepend(img); }
   // Sin imagen (los generadores fallaron) pero con portada hecha por Claude Code: se muestra aislada, sin permisos.
   const cover = document.querySelector('meta[name="minijavi-demo-portada"]')?.getAttribute('content') || '';
+  // Catálogo de avatares: quien abre la demo elige la cara de su asistente; se guarda solo en esta demo.
+  const ids = (document.querySelector('meta[name="minijavi-demo-avatars"]')?.getAttribute('content') || '').split(',').filter((x) => /^[a-z]{3,12}$/.test(x));
+  if (ids.length) {
+    const box = document.createElement('div'); box.className = 'avatar-pick';
+    const label = document.createElement('p'); label.textContent = 'Elige el avatar de tu asistente:'; box.append(label);
+    const row = document.createElement('div'); row.className = 'avatar-row'; box.append(row);
+    for (const id of ids) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'avatar-opt'; b.title = id[0].toUpperCase() + id.slice(1); b.setAttribute('aria-pressed', String(id === DEMO_AVATAR));
+      const img = document.createElement('img'); img.src = `./img/avatares/${id}.jpg`; img.alt = b.title; img.loading = 'lazy'; b.append(img);
+      b.addEventListener('click', async () => {
+        if (id === DEMO_AVATAR || row.dataset.busy) return;
+        row.dataset.busy = '1'; b.classList.add('loading');
+        const r = await fetch(new URL(`/demo/${encodeURIComponent(DEMO_PAGE)}/avatar`, location.href), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ avatar: id }) }).then((x) => x.json().catch(() => ({ ok: false }))).catch(() => ({ ok: false }));
+        if (r.ok) return location.reload(); // el modelo se carga al abrir la página
+        delete row.dataset.busy; b.classList.remove('loading'); label.textContent = r.message || 'No se pudo cambiar el avatar. Intenta de nuevo.';
+      });
+      row.append(b);
+    }
+    $('gate-text').after(box);
+  }
   if (!pic && /^\/p\/[a-z0-9-]+\/$/.test(cover)) { const f = document.createElement('iframe'); f.className = 'gate-hero'; f.src = cover; f.setAttribute('sandbox', ''); f.title = 'Portada'; f.loading = 'lazy'; $('gate-form').prepend(f); }
 }
 

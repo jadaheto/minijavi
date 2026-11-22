@@ -13,7 +13,8 @@
     "negocio:cargar": "tsc -p tsconfig.json && node --no-warnings dist/business/ingest.js",
     "verificar": "tsc -p tsconfig.json && node --no-warnings dist/verify/verify.js",
     "latencia": "node scripts/latencia.mjs",
-    "probar-modelo": "tsc -p tsconfig.json && node --no-warnings dist/llm/probe.js"
+    "probar-modelo": "tsc -p tsconfig.json && node --no-warnings dist/llm/probe.js",
+    "avatar": "tsc -p tsconfig.json && node --no-warnings dist/avatars/cli.js"
   },
   "engines": {
     "node": ">=20.12"

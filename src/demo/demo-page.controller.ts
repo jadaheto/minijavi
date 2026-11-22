@@ -1,4 +1,6 @@
-import { Controller, Get, Optional, Param, Res } from '@nestjs/common';
+import { Body, Controller, Get, Header, HttpException, Optional, Param, Post, Req, Res } from '@nestjs/common';
+import type { Request } from 'express';
+import { AVATARS } from '../business/business';
 import { WorkshopService } from '../workshop/workshop.service';
 import type { Response } from 'express';
 import { readFileSync } from 'node:fs';
@@ -28,8 +30,27 @@ export class DemoPageController {
     }
     this.html ??= readFileSync(join(__dirname, '..', '..', 'public', 'index.html'), 'utf8');
     const out = this.html
-      .replace('<head>', `<head>\n  <base href="/">\n  <meta name="robots" content="noindex, nofollow">\n  <meta name="minijavi-demo" content="${esc(p.id)}">${p.config.imagen && /^[A-Za-z0-9._-]+$/.test(p.config.imagen) ? `\n  <meta name="minijavi-demo-image" content="/imagenes/${esc(p.config.imagen)}">` : ''}${!p.config.imagen && p.config.portada && /^[a-z0-9-]+$/.test(p.config.portada) && this.workshop?.hasSite(p.config.portada) ? `\n  <meta name="minijavi-demo-portada" content="/p/${esc(p.config.portada)}/">` : ''}`)
+      .replace('<head>', `<head>\n  <base href="/">\n  <meta name="robots" content="noindex, nofollow">\n  <meta name="minijavi-demo" content="${esc(p.id)}">${p.config.imagen && /^[A-Za-z0-9._-]+$/.test(p.config.imagen) ? `\n  <meta name="minijavi-demo-image" content="/imagenes/${esc(p.config.imagen)}">` : ''}\n  <meta name="minijavi-demo-avatars" content="${AVATARS.join(',')}">${p.config.avatar && (AVATARS as readonly string[]).includes(p.config.avatar) ? `\n  <meta name="minijavi-demo-avatar" content="${p.config.avatar}">` : ''}${!p.config.imagen && p.config.portada && /^[a-z0-9-]+$/.test(p.config.portada) && this.workshop?.hasSite(p.config.portada) ? `\n  <meta name="minijavi-demo-portada" content="/p/${esc(p.config.portada)}/">` : ''}`)
       .replace(/<title>[^<]*<\/title>/, `<title>Asistente de ${esc(p.business)}</title>`);
     return res.type('html').send(out);
+  }
+
+  /**
+   * Elegir el avatar del catalogo para esta demo. Lo puede hacer quien tenga el enlace (es solo la cara del asistente);
+   * se guarda en la demo y no toca nada mas. Tope por IP para que no sirva de martillo contra la base.
+   */
+  private picks = new Map<string, { n: number; until: number }>();
+  @Post(':id/avatar')
+  @Header('Cache-Control', 'no-store')
+  async avatar(@Param('id') id: string, @Body() body: { avatar?: unknown }, @Req() req: Request) {
+    const ip = String(req.headers['x-forwarded-for'] ?? req.socket?.remoteAddress ?? '').split(',').pop()!.trim(), now = Date.now();
+    if (this.picks.size > 5000) for (const [k, v] of this.picks) if (v.until < now) this.picks.delete(k);
+    const p = this.picks.get(ip); const cur = p && p.until > now ? p : { n: 0, until: now + 3600_000 };
+    if (++cur.n > 30) throw new HttpException({ ok: false, message: 'Demasiados cambios. Intenta más tarde.' }, 429);
+    this.picks.set(ip, cur);
+    const avatar = String(body?.avatar ?? '');
+    if (!(AVATARS as readonly string[]).includes(avatar)) throw new HttpException({ ok: false, message: 'Ese avatar no existe.' }, 400);
+    if (!(await this.docs.setAvatar(String(id), avatar))) throw new HttpException({ ok: false, message: 'Esta demostración no está disponible.' }, 404);
+    return { ok: true, avatar };
   }
 }

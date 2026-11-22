@@ -1,0 +1,86 @@
+{
+  "_nota": "Estilos y catálogo de avatares de minijavi. Lo leen src/avatars/avatar-studio.ts (servidor y comando `npm run avatar`) y la skill crear-avatar. Cambiar un estilo es cambiar este archivo, no el código. Origen: avatares/estilo.json del 2026-11-21.",
+  "referencia": "content/avatar-estilo.png",
+  "estilo": {
+    "tipo": "cabeza 3D estilizada tipo emoji, de caricatura amable; solo la cabeza flotando, sin cuello, hombros ni cuerpo",
+    "proporciones": "cabeza grande y redondeada, más ancha arriba y con mandíbula suave; ojos muy grandes (cada uno ocupa cerca de un quinto del ancho de la cara) y separados; nariz pequeña y redonda sin fosas marcadas; boca ancha y sencilla; orejas pequeñas y simples",
+    "ojos": "globos blancos brillantes, iris grande de color plano con borde un poco más oscuro, pupila negra grande y un único brillo blanco redondo arriba a la izquierda; párpado superior como una franja limpia; sin pestañas detalladas",
+    "cejas": "bloques gruesos y lisos de un solo color, con forma de arco suave",
+    "boca": "labios como dos volúmenes lisos, cerrada, con sonrisa muy leve; sin dientes a la vista",
+    "pelo": "volumen macizo y liso, como esculpido en arcilla, con pocos mechones grandes definidos por surcos anchos; sin pelos sueltos ni textura fina",
+    "piel_y_materiales": "superficies lisas y mates como vinilo o arcilla suave; colores planos con sombreado suave; sin poros, arrugas finas ni texturas fotográficas; nada metálico ni brillante salvo el brillo de los ojos",
+    "accesorios": "si lleva gafas: montura gruesa y lisa de un solo color, cristales transparentes sin reflejos",
+    "iluminacion": "luz de estudio suave y frontal, sombras muy suaves, sin contraluz fuerte",
+    "fondo": "liso, azul marino oscuro (#1b2333), sin degradados llamativos, objetos ni texto",
+    "encuadre": "vista de frente, cabeza centrada y completa con aire alrededor, mirando a la cámara, formato cuadrado"
+  },
+  "construccion": [
+    "formas simples y simétricas, construibles con pocas piezas: cabeza, pelo o pelaje, cejas, párpados, ojos, boca y un accesorio como mucho",
+    "boca bien visible y despejada (sin bigote largo ni pelo que la tape): se anima con 8 formas para hablar y una sonrisa",
+    "ojos despejados para poder parpadear y mover la mirada",
+    "colores planos (se pintan por vértice, sin texturas)",
+    "sin manos, cuerpo, ropa, sombreros grandes ni elementos colgantes"
+  ],
+  "catalogo": [
+    {
+      "id": "hombre",
+      "nombre": "Hombre",
+      "humano": true,
+      "descripcion": "hombre adulto de unos 35 años, piel morena clara, pelo negro corto peinado hacia un lado con volumen, cejas gruesas negras, ojos café oscuro, afeitado (sin barba ni bigote), sin gafas, expresión amable y segura"
+    },
+    {
+      "id": "mujer",
+      "nombre": "Mujer",
+      "humano": true,
+      "descripcion": "mujer adulta de unos 30 años, piel trigueña, pelo castaño oscuro hasta los hombros en ondas grandes y macizas con raya al lado, cejas definidas, ojos café con el párpado un poco más marcado, labios rosados, aretes redondos pequeños, expresión cálida"
+    },
+    {
+      "id": "joven",
+      "nombre": "Joven",
+      "humano": true,
+      "descripcion": "joven de unos 19 años, piel clara, pelo castaño claro ondulado con un tupé alto y lados más cortos, cejas medianas, ojos verdes, sin barba, expresión alegre y despierta"
+    },
+    {
+      "id": "mayor",
+      "nombre": "Mayor",
+      "humano": true,
+      "descripcion": "hombre mayor de unos 68 años, piel clara con mejillas rosadas, pelo blanco corto con entradas, cejas blancas gruesas, bigote blanco corto y recortado que deja la boca despejada, gafas redondas de montura delgada dorada, ojos azul grisáceo, expresión bondadosa; dos o tres líneas suaves de expresión como única señal de edad"
+    },
+    {
+      "id": "perro",
+      "nombre": "Perro",
+      "humano": false,
+      "descripcion": "cabeza de perro de caricatura muy simpático, tipo labrador dorado: pelaje liso color miel con hocico y cejas en crema, orejas caídas redondeadas, nariz negra ovalada, hocico corto y ancho con la boca bien visible, ojos café muy grandes con el mismo brillo, expresión feliz y leal"
+    },
+    {
+      "id": "gato",
+      "nombre": "Gato",
+      "humano": false,
+      "descripcion": "cabeza de gato de caricatura carismático: pelaje liso naranja con hocico, mejillas y pecho de la cara en blanco, tres rayas suaves más oscuras en la frente, orejas triangulares con interior rosado, nariz rosada pequeña, boca pequeña bien visible, ojos verdes muy grandes con pupila redonda, sin bigotes largos (como mucho tres puntos a cada lado), expresión curiosa y pícara"
+    },
+    {
+      "id": "loro",
+      "nombre": "Loro",
+      "humano": false,
+      "descripcion": "cabeza de loro o guacamaya de caricatura muy alegre: plumaje liso verde brillante con mejillas amarillas y una cresta corta de tres plumas macizas, pico grande y curvo color naranja amarillento, cerrado y bien visible de frente, ojos muy grandes con iris ámbar y el mismo brillo, expresión conversadora y simpática"
+    },
+    {
+      "id": "mico",
+      "nombre": "Mico",
+      "humano": false,
+      "descripcion": "cabeza de mico (mono pequeño) de caricatura muy carismático y travieso: pelaje liso café con la cara, el hocico y el interior de las orejas en color crema, orejas redondas grandes a los lados, hocico redondeado y ancho con la boca bien visible, nariz pequeña, un mechón corto y macizo de pelo en la coronilla, ojos café muy grandes con el mismo brillo, expresión alegre y simpática"
+    }
+  ],
+  "vistas": {
+    "base": "Es EXACTAMENTE el mismo personaje 3D de la imagen de referencia: misma cabeza, mismo peinado, mismos colores, mismos materiales lisos y mates, misma iluminación suave y el mismo fondo azul marino liso (#1b2333). Solo la cabeza, sin cuello ni cuerpo, centrada y completa con aire alrededor, formato cuadrado. Sin texto ni marcas.",
+    "perfil": "Vista de PERFIL exacto (90 grados), la cara mirando hacia la IZQUIERDA de la imagen: se ve una sola oreja, la silueta de la frente, la nariz pequeña, los labios y el mentón, y cómo el pelo sobresale por delante de la frente. Boca cerrada con la misma sonrisa leve.",
+    "trescuartos": "Vista de TRES CUARTOS (la cabeza girada unos 35 grados hacia la izquierda de la imagen), se ven los dos ojos y una oreja. Boca cerrada con la misma sonrisa leve.",
+    "ojoscerrados": "Vista de FRENTE, igual que la referencia, pero con los OJOS CERRADOS con suavidad: cada párpado cerrado es una superficie lisa y casi plana del color de la piel con una sola línea curva oscura de pestañas; sin bolsas, sin arrugas y sin bultos alrededor de los ojos.",
+    "atras": "Vista desde ATRÁS (180 grados): se ve la parte de atrás del pelo y las dos orejas asomando a los lados."
+  },
+  "retrato": {
+    "_nota": "Texto NUEVO del 2026-11-21 (no existía antes): convierte la foto de una persona al estilo. Va seguido de las mismas cláusulas de `estilo`. Se envían dos imágenes: primero la referencia de estilo, después la foto.",
+    "entrada": "Convierte a la persona de la SEGUNDA imagen (una fotografía) en un personaje con exactamente el mismo estilo visual de la PRIMERA imagen (misma técnica, mismos materiales y mismas proporciones de caricatura). Debe reconocerse a la persona de la foto: conserva la forma de su cara, su peinado y color de pelo, su tono de piel, el color de sus ojos, sus cejas, su barba o bigote si los tiene y sus gafas si las lleva. No copies la cara, el pelo ni las gafas del personaje de la primera imagen: de ella solo se toma el estilo.",
+    "cierre": "Sin texto, sin logos, sin marcas de agua, sin marcos."
+  }
+}

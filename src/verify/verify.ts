@@ -1872,6 +1872,62 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     return 'configuración por el modelo capaz (sin enlaces) o por defecto; página con base y noindex; vencida, inexistente y tope del día; sin herramientas, ficha y fragmentos, saludo del negocio, no es sesión del dueño; 5 minutos por charla; cuenta el uso y no es visita; alargar y borrar';
   });
 
+  await check('Avatares: los estilos salen de un archivo de datos, el modelo se comprueba sin gastar y cada demo elige su avatar del catálogo', async () => {
+    const st = await import('../avatars/avatar-studio');
+    const { AVATARS } = await import('../business/business');
+    const { DemoDocsService } = await import('../demo/demo-docs.service');
+    const { DemoPageController } = await import('../demo/demo-page.controller');
+    const { existsSync } = await import('node:fs'); const { join } = await import('node:path');
+    // Estilos: archivo de datos valido, con los ocho del catalogo, y cada avatar con su modelo y su miniatura.
+    const s = st.loadStyles();
+    must(AVATARS.every((a) => s.catalogo.some((c) => c.id === a)) && s.catalogo.filter((c) => c.humano).map((c) => c.id).sort().join() === 'hombre,joven,mayor,mujer', 'catálogo del archivo de estilos');
+    const pub = join(__dirname, '..', '..', 'public');
+    for (const a of AVATARS) must(existsSync(join(pub, 'models', `avatar-${a}.glb`)) && existsSync(join(pub, 'img', 'avatares', `${a}.jpg`)), `falta el modelo o la miniatura de ${a}`);
+    const cp = st.catalogPrompt(s, 'una persona de prueba.'), pp = st.portraitPrompt(s), vp = st.viewPrompt(s, 'perfil');
+    must(cp.includes('NO sea la misma persona: una persona de prueba. Estilo: ') && cp.includes(s.estilo.fondo) && cp.endsWith('No es una persona real.'), 'prompt del catálogo');
+    must(pp.startsWith(s.retrato.entrada) && pp.includes(s.estilo.ojos) && !/No es una persona real/.test(pp) && vp.startsWith(s.vistas.base) && /PERFIL/.test(vp), 'prompts de retrato y de vistas');
+    let threw = false; try { st.dataUrl(Buffer.from('<svg/>')); } catch { threw = true; }
+    must(threw && st.dataUrl(st.styleReference(s)).startsWith('data:image/png;base64,'), 'la imagen de entrada se reconoce por sus bytes');
+    // Modelo de imagen: una consulta que no genera; pedir imagenes manda las de entrada en orden y nunca la clave en la direccion.
+    const prev = globalThis.fetch, calls: { url: string; method: string; body: any; auth: string }[] = []; let mode = 'ok';
+    globalThis.fetch = (async (url: any, init?: any) => { const u = String(url);
+      calls.push({ url: u, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : undefined, auth: String(init?.headers?.Authorization ?? '') });
+      if (u.includes('/v1/models/')) return new Response(mode === 'ok' ? '{"id":"img-x"}' : '{}', { status: mode === 'ok' ? 200 : 404 });
+      if (mode === 'bloqueo') return new Response('{"error":{"code":"moderation_blocked","message":"x"}}', { status: 400 });
+      return new Response(JSON.stringify({ data: [{ b64_json: Buffer.from('uno').toString('base64') }, { b64_json: Buffer.from('dos').toString('base64') }] }), { status: 200 }); }) as any;
+    try {
+      const o = { key: 'sk-prueba', model: 'img-x' };
+      must((await st.checkModel(o)).ok && calls.length === 1 && calls[0].method === 'GET' && !calls[0].url.includes('sk-prueba'), 'comprobar el modelo');
+      mode = 'falta'; const no = await st.checkModel(o); must(!no.ok && /no tiene el modelo/.test(no.detail) && !(await st.checkModel({ key: '', model: 'img-x' })).ok && !(await st.checkModel({ key: 'k', model: '../x' })).ok, 'modelo ausente, sin clave o con nombre raro');
+      mode = 'ok'; calls.length = 0;
+      const png = st.styleReference(s), jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+      const out = await st.renderImages(o, pp, [png, jpg], 2);
+      const b = calls[0].body;
+      must(out.length === 2 && out[0].toString() === 'uno' && calls[0].url.endsWith('/v1/images/edits') && b.model === 'img-x' && b.n === 2 && b.images.length === 2 && b.images[0].image_url.startsWith('data:image/png') && b.images[1].image_url.startsWith('data:image/jpeg') && b.prompt === pp, 'petición de imágenes');
+      mode = 'bloqueo'; let blocked = false; try { await st.renderImages(o, pp, [png], 1); } catch (e) { blocked = e instanceof st.ImageBlocked; } must(blocked, 'rechazo por contenido reconocido');
+    } finally { globalThis.fetch = prev; }
+    // Cada demo elige su avatar: se guarda solo en ella; ids raros, demos ajenas, vencidas o inexistentes no cambian nada.
+    const dcfg = new ConfigService(); Object.assign(dcfg as any, { demoDocs: true, demoPageMinutes: 5, demoPageDailyMinutes: 30 });
+    const docs = new DemoDocsService(dcfg, P.db, {} as any, { enabled: false, deleteDemo: async () => undefined } as any, {} as any, usage);
+    const now = Date.now(), mk = (id: string, days: number, status = 'listo') => P.db.query('INSERT INTO demos (id, business, created_at, expires_at, status, profile, consent_at) VALUES ($1, $2, $3, $4, $5, $6, $7)', [id, 'Tienda', new Date(now).toISOString(), new Date(now + days * 86400_000).toISOString(), status, JSON.stringify({ negocio: 'Tienda', ficha: 'x', colores: [] }), new Date(now).toISOString()]);
+    await mk('tienda-uno-a1a1a1', 7); await mk('tienda-dos-b2b2b2', 7); await mk('tienda-vieja-c3c3c3', -1); await mk('tienda-cruda-d4d4d4', 7, 'leyendo');
+    const ctl = new DemoPageController(docs), req = (ip: string) => ({ headers: { 'x-forwarded-for': ip }, socket: {} }) as any;
+    const res = () => { const r: any = { body: '', setHeader() {}, status() { return r; }, type() { return r; }, send(b: string) { r.body = b; return r; } }; return r; };
+    const r0 = res(); await ctl.page('tienda-uno-a1a1a1', r0);
+    must(r0.body.includes(`<meta name="minijavi-demo-avatars" content="${AVATARS.join(',')}">`) && !r0.body.includes('name="minijavi-demo-avatar"'), 'sin elegir: catálogo en la página y avatar por defecto');
+    must((await ctl.avatar('tienda-uno-a1a1a1', { avatar: 'loro' }, req('1.1.1.1'))).avatar === 'loro', 'elegir el loro');
+    const r1 = res(); await ctl.page('tienda-uno-a1a1a1', r1); const r2 = res(); await ctl.page('tienda-dos-b2b2b2', r2);
+    must(r1.body.includes('<meta name="minijavi-demo-avatar" content="loro">') && !r2.body.includes('name="minijavi-demo-avatar"'), 'el avatar queda solo en esa demo');
+    const code = async (fn: () => Promise<unknown>) => { try { await fn(); return 200; } catch (e: any) { return e.getStatus?.() ?? 500; } };
+    must(await code(() => ctl.avatar('tienda-uno-a1a1a1', { avatar: 'javier' }, req('1.1.1.1'))) === 400 && await code(() => ctl.avatar('tienda-uno-a1a1a1', { avatar: '../x' }, req('1.1.1.1'))) === 400 && await code(() => ctl.avatar('tienda-uno-a1a1a1', {} as any, req('1.1.1.1'))) === 400, 'avatar fuera del catálogo');
+    must(await code(() => ctl.avatar('no-existe-x', { avatar: 'gato' }, req('1.1.1.1'))) === 404 && await code(() => ctl.avatar('tienda-vieja-c3c3c3', { avatar: 'gato' }, req('1.1.1.1'))) === 404 && await code(() => ctl.avatar('tienda-cruda-d4d4d4', { avatar: 'gato' }, req('1.1.1.1'))) === 404, 'demo inexistente, vencida o sin terminar');
+    must(((await docs.page('tienda-uno-a1a1a1')) as any).config.avatar === 'loro' && ((await docs.page('tienda-uno-a1a1a1')) as any).config.saludo, 'elegir avatar no borra el resto de la configuración');
+    let last = 200; for (let i = 0; i < 31; i++) last = await code(() => ctl.avatar('tienda-dos-b2b2b2', { avatar: i % 2 ? 'gato' : 'perro' }, req('2.2.2.2')));
+    must(last === 429 && await code(() => ctl.avatar('tienda-dos-b2b2b2', { avatar: 'mico' }, req('3.3.3.3'))) === 200, 'tope de cambios por IP');
+    for (const id of ['tienda-uno-a1a1a1', 'tienda-dos-b2b2b2', 'tienda-vieja-c3c3c3', 'tienda-cruda-d4d4d4']) await P.db.query('DELETE FROM demos WHERE id = $1', [id]);
+    return 'ocho avatares con modelo y miniatura; prompts armados del archivo; modelo comprobado sin generar; imágenes de entrada en orden; rechazo por contenido; el avatar se guarda solo en su demo; ids fuera del catálogo, demos vencidas o ajenas y exceso de cambios rechazados';
+  });
+
   await check('Envío de la demo: solo con tu aprobación, con la imagen del negocio, y Claude Code como último recurso para la portada', async () => {
     const { DemoDocsService } = await import('../demo/demo-docs.service');
     const { DemoSendService } = await import('../demo/demo-send.service');

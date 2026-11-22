@@ -11,3 +11,5 @@ public/vendor/
 # Clientes del modo negocio: cada uno tiene su carpeta con datos propios; solo el ejemplo va al repositorio.
 clientes/*
 !clientes/ejemplo/
+# Salida del comando `npm run avatar` (imágenes generadas; pueden ser retratos de personas)
+avatares-salida/
