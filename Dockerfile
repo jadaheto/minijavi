@@ -19,6 +19,7 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/public ./public
 COPY prompts ./prompts
 COPY content ./content
+COPY vendor ./vendor
 COPY package.json ./
 # Lista de dispositivos del dueño. Montar un volumen en /app/data para que sobreviva a los despliegues.
 RUN mkdir -p /app/data && chown node:node /app/data
@@ -29,7 +30,7 @@ RUN mkdir -p /app/data && chown node:node /app/data
 RUN apk add --no-cache bash git sudo \
  && npm install -g @anthropic-ai/claude-code@2.1.326 && npm cache clean --force \
  && adduser -D -s /bin/bash taller \
- && printf '%s\n' 'Defaults:node umask=0022, umask_override, !lecture' 'Defaults:node secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' 'Defaults:node env_keep += "CI"' 'node ALL=(taller) NOPASSWD:SETENV: /usr/local/bin/claude' 'node ALL=(taller) NOPASSWD: /bin/rm' 'node ALL=(taller) NOPASSWD: /usr/local/bin/npm test, /usr/local/bin/npm run lint' > /etc/sudoers.d/taller && chmod 440 /etc/sudoers.d/taller
+ && printf '%s\n' 'Defaults:node umask=0022, umask_override, !lecture' 'Defaults:node secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' 'Defaults:node env_keep += "CI"' 'node ALL=(taller) NOPASSWD:SETENV: /usr/local/bin/claude' 'node ALL=(taller) NOPASSWD: /bin/rm' 'node ALL=(taller) NOPASSWD: /usr/local/bin/npm test, /usr/local/bin/npm run lint' 'node ALL=(taller) NOPASSWD: /usr/local/bin/node /app/vendor/hallmark/sloplint.mjs sitio --json --scope page' > /etc/sudoers.d/taller && chmod 440 /etc/sudoers.d/taller
 ENV TALLER_USER=taller CLAUDE_BIN=/usr/local/bin/claude
 USER node
 EXPOSE 3000

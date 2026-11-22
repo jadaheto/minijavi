@@ -1,3 +1,4 @@
+import { designRules } from './design-check';
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { DecisionsService } from '../decisions/decisions.service';
 import { QUESTIONS } from '../decisions/questions';
@@ -60,7 +61,7 @@ interface Job {
   model: string; agents: Set<string>; agentsTotal: number; code: string[]; run: Run; checking?: boolean;
   readers?: Set<ChildProcess>; // lectores en curso (revisor o auditoria), para poder cancelarlos
 }
-const GATE_ORDER = ['sitio', 'pruebas', 'lint'];
+const GATE_ORDER = ['sitio', 'pruebas', 'lint', 'diseno']; // lo que funciona se arregla antes que lo que se ve
 /** Modelos de Claude Code que Javier puede elegir por voz (verificados con su suscripcion el 2026-11-17). */
 export const MODELS = [
   { key: 'fable', id: 'claude-fable-5-2', label: 'Fable 5.2' },
@@ -304,7 +305,7 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits',
       // Con el respaldo no hay busqueda web: es una herramienta del servidor de Anthropic.
       '--allowedTools', `Bash,Read,Edit,Write,Glob,Grep,WebFetch,${run.backup ? '' : 'WebSearch,'}TodoWrite,Agent,Task`, '--max-turns', String(this.cfg.tallerMaxTurns),
-      '--append-system-prompt', RULES(project.slug, run.formUrl)];
+      '--append-system-prompt', RULES(project.slug, run.formUrl) + (this.cfg.tallerDesign && designRules() ? `\n${designRules()}\n` : '')];
     if (project.sessionId) args.push('--resume', project.sessionId);
     if (model.id && !run.backup) args.push('--model', model.id);
     // Entorno minimo: nada de las claves del avatar llega a Claude Code ni a los comandos que ejecute.
@@ -424,12 +425,12 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
 
     // CHECK: lo ejecuta el servidor, diga lo que diga el informe. Si la pasada no termino bien solo se mira el sitio
     // (no ejecuta nada), para que el panel muestre en que estado quedo lo publicado.
-    const gates = detectGates(dir).filter((g) => !stop || g.kind === 'sitio');
+    const gates = detectGates(dir, { design: this.cfg.tallerDesign && !run.task.startsWith('Encargo de BOCETOS') }).filter((g) => !stop || g.kind === 'sitio');
     const results: GateResult[] = [];
     job.checking = true;
     for (const g of gates) {
       if (job.cancelled) break;
-      if (g.kind === 'comando') { job.activity = `comprobando: ${g.label}`; job.spoken = 'está ejecutando las comprobaciones'; this.emit(true); }
+      if (g.kind !== 'sitio') { job.activity = `comprobando: ${g.label}`; job.spoken = 'está ejecutando las comprobaciones'; this.emit(true); }
       results.push(await runGate(g, dir, { npmBin: this.cfg.npmBin, user: this.cfg.tallerUser, nice: this.cfg.tallerNice, onProc: (p) => { job.proc = p; },
         seconds: Math.max(5, Math.min(this.cfg.tallerGateSeconds, Math.round((run.deadline - Date.now()) / 1000))) }));
     }

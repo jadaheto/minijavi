@@ -194,6 +194,8 @@ export class ConfigService {
   readonly tallerMaxPasses: number;
   readonly tallerNoProgress: number;
   readonly tallerGateSeconds: number;
+  /** Reglas de diseño en cada encargo y comprobacion «diseño» al cerrar (TALLER_DISENO=0 lo apaga). */
+  readonly tallerDesign: boolean;
   /** npm con el que el servidor ejecuta las comprobaciones (en Docker, la ruta exacta que permite sudo). */
   readonly npmBin: string;
   /** Revisor independiente al cerrar un encargo (otro Claude Code, solo lectura). Informa, no bloquea. Modelo vacio = el del encargo. */
@@ -384,6 +386,7 @@ export class ConfigService {
     this.tallerMaxPasses = Math.min(10, int('TALLER_MAX_PASSES', 4, 1));
     this.tallerNoProgress = int('TALLER_NO_PROGRESS', 2, 2);
     this.tallerGateSeconds = int('TALLER_GATE_SECONDS', 300, 5);
+    this.tallerDesign = process.env.TALLER_DISENO !== '0';
     this.npmBin = str('NPM_BIN', this.tallerUser ? '/usr/local/bin/npm' : 'npm');
     this.tallerReview = process.env.TALLER_REVIEW !== '0';
     this.tallerReviewSeconds = int('TALLER_REVIEW_SECONDS', 240, 30);

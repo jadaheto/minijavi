@@ -1,3 +1,4 @@
+import { designRules } from './design-check';
 import { ChildProcess, spawn } from 'node:child_process';
 import { GateResult } from './gates';
 
@@ -79,6 +80,8 @@ Reglas del taller que el autor debía cumplir (cumplirlas NO es un fallo):
 - Lo que se ve en un navegador queda en la carpeta "sitio/", con rutas relativas, y se publica solo en una subruta.
 - Los formularios de contacto envían un POST JSON a ${formUrl} (es el servidor del dueño: ese destino es el correcto) y llevan una casilla de autorización de datos.
 - ESTADO.md es la memoria del proyecto para el autor; puede listar pendientes. No es parte de lo publicado.
+- Si hay algo visible en un navegador, el autor debía seguir estas reglas de diseño; júzgalo con ellas en "correcto" (un testimonio, cifra o cliente inventado es motivo de rechazo):
+${designRules().split('\n').filter((l) => l.startsWith('- ')).slice(0, 14).join('\n')}
 - Los datos que falten (precios, testimonios, datos del dueño) deben ir como texto claramente marcado para completar, no inventados.
 
 Comprobaciones automáticas que ya ejecutó el servidor:

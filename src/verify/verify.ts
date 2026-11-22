@@ -708,6 +708,9 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
   Object.assign(process.env, { CLAUDE_CODE_OAUTH_TOKEN: 'token-de-simulacion', CLAUDE_BIN: fakeBin, TALLER_USER: '', TALLER_MAX_PASSES: '3', TALLER_NO_PROGRESS: '2', TALLER_AUTO_FIX: '1' });
   const { WorkshopService } = await import('../workshop/workshop.service');
   const { evaluateStop } = await import('../workshop/gates');
+  // Las pruebas del ciclo usan un Claude Code simulado que escribe sitios minimos: la revision de diseño va apagada aqui
+  // (tiene su propia comprobacion, con el comprobador real, mas abajo).
+  process.env.TALLER_DISENO = '0';
   const wcfg = new ConfigService(), ws = new WorkshopService(wcfg, usage, P.db); await ws.onModuleInit();
   let doneCalls = 0, onDone: ((d: any) => void) | undefined;
   ws.onDone((d) => { doneCalls++; onDone?.(d); });
@@ -2425,6 +2428,72 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     handlers.close?.(); await wait(100);
     must(wrapped === 0, 'en modo negocio no se arma el informe de visita de Javier');
     return 'archivo validado; lo de Javier apagado en código; voz y saludo del negocio; documentos leídos y a Qdrant, el que trae órdenes no entra; ficha en la base; página y consumo; sin modo dueño ni herramientas; responde con sus documentos';
+  });
+
+  await check('Taller, diseño: reglas en cada encargo, comprobación que detecta lo objetivo sin navegador, no juzga bocetos ni librerías y no se traba si el comprobador falla', async () => {
+    const dc = await import('../workshop/design-check');
+    const { detectGates, runGate, missingGate } = await import('../workshop/gates');
+    const { reviewPrompt } = await import('../workshop/reviewer');
+    const { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+    // Las reglas: texto corto, con la ruta real de las librerias, y la lista de lo que bloquea sin reglas de gusto ajeno.
+    const rules = dc.designRules(), block = dc.blockingRules();
+    must(rules.length > 1500 && rules.length < 5000 && !rules.includes('{{LIBS}}') && /prefers-reduced-motion/.test(rules) && /no inventes testimonios/i.test(rules) && /sitio\/vendor\//.test(rules), `reglas de diseño (${rules.length} caracteres)`);
+    must(['27', '26a', '34', '48', '2a', '4', '30a'].every((k) => k in block) && !['20', '19', '7a', '63', '67', '54'].some((k) => k in block), 'lista de lo que bloquea');
+    must(Object.keys(dc.blockingRules(join(tmpdir(), 'no-existe.json'))).length === 0, 'sin archivo de reglas no bloquea nada del comprobador');
+    const pub = join(__dirname, '..', '..', 'public', 'vendor');
+    must(existsSync(join(pub, 'gsap', 'gsap.min.js')) && existsSync(join(pub, 'gsap', 'ScrollTrigger.min.js')) && existsSync(join(pub, 'three', 'build', 'three.module.js')) && existsSync(join(pub, 'three', 'build', 'three.core.js')), 'las librerías que nombran las reglas existen donde dicen');
+    must(/MIT License/.test(readFileSync(join(__dirname, '..', '..', 'vendor', 'hallmark', 'LICENSE'), 'utf8')) && /commit `[0-9a-f]{40}`/.test(readFileSync(join(__dirname, '..', '..', 'vendor', 'hallmark', 'ORIGEN.md'), 'utf8')), 'el comprobador ajeno lleva su licencia y su commit');
+    must(/reglas de diseño/.test(reviewPrompt('una landing', [], 'https://x/formulario')) && /testimonio/.test(reviewPrompt('una landing', [], 'https://x/formulario')), 'el revisor juzga con las mismas reglas');
+    // Un sitio con defectos sembrados y otro limpio.
+    const BAD = `<!doctype html><html><head><meta charset="utf-8"><title>Malo</title><style>
+body{font-family:Inter,sans-serif;overflow-x:hidden;width:100vw}
+.hero{background:linear-gradient(135deg,#7c3aed,#3b82f6);min-height:100vh}
+.card{transition:all .3s}.card .card{padding:8px}
+.fade{animation:up 1s both}@keyframes up{from{top:40px}to{top:0}}
+</style></head><body><section class="hero"><h1>Hola</h1><a href="#x">Ir</a></section>
+<div class="card"><div class="card">🚀 Rápido</div></div><img src="pan.jpg"><script src="https://cdn.ejemplo.com/gsap.min.js"></script></body></html>`;
+    const GOOD = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Panadería Sol</title><meta name="description" content="Pan recién hecho en Sincelejo.">
+<style>
+:root{--color-paper:#fbf7f0;--color-ink:#2a1d14;--color-accent:#8a3b12;--color-accent-ink:#fffaf2;--font-display:"Fraunces",serif;--font-body:"Work Sans",sans-serif;--space-4:1.5rem}
+html,body{overflow-x:clip}
+body{margin:0;background:var(--color-paper);color:var(--color-ink);font-family:var(--font-body)}
+h1{font-family:var(--font-display);text-wrap:balance;overflow-wrap:break-word;min-width:0}
+main{max-width:70rem;margin-inline:auto;padding:var(--space-4);min-height:80svh}
+a.btn{display:inline-block;padding:var(--space-4);background:var(--color-accent);color:var(--color-accent-ink);white-space:nowrap;transition:transform .2s}
+a.btn:hover{transform:translateY(-2px)}a.btn:active{transform:none}
+a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
+@media (prefers-reduced-motion: reduce){a.btn{transition:none}a.btn:hover{transform:none}}
+</style></head><body><main><h1>Pan recién hecho cada mañana</h1><p>Horneamos desde las cinco para que llegue caliente a tu mesa.</p>
+<a class="btn" href="#pedido">Hacer un pedido</a><img src="pan.jpg" alt="Canasta con pan de bono recién horneado"><script src="vendor/gsap/gsap.min.js"></script></main></body></html>`;
+    const mk = (files: Record<string, string>) => { const d = mkdtempSync(join(tmpdir(), 'diseno-')); for (const [f, t] of Object.entries(files)) { mkdirSync(join(d, f, '..'), { recursive: true }); writeFileSync(join(d, f), t); } return d; };
+    const run = (d: string, extra: Record<string, unknown> = {}) => dc.runDesign(d, { user: '', seconds: 30, nice: 0, ...extra });
+    const bad = await run(mk({ 'sitio/index.html': BAD }));
+    const has = (re: RegExp) => bad.findings.some((f) => re.test(f));
+    must(!bad.ok && bad.linted && has(/sin atributo lang/) && has(/viewport/) && has(/imagen sin alt/) && has(/script cargado desde otro servidor/) && has(/degradado morado-azul/) && has(/tarjeta dentro de tarjeta/) && has(/transition: all/) && has(/prefers-reduced-motion/) && has(/:focus-visible/) && has(/emoji usado como icono/) && has(/desborde horizontal/) && has(/medida en vh/) && has(/fuera de las variables/), `defectos sembrados: ${bad.findings.join(' | ').slice(0, 900)}`);
+    must(!/sello|stamp|Hallmark/i.test(bad.output) && /problemas de diseño/.test(bad.output) && bad.output.length < 7000, 'no exige el sello ni reglas de gusto ajeno');
+    const good = await run(mk({ 'sitio/index.html': GOOD, 'sitio/pan.jpg': 'x', 'sitio/vendor/gsap/gsap.min.js': 'x' }));
+    must(good.ok && good.linted && /Sin problemas/.test(good.output), `una página correcta debía pasar: ${good.output.slice(0, 600)}`);
+    // Bocetos y librerias copiadas no se juzgan.
+    const mixed = await run(mk({ 'sitio/index.html': GOOD, 'sitio/pan.jpg': 'x', 'sitio/bocetos/1/index.html': BAD, 'sitio/vendor/demo/index.html': BAD }));
+    must(mixed.ok, `los bocetos y sitio/vendor no cuentan: ${mixed.output.slice(0, 400)}`);
+    // Comprobador ausente, colgado o con salida ilegible: se omite y se dice; lo basico se sigue revisando.
+    const tmp = mk({ 'cuelga.mjs': 'setInterval(() => {}, 1000);', 'basura.mjs': 'console.log("no es json");', 'revienta.mjs': 'process.exit(7);' });
+    for (const [name, argv, secs] of [['ausente', [join(tmp, 'no-existe.mjs')], 10], ['colgado', [join(tmp, 'cuelga.mjs')], 1], ['ilegible', [join(tmp, 'basura.mjs')], 10], ['roto', [join(tmp, 'revienta.mjs')], 10]] as const) {
+      const g = await run(mk({ 'sitio/index.html': GOOD, 'sitio/pan.jpg': 'x' }), { lintArgv: [...argv], seconds: secs }), b = await run(mk({ 'sitio/index.html': BAD }), { lintArgv: [...argv], seconds: secs });
+      must(g.ok && !g.linted && /no se pudo ejecutar/.test(g.output) && !b.ok && b.findings.some((f) => /imagen sin alt/.test(f)) && !b.findings.some((f) => /degradado/.test(f)), `comprobador ${name}: ${g.output.slice(0, 120)}`);
+    }
+    // En el ciclo: existe solo con sitio y fuera de bocetos; se ejecuta como un gate mas, despues de lo que funciona.
+    const dBad = mk({ 'sitio/index.html': BAD }), runner = { npmBin: 'npm', user: '', seconds: 30, nice: 0 };
+    must(detectGates(dBad, { design: true }).map((g) => g.id).join() === 'sitio,diseno' && detectGates(dBad, { design: false }).map((g) => g.id).join() === 'sitio' && detectGates(dBad).map((g) => g.id).join() === 'sitio' && detectGates(mk({ 'README.md': 'x' }), { design: true }).length === 0, 'cuándo existe la comprobación de diseño');
+    const gr = await runGate(detectGates(dBad, { design: true })[1], dBad, runner);
+    must(gr.id === 'diseno' && gr.kind === 'diseno' && !gr.ok && /imagen sin alt/.test(gr.output) && missingGate('diseno').label === 'revisión de diseño', `como gate: ${gr.output.slice(0, 200)}`);
+    // El entorno del comprobador no lleva claves (se ejecuta un guion que imprime lo que ve).
+    process.env.CLAVE_SECRETA_DE_PRUEBA = 'no-debe-verse';
+    writeFileSync(join(tmp, 'entorno.mjs'), 'console.log(JSON.stringify({ findings: Object.keys(process.env).filter((k) => /CLAVE|KEY|TOKEN|SECRET/.test(k)).map((k) => ({ gate: "27", grade: "FAIL", file: "sitio/index.html", line: 1, evidence: k })) }));');
+    const envRun = await run(mk({ 'sitio/index.html': GOOD, 'sitio/pan.jpg': 'x' }), { lintArgv: [join(tmp, 'entorno.mjs')] });
+    delete process.env.CLAVE_SECRETA_DE_PRUEBA;
+    must(envRun.linted && envRun.ok, `el comprobador no recibe claves del servidor: ${envRun.output.slice(0, 300)}`);
+    return 'reglas cortas con la ruta de las librerías; el revisor usa las mismas; detecta alt, lang, viewport, script externo, degradado, tarjetas anidadas, transition: all, sin movimiento reducido, sin foco, emoji, desborde, vh y colores sueltos; no exige reglas de gusto ajeno; una página correcta pasa; bocetos y librerías no cuentan; comprobador ausente, colgado o roto se omite sin trabar; sin claves en su entorno';
   });
 
   await check('Cliente nuevo: el comando deja una carpeta que el servidor acepta, sin copiar claves, y la revisión frena lo que falta o se repite', async () => {

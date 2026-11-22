@@ -1,0 +1,27 @@
+{
+  "_nota": "Qué hallazgos del comprobador de diseño (vendor/hallmark/sloplint.mjs) hacen FALLAR la comprobación «diseño» del taller. Solo reglas objetivas; las de gusto de sus autores (sello en el CSS, rayas, blanco puro, etiquetas en mayúsculas…) quedan fuera a propósito. Cambiar la lista es cambiar este archivo.",
+  "bloquean": {
+    "2a": "degradado morado-azul (o cian sobre oscuro)",
+    "4": "tarjeta dentro de tarjeta",
+    "6a": "portada medida en vh (en celular se corta): usar dvh o svh",
+    "10a": "transition: all, o animar width/height/top/left",
+    "15": "anillo de foco que aparece con transición",
+    "18": "contenido que rota solo sin pausa",
+    "26a": "elementos interactivos sin :focus-visible",
+    "27": "animación sin respaldo para prefers-reduced-motion",
+    "28a": "video con autoplay sin muted, o carga diferida en la imagen principal",
+    "30a": "emoji usado como icono",
+    "33": "SVG o canvas decorativo sin aria-hidden ni etiqueta",
+    "34": "desborde horizontal: overflow-x: hidden o anchos de 100vw",
+    "39a": "campos de formulario que cambian de tamaño entre estados",
+    "40": "texto con contraste insuficiente",
+    "41": "texto de botón casi del mismo color que su fondo",
+    "47a": "ventana de navegador dibujada a mano",
+    "48": "color o tipografía escritos sueltos, fuera de las variables de :root",
+    "50": "columna con imagen en 1fr sin mínimo (se desborda)",
+    "53": "pestañas solo con CSS que hacen saltar la página",
+    "56": "dos elementos pegados arriba que se montan",
+    "62": "contenido oculto que solo aparece si corre JavaScript",
+    "70": "formulario que dice «enviado» sin enviar nada"
+  }
+}

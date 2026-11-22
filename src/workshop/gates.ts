@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkSite, SiteCheck } from './site-check';
+import { runDesign } from './design-check';
 
 /**
  * Gates del taller (pedido por Javier el 2026-11-19, tomado del harness de su proyecto Claude Workspace):
@@ -31,9 +32,9 @@ export const STOP_TEXT: Record<StopReason, string> = {
   fallo: 'Claude Code no pudo terminar la pasada',
 };
 
-export interface Gate { id: 'sitio' | 'pruebas' | 'lint'; kind: 'sitio' | 'comando'; argv?: string[]; label: string; }
+export interface Gate { id: 'sitio' | 'diseno' | 'pruebas' | 'lint'; kind: 'sitio' | 'diseno' | 'comando'; argv?: string[]; label: string; }
 export interface GateResult {
-  id: string; kind: 'sitio' | 'comando'; label: string; ok: boolean;
+  id: string; kind: 'sitio' | 'diseno' | 'comando'; label: string; ok: boolean;
   exit: number | null;   // codigo de salida del comando (null: no es un comando, no llego a ejecutarse o se corto)
   seconds: number;
   output: string;        // salida literal (recortada)
@@ -45,6 +46,7 @@ const COMMANDS: Record<'pruebas' | 'lint', { script: string; argv: string[] }> =
   lint: { script: 'lint', argv: ['run', 'lint'] },
 };
 const MAX_OUTPUT = 6000;
+const DESIGN_LABEL = 'revisión de diseño';
 
 /** Scripts del package.json de la raiz del proyecto. El archivo lo escribe el taller: se lee como dato, con tope y sin seguir enlaces. */
 function scripts(dir: string): Record<string, string> {
@@ -57,9 +59,11 @@ function scripts(dir: string): Record<string, string> {
 }
 
 /** Comprobaciones que aplican HOY al proyecto. */
-export function detectGates(dir: string): Gate[] {
+export function detectGates(dir: string, opts: { design?: boolean } = {}): Gate[] {
   const out: Gate[] = [];
-  try { if (lstatSync(join(dir, 'sitio', 'index.html')).isFile()) out.push({ id: 'sitio', kind: 'sitio', label: 'revisión del sitio publicado' }); } catch { /* sin sitio */ }
+  try { if (lstatSync(join(dir, 'sitio', 'index.html')).isFile()) { out.push({ id: 'sitio', kind: 'sitio', label: 'revisión del sitio publicado' });
+    // «diseño»: solo si hay sitio y el encargo no es de bocetos (las propuestas deben salir rapido).
+    if (opts.design) out.push({ id: 'diseno', kind: 'diseno', label: DESIGN_LABEL }); } } catch { /* sin sitio */ }
   const s = scripts(dir);
   // `npm init` deja un script test que solo falla ("no test specified"): no es una prueba.
   if (s.test && !/no test specified/i.test(s.test)) out.push({ id: 'pruebas', kind: 'comando', argv: COMMANDS.pruebas.argv, label: 'npm test' });
@@ -69,8 +73,9 @@ export function detectGates(dir: string): Gate[] {
 
 /** Un gate que existia en una pasada anterior y ya no aplica cuenta como fallo: quitar la prueba no es pasarla. */
 export function missingGate(id: string): GateResult {
-  const label = id === 'sitio' ? 'revisión del sitio publicado' : id === 'pruebas' ? 'npm test' : 'npm run lint';
-  return { id, kind: id === 'sitio' ? 'sitio' : 'comando', label, ok: false, exit: null, seconds: 0,
+  // «diseño» depende de que haya sitio: si el sitio desaparece ya lo dice «sitio».
+  const label = id === 'sitio' ? 'revisión del sitio publicado' : id === 'diseno' ? DESIGN_LABEL : id === 'pruebas' ? 'npm test' : 'npm run lint';
+  return { id, kind: id === 'sitio' ? 'sitio' : id === 'diseno' ? 'diseno' : 'comando', label, ok: false, exit: null, seconds: 0,
     output: id === 'sitio' ? 'El sitio publicado (sitio/index.html) ya no existe.' : `El script de "${label}" ya no está en package.json. Quitar una comprobación no cuenta como pasarla: hay que restaurarla y dejarla en verde.` };
 }
 
@@ -95,6 +100,10 @@ export function runGate(gate: Gate, dir: string, r: GateRunner): Promise<GateRes
     const site = checkSite(join(dir, 'sitio'));
     return Promise.resolve({ id: gate.id, kind: 'sitio', label: gate.label, ok: site.ok, exit: null, seconds: 0, site,
       output: site.ok ? `Sin problemas en ${site.pages} páginas y ${site.files} archivos.` : site.issues.map((i) => `- ${i}`).join('\n') });
+  }
+  if (gate.kind === 'diseno') {
+    return runDesign(dir, { user: r.user, seconds: Math.min(r.seconds, 60), nice: r.nice, onProc: r.onProc })
+      .then((d) => ({ id: gate.id, kind: 'diseno' as const, label: gate.label, ok: d.ok, exit: null, seconds: d.seconds, output: clip(d.output) }));
   }
   return new Promise((done) => {
     // Entorno minimo: ni las claves del avatar ni el token de Claude Code llegan a los comandos del proyecto.
