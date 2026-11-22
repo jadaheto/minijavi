@@ -378,7 +378,7 @@ async function loadApprovals() {
   $('apr-note').textContent = (simulation ? 'Estás en modo simulación: aunque apruebes, nada sale de verdad; queda en la bitácora. ' : 'Al aprobar se vuelven a comprobar el horario, los topes y si la persona pidió no ser contactada. ')
     + (!telegram.enabled ? 'Telegram no está configurado: se decide solo aquí.' : telegram.buttons && !telegram.problem ? 'También puedes decidir con los botones del mensaje de Telegram.' : `Los botones de Telegram no están funcionando: ${telegram.problem || 'aún no arrancan'}.`);
   $('apr-pending').replaceChildren(...(pending.length ? pending.map((a) => {
-    const msg = el('small', {}), yes = el('button', { type: 'button', className: 'small', textContent: 'Aprobar' }), no = el('button', { type: 'button', className: 'small danger', textContent: 'Rechazar' });
+    const msg = el('small', {}), yes = el('button', { type: 'button', className: 'small primary', textContent: 'Aprobar' }), no = el('button', { type: 'button', className: 'small danger', textContent: 'Rechazar' });
     const decide = async (decision) => { yes.disabled = no.disabled = true; const r = await api(`approvals/${a.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision }) }); const d = await r.json().catch(() => ({})); msg.textContent = d.text || 'No se pudo decidir.'; setTimeout(loadApprovals, 1800); };
     yes.addEventListener('click', () => decide('aprobar')); no.addEventListener('click', () => decide('rechazar'));
     return el('li', {}, ...approvalBody(a, kinds), el('div', { className: 'row' }, yes, no), msg);

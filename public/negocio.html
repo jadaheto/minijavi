@@ -5,40 +5,39 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
   <title>Panel del negocio</title>
+  <meta name="description" content="Pedidos, citas e interesados que atendió el asistente del negocio.">
+  <link rel="stylesheet" href="./css/panel.css">
   <style>
-    :root { color-scheme: dark; --bg: #0f1420; --card: #182031; --line: #283349; --ink: #eef2f8; --muted: #9aa6b8; --blue: #3987e5; --ok: #34d17f; --warn: #f0b429; --bad: #ef5350; }
-    * { box-sizing: border-box; }
-    body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-    main { width: min(980px, 100%); margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 16px; }
-    h1 { margin: 0; font-size: 22px; } h2 { margin: 0 0 8px; font-size: 17px; } h2 small { color: var(--muted); font-weight: 400; }
-    .card { background: var(--card); border-radius: 16px; padding: 16px; display: grid; gap: 10px; }
-    .muted { color: var(--muted); } .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-    input { padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: #0f1420; color: var(--ink); font: inherit; width: min(320px, 100%); }
-    button { padding: 8px 14px; border: 0; border-radius: 10px; background: var(--blue); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
-    button.ghost { background: transparent; border: 1px solid var(--line); color: var(--ink); } button.bad { background: #5a2530; }
-    ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-    li { display: grid; gap: 6px; padding: 12px; border-radius: 12px; background: rgba(255, 255, 255, .04); border-left: 4px solid transparent; }
-    li[data-status=nuevo] { border-left-color: var(--warn); } li[data-status=atendido] { border-left-color: var(--ok); opacity: .75; } li[data-status=cancelado] { border-left-color: var(--bad); opacity: .6; }
-    .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: rgba(255, 255, 255, .09); }
-    .tag.ok { background: rgba(52, 209, 127, .18); color: #7dffc0; } .tag.warn { background: rgba(240, 180, 41, .16); color: #f7d37a; }
-    nav { display: flex; gap: 6px; flex-wrap: wrap; } nav button { background: transparent; border: 1px solid var(--line); color: var(--muted); } nav button[aria-selected=true] { color: #fff; border-color: var(--blue); }
-    [hidden] { display: none !important; } small { color: var(--muted); } a { color: #6fb2ff; }
+    /* Panel del cliente (modo negocio): misma base que el panel de Javier, en una sola columna. */
+    .shell { width: min(56rem, 100%); margin-inline: auto; padding: var(--space-6) clamp(1rem, 4vw, 2rem) var(--space-7); display: grid; gap: var(--space-5); }
+    .shell-head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: var(--space-3); }
+    .shell-head p { color: var(--ink-2); margin-top: var(--space-1); }
+    .mark { display: inline-block; width: .7em; height: .7em; border-radius: 50%; background: var(--brand, var(--accent)); margin-right: .35em; }
+    .seg { display: flex; gap: var(--space-1); overflow-x: auto; scrollbar-width: none; padding: var(--space-1); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+    .seg button { display: flex; align-items: center; gap: var(--space-2); min-height: 0; padding: 7px var(--space-4); border: 0; background: transparent; color: var(--ink-2); font: 500 .95rem/1.4 var(--font-body); white-space: nowrap; }
+    .seg button:hover { background: var(--raised); color: var(--ink); }
+    .seg button[aria-selected="true"] { background: var(--accent-soft); color: var(--ink); }
+    ul.list > li[data-status="atendido"] > :not(.row:last-child), ul.list > li[data-status="cancelado"] > :not(.row:last-child) { color: var(--ink-3); }
+    .gate form { display: grid; gap: var(--space-3); }
   </style>
 </head>
 <body>
-  <main>
-    <section class="card" id="login" hidden>
+  <div class="gate" id="login" hidden>
+    <section class="card">
       <h1>Panel del negocio</h1>
-      <p class="muted">Escribe la clave que te entregaron. Este dispositivo queda autorizado por 30 días.</p>
-      <form id="login-form" class="row"><input id="clave" type="password" autocomplete="current-password" placeholder="Clave del panel"><button type="submit">Entrar</button></form>
-      <p id="login-error" class="muted" role="alert"></p>
+      <p>Escribe la clave que te entregaron. Este dispositivo queda autorizado por 30 días.</p>
+      <form id="login-form"><input id="clave" type="password" autocomplete="current-password" placeholder="Clave del panel" aria-label="Clave del panel"><button type="submit">Entrar</button></form>
+      <p id="login-error" class="msg" role="alert"></p>
     </section>
-    <div id="panel" hidden>
-      <div class="row" style="justify-content: space-between"><h1 id="nombre">Panel</h1><a href="./">Ir al asistente</a></div>
-      <section class="card" id="avisos"></section>
-      <nav role="tablist" id="tabs" style="margin: 8px 0"></nav>
-      <section class="card"><h2 id="titulo"></h2><ul id="lista"></ul><p id="vacio" class="muted" hidden></p></section>
+  </div>
+  <main class="shell" id="panel" hidden>
+    <div class="shell-head">
+      <div><h1><span class="mark" aria-hidden="true"></span><span id="nombre">Panel</span></h1><p id="resumen"></p></div>
+      <a href="./">Ir al asistente</a>
     </div>
+    <section class="card" id="avisos" aria-label="Avisos"></section>
+    <nav class="seg" role="tablist" id="tabs" aria-label="Secciones"></nav>
+    <section class="card"><h2 id="titulo"></h2><ul class="list" id="lista"></ul><p id="vacio" hidden></p></section>
   </main>
   <script src="./js/negocio.js"></script>
 </body>
