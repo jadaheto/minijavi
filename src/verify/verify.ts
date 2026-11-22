@@ -2014,7 +2014,7 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
       const c3: any = await svc.create('av-luis-f6f6f6', '3001234567', jpg(6), 'ip', true); const p3: any = await svc.proof(c3.token, jpg(7), 'ip');
       must(c3.ok && p3.ok && (await svc.view(c3.token) as any).state === 'PENDIENTE_VALIDACION', 'si Telegram falla, el comprobante igual queda en revisión (se decide en el panel)');
       tgOk = true;
-      const id3 = (await svc.view(c3.token) as any).id, own = new AvatarOwnerController(svc, { verify: (c?: string) => (c === 'buena' ? {} : null) } as any), rq = (cookie?: string) => ({ headers: { cookie } }) as any;
+      const id3 = (await svc.view(c3.token) as any).id, own = new AvatarOwnerController(svc, { verify: (c?: string) => (c === 'buena' ? {} : null) } as any, {} as any, acfg), rq = (cookie?: string) => ({ headers: { cookie } }) as any;
       const code = async (fn: () => Promise<unknown>) => { try { await fn(); return 200; } catch (e: any) { return e.getStatus?.() ?? 500; } };
       must(await code(() => own.list(rq())) === 401 && await code(() => own.decide(rq('mala'), String(id3), { decision: 'aprobar' })) === 401 && await code(() => own.file(rq(), String(id3), 'foto', {} as any)) === 401, 'panel sin dispositivo registrado');
       const listed: any = await own.list(rq('buena'));
@@ -2121,6 +2121,87 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
       globalThis.fetch = prev; await P.db.query('DELETE FROM avatar_requests'); for (const id of ids) await P.db.query('DELETE FROM demos WHERE id = $1', [id]);
     }
     return 'nada se genera sin pago aprobado; retrato con estilo + foto; base solo entre los cuatro humanos y colores validados; activo solo en su demo, que pasa a 30 días; aviso a Javier; el retrato no se paga dos veces; 3 intentos con espera y luego error con aviso; otra foto sin costo; rechazo por contenido sin reintento; reintento desde el panel; reinicio y demo borrada';
+  });
+
+  await check('Avatar con foto, entrega: WhatsApp con su retrato por la puerta de acciones, una sola vez, y borrado de foto, comprobante y retrato a su plazo', async () => {
+    const { AvatarCareService } = await import('../avatars/avatar-care.service');
+    const { ACTION_KINDS } = await import('../policy/actions.service');
+    const { WhatsAppService } = await import('../whatsapp/whatsapp.service');
+    const { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+    must(ACTION_KINDS.avatar_listo.class === 'autonoma' && !ACTION_KINDS.avatar_listo.literal, 'tipo de acción del aviso');
+    const acfg = new ConfigService(); const dir = mkdtempSync(join(tmpdir(), 'avatares-care-'));
+    Object.assign(acfg as any, { avatarCustom: true, avatarPhotoDays: 30, avatarProofDays: 90, dataDir: dir, whatsappAvatarTemplate: 'minijavi_avatar_listo', whatsappAvatarTemplateLang: 'es', whatsappToken: 'tok', whatsappPhoneNumberId: '111', whatsappDefaultCountry: '57', whatsappApiVersion: 'v27.0' });
+    // La plantilla tal como la pide Meta: cabecera con la imagen subida, un solo dato en el cuerpo y el id de la demo en el boton.
+    const prev = globalThis.fetch, meta: any[] = [];
+    globalThis.fetch = (async (url: any, init?: any) => { const u = String(url); if (u.includes('/media')) return new Response('{"id":"MEDIA9"}', { status: 200 }); if (u.includes('/messages')) { meta.push(JSON.parse(init.body)); return new Response('{"messages":[{"id":"wamid.x"}]}', { status: 200 }); } throw new Error(`petición inesperada: ${u}`); }) as any;
+    try {
+      const wa = new WhatsAppService(acfg, {} as any, usage, { blocked: (c: string) => c === '+573005557003', key: (c: string) => c } as any);
+      must((await wa.sendAvatarReady('3005557001', 'Ana María Pérez', 'care-ana-a1a1a1', { buf: Buffer.from('JPG'), mime: 'image/jpeg' })) === '', 'envío de la plantilla');
+      const t = meta[0].template;
+      must(meta[0].to === '+573005557001' && t.name === 'minijavi_avatar_listo' && t.language.code === 'es' && t.components[0].parameters[0].image.id === 'MEDIA9' && t.components[1].parameters.length === 1 && t.components[1].parameters[0].text === 'Ana' && t.components[2].sub_type === 'url' && t.components[2].parameters[0].text === 'care-ana-a1a1a1', `plantilla: ${JSON.stringify(t)}`);
+      must(/no ser contactada/.test(await wa.sendAvatarReady('3005557003', 'X', 'care-ana-a1a1a1', { buf: Buffer.from('J'), mime: 'image/jpeg' })) && /inválido/.test(await wa.sendAvatarReady('3005557001', 'X', '../x', { buf: Buffer.from('J'), mime: 'image/jpeg' })), 'no contactar e id raro');
+    } finally { globalThis.fetch = prev; }
+    // Por la puerta: sin produccion se bloquea; con numero de prueba y simulacion queda simulada; en produccion sale UNA vez.
+    const was = { sim: P.policy.simulation, prod: P.policy.production, nums: P.settings.text('politica.numeros_prueba') };
+    const sent: string[] = []; const fakeWa = { sendAvatarReady: async (contact: string, name: string, demo: string, img: any) => { sent.push(`${contact}|${name}|${demo}|${img.buf.toString()}`); return ''; } } as any;
+    const now = Date.now(), iso = (ms: number) => new Date(ms).toISOString();
+    const demoRows: Record<string, any> = { 'care-ana-a1a1a1': { id: 'care-ana-a1a1a1', expires_at: iso(now + 20 * 86400_000), profile: JSON.stringify({ config: { avatar: 'mujer', tinte: { piel: '#c08a6b', pelo: '#221a17', ojos: '#3a2416' }, avatarPropio: 0, saludo: 'Hola' } }) } };
+    const patched: any[] = []; const demos = { get: async (id: string) => demoRows[id], patchConfig: async (id: string, patch: any) => { patched.push({ id, patch }); } } as any;
+    const gen = { onCompleted: undefined as any } as any;
+    const care = new AvatarCareService(acfg, P.db, {} as any, gen, demos, A, fakeWa, usage);
+    await P.db.query('DELETE FROM avatar_requests');
+    const mk = async (o: Record<string, any>) => { const d = (o.dir as string) ?? (String(o.n).repeat(24)).slice(0, 24); const full = join(dir, 'avatares', d); mkdirSync(full, { recursive: true });
+      for (const f of (o.files as string[]) ?? ['foto.jpg', 'comprobante-1.jpg', 'retrato.jpg']) writeFileSync(join(full, f), f === 'retrato.jpg' ? 'RETRATO' : 'x');
+      const [r] = await P.db.query<any>('INSERT INTO avatar_requests (demo, lead_id, name, phone, token, state, created_at, updated_at, price, dir, photo, proof, proofs, portrait, decided_at, decided_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *',
+        [o.demo ?? 'care-ana-a1a1a1', 1, o.name ?? 'Ana María Pérez', o.phone, String(o.n).repeat(32).slice(0, 32), o.state ?? 'COMPLETADO', iso(now), o.updated ?? iso(now), 19200, d, 'foto.jpg', o.proofs === 0 ? '' : 'comprobante-1.jpg', o.proofs ?? 1, o.state && o.state !== 'COMPLETADO' ? '' : 'retrato.jpg', o.decided ?? iso(now), 'telegram']);
+      return { id: r.id as number, full }; };
+    const wa1 = async (id: number) => (await P.db.query<any>('SELECT wa_status FROM avatar_requests WHERE id = $1', [id]))[0].wa_status as string;
+    try {
+      at(MON10); await setP('simulacion', true); await setP('produccion', false); await setP('numeros_prueba', '3005557002');
+      const a = await mk({ n: 'a', phone: '+573005557001' }), b = await mk({ n: 'b', phone: '+573005557002' });
+      demoRows['care-ana-a1a1a1'].profile = JSON.stringify({ config: { avatar: 'mujer', avatarPropio: a.id } });
+      must(/^bloqueada: .*producción/.test(await care.notify(a.id)) && sent.length === 0, `sin producción no sale: ${await wa1(a.id)}`);
+      must((await care.notify(b.id)) === 'simulada' && sent.length === 0, 'en simulación no se envía de verdad');
+      must((await care.flush()) === 0, 'lo bloqueado o simulado no se reintenta solo');
+      // Fuera de horario: queda en espera y sale cuando abre; despues, nunca dos veces.
+      await setP('simulacion', false); await setP('produccion', true);
+      const c = await mk({ n: 'c', phone: '+573005557004', name: 'Luis' });
+      at('2026-11-17T04:00:00.000Z'); // lunes 23:00 en Colombia
+      must(/^en_espera: /.test(await care.notify(c.id)) && sent.length === 0, `de noche espera: ${await wa1(c.id)}`);
+      at(MON10); must((await care.flush()) === 1 && (await wa1(c.id)) === 'enviada' && sent.join() === '+573005557004|Luis|care-ana-a1a1a1|RETRATO', `al abrir sale con su retrato: ${sent.join()}`);
+      must((await care.notify(c.id, true)) === 'enviada' && (await care.flush()) === 0 && sent.length === 1, 'un aviso ya enviado no se repite, ni forzado');
+      // Reenviar desde el panel lo que quedo bloqueado; dos a la vez envian una sola vez.
+      const two = await Promise.all([care.notify(a.id, true), care.notify(a.id, true)]);
+      must(sent.length === 2 && two.includes('enviada') && (await wa1(a.id)) === 'enviada', `reenviar una vez: ${two.join(' / ')}`);
+      const act = await P.db.query<any>(`SELECT status FROM actions WHERE kind = 'avatar_listo' ORDER BY id`);
+      must(act.length >= 4 && act.some((x) => x.status === 'bloqueada') && act.some((x) => x.status === 'simulada') && act.filter((x) => x.status === 'enviada').length === 2, `bitácora: ${act.map((x) => x.status).join()}`);
+      // Sin retrato o sin demo no se envia; no completada tampoco.
+      const d = await mk({ n: 'd', phone: '+573005557005', files: ['foto.jpg'] }), e = await mk({ n: 'e', phone: '+573005557006', demo: 'care-borrada-x' }), f = await mk({ n: 'f', phone: '+573005557007', state: 'PAGO_APROBADO' });
+      must(/^fallo: .*retrato/.test(await care.notify(d.id)) && /^fallo: .*no existe/.test(await care.notify(e.id)) && /no está completada/.test(await care.notify(f.id)) && sent.length === 2, 'sin retrato, sin demo o sin completar');
+      // Borrado por plazo.
+      await P.db.query('DELETE FROM avatar_requests');
+      const young = await mk({ n: '1', phone: '+573005557011' });
+      const old31 = await mk({ n: '2', phone: '+573005557012', updated: iso(now - 31 * 86400_000), decided: iso(now - 31 * 86400_000) });
+      const old91 = await mk({ n: '3', phone: '+573005557013', updated: iso(now - 91 * 86400_000), decided: iso(now - 91 * 86400_000) });
+      const dead = await mk({ n: '4', phone: '+573005557014', demo: 'care-vencida-x' }); demoRows['care-vencida-x'] = { id: 'care-vencida-x', expires_at: iso(now - 1000), profile: '{}' };
+      const unpaid = await mk({ n: '5', phone: '+573005557015', state: 'PENDIENTE_PAGO', proofs: 0, files: ['foto.jpg'], updated: iso(now - 40 * 86400_000) });
+      const review = await mk({ n: '6', phone: '+573005557016', state: 'PENDIENTE_VALIDACION', files: ['foto.jpg', 'comprobante-1.jpg'], updated: iso(now - 200 * 86400_000), decided: '' });
+      const out = await care.purge(now), ls = (x: { full: string }) => readdirSync(x.full).sort().join();
+      must(ls(young) === 'comprobante-1.jpg,foto.jpg,retrato.jpg' && ls(old31) === 'comprobante-1.jpg,retrato.jpg' && ls(old91) === 'retrato.jpg' && ls(dead) === 'comprobante-1.jpg,foto.jpg' && ls(unpaid) === '' && ls(review) === 'comprobante-1.jpg,foto.jpg', `borrado por plazo: ${[young, old31, old91, dead, unpaid, review].map(ls).join(' | ')}`);
+      must(out.photos === 3 && out.proofs === 1 && out.portraits === 1 && JSON.stringify(await care.purge(now)) === '{"photos":0,"proofs":0,"portraits":0}', `conteo: ${JSON.stringify(out)}`);
+      const r31 = (await P.db.query<any>('SELECT * FROM avatar_requests WHERE id = $1', [old31.id]))[0];
+      must(!!r31.photo_deleted_at && !r31.proof_deleted_at && r31.state === 'COMPLETADO' && r31.price === 19200, 'la fila queda como registro del pago');
+      // Borrado a pedido: todo ya, la demo vuelve al avatar por defecto; no mientras hay un pago por decidir.
+      demoRows['care-ana-a1a1a1'].profile = JSON.stringify({ config: { avatar: 'mujer', avatarPropio: young.id } });
+      const er = await care.erase(young.id), ry = (await P.db.query<any>('SELECT * FROM avatar_requests WHERE id = $1', [young.id]))[0];
+      must(er.ok && !existsSync(young.full) && !!ry.photo_deleted_at && !!ry.proof_deleted_at && ry.portrait === '' && ry.colors === '' && patched.length === 1 && patched[0].patch.avatar === '' && 'tinte' in patched[0].patch, `borrado a pedido: ${JSON.stringify(er)}`);
+      must(!(await care.erase(review.id)).ok && existsSync(join(review.full, 'foto.jpg')) && !(await care.erase(999999)).ok, 'con un pago por decidir no se borra');
+      await care.erase(old31.id); must(patched.length === 1, 'borrar una solicitud vieja no toca el avatar actual de la demo');
+    } finally {
+      at(MON10); await setP('simulacion', was.sim); await setP('produccion', was.prod); await P.settings.set('politica.numeros_prueba', was.nums);
+      await P.db.query('DELETE FROM avatar_requests');
+    }
+    return 'plantilla con retrato, primer nombre y enlace; sin producción bloqueada, en simulación simulada, fuera de horario espera y sale al abrir; nunca dos veces; todo queda en la bitácora; foto a los 30 días, comprobantes a los 90, retrato mientras viva la demo, solicitud sin pagar suelta su foto; borrado a pedido devuelve la demo al avatar por defecto';
   });
 
   await check('Envío de la demo: solo con tu aprobación, con la imagen del negocio, y Claude Code como último recurso para la portada', async () => {

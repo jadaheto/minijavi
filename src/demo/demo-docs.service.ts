@@ -319,7 +319,7 @@ ${p.ficha}`) },
   async patchConfig(id: string, patch: Partial<DemoConfig>): Promise<void> {
     const d = await this.get(id); if (!d) return;
     const p: DemoProfile = JSON.parse(d.profile || '{}');
-    p.config = { ...(p.config ?? DemoDocsService.fallbackConfig(p)), ...patch };
+    p.config = { ...(p.config ?? DemoDocsService.fallbackConfig(p)), ...patch }; // una clave en undefined se quita al guardar (JSON)
     await this.db.query('UPDATE demos SET profile = $1 WHERE id = $2', [JSON.stringify(p), id]);
   }
 

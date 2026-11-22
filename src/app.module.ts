@@ -56,6 +56,7 @@ import { DemoDocsController } from './demo/demo-docs.controller';
 import { AvatarOwnerController, AvatarRequestsController } from './avatars/avatar-requests.controller';
 import { AvatarRequestsService } from './avatars/avatar-requests.service';
 import { AvatarGeneratorService } from './avatars/avatar-generator.service';
+import { AvatarCareService } from './avatars/avatar-care.service';
 import { DemoPageController } from './demo/demo-page.controller';
 import { DemoSendService } from './demo/demo-send.service';
 import { BusinessService } from './business/business.service';
@@ -73,6 +74,6 @@ import { VisitsService } from './visits/visits.service';
     }),
   ],
   controllers: [AvatarRequestsController, AvatarOwnerController, DemoDocsController, DemoPageController, BusinessController, BusinessPanelController, HealthController, OwnerController, CallsController, KnowledgeController, N8nController, SitesController, WorkshopBackupController, SpotifyController, TeslaController, MapsController],
-  providers: [ConfigService, DbService, AlertsService, OpsService, UsageService, ImagesService, PortfolioService, WorkshopService, WorkshopBackupService, SpotifyService, TeslaService, NewsService, ColombiaNewsService, PolymarketService, PanelsService, MapsService, BriefService, DemoDocsService, DemoSendService, AvatarRequestsService, AvatarGeneratorService, BusinessService, BusinessDeskService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, PolicyService, ActionsService, ApprovalsService, CatalogService, TelegramService, OptOutService, InjectionGuard],
+  providers: [ConfigService, DbService, AlertsService, OpsService, UsageService, ImagesService, PortfolioService, WorkshopService, WorkshopBackupService, SpotifyService, TeslaService, NewsService, ColombiaNewsService, PolymarketService, PanelsService, MapsService, BriefService, DemoDocsService, DemoSendService, AvatarRequestsService, AvatarGeneratorService, AvatarCareService, BusinessService, BusinessDeskService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, PolicyService, ActionsService, ApprovalsService, CatalogService, TelegramService, OptOutService, InjectionGuard],
 })
 export class AppModule {}

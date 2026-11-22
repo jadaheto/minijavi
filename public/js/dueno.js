@@ -68,7 +68,7 @@ const pretty = (k) => String(k).replace(/_/g, ' ').replace(/^formulario:/, 'form
 const SOURCE = (k) => (k === 'sin dato' ? 'Sin dato (anteriores)' : k === 'voz' ? 'Conversación en el sitio' : k === 'llamada' ? 'Llamada de WhatsApp' : pretty(k));
 
 // ---------- pestañas ----------
-const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, demos: loadDemos, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
+const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, demos: loadDemos, avatares: loadAvatars, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
   for (const b of $('tabs').children) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
@@ -449,6 +449,48 @@ $('dec-test').addEventListener('submit', async (ev) => {
   out.textContent = `${n(d.ms)} ms${d.shadow ? ' · en modo sombra: esto es lo que Jev decidió, pero el código sigue usando el valor por defecto' : ''}\n` + Object.entries(d.shadow ? logged : d.answers).map(([id, a]) => answerLine(id, a)).join('\n');
   loadDecisions();
 });
+
+/** Avatares personalizados: cada solicitud con su estado, el pago por decidir, el aviso por WhatsApp y sus archivos. */
+const AVATAR_STATES = { PENDIENTE_PAGO: 'Esperando el pago', PENDIENTE_VALIDACION: 'Comprobante por revisar', PAGO_RECHAZADO: 'Pago rechazado', PAGO_APROBADO: 'Pago aprobado · en cola', GENERANDO_AVATAR: 'Generando', AVATAR_GENERADO: 'Generado', AVATAR_ACTIVADO: 'Activado', COMPLETADO: 'Completado', ERROR_GENERACION: 'Error al generar', FOTO_RECIBIDA: 'Foto recibida' };
+async function loadAvatars() {
+  const d = await json('avatares'), items = d.items || [];
+  const cop = (v) => `$${Number(v).toLocaleString('es-CO')}`;
+  $('avatar-count').textContent = `(${items.length})`;
+  const waiting = items.filter((a) => a.state === 'PENDIENTE_VALIDACION').length;
+  $('avatar-badge').textContent = waiting ? `(${waiting})` : '';
+  $('avatar-note').textContent = d.problem ? `La función está apagada en este servidor: ${d.problem}.`
+    : `Precio ${cop(d.price)} por Bre-B a la llave ${d.key}. Antes de aprobar un pago, revisa tu cuenta: el comprobante es solo una imagen que envía el cliente. La foto se borra a los ${d.photoDays} días de completado y el comprobante a los ${d.proofDays}; el retrato dura lo que dure la demo.`;
+  $('avatar-list').replaceChildren(...items.map((a) => {
+    const act = async (decision, extra = {}) => { const r = await api(`avatares/${a.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, ...extra }) }); const j = await r.json().catch(() => ({})); if (!r.ok || j.ok === false) note.textContent = j.message || j.text || 'No se pudo.'; else loadAvatars(); };
+    const btn = (text, fn, cls = 'small') => { const b = el('button', { type: 'button', className: cls, textContent: text }); b.addEventListener('click', fn); return b; };
+    const link = (which, text) => el('a', { href: `owner/avatares/${a.id}/${which}`, target: '_blank', rel: 'noopener', textContent: text });
+    const note = el('small', { className: 'danger-text' });
+    const kids = [el('strong', { textContent: `#${a.id} · ${a.name || 'Sin nombre'}` }),
+      el('small', { className: 'muted', textContent: [AVATAR_STATES[a.state] || a.state, a.phone, `demo ${a.demo}`, cop(a.price), `creada ${fecha(a.created_at)}`, a.proofs ? `${a.proofs} comprobante${a.proofs === 1 ? '' : 's'}` : '', a.decided_at ? `decidido ${fecha(a.decided_at)} desde ${a.decided_by}` : ''].filter(Boolean).join(' · ') })];
+    if (a.reject_reason) kids.push(el('small', { textContent: `Motivo del rechazo: ${a.reject_reason}` }));
+    if (a.error) kids.push(el('small', { className: 'danger-text', textContent: `Error (${a.attempts} intento${a.attempts === 1 ? '' : 's'}): ${a.error}` }));
+    if (a.base_avatar) { let c = {}; try { c = JSON.parse(a.colors || '{}'); } catch { /* sin colores */ }
+      kids.push(el('small', {}, document.createTextNode(`Avatar base: ${a.base_avatar} `), ...['piel', 'pelo', 'ojos'].filter((k) => /^#[0-9a-f]{6}$/i.test(c[k] || '')).map((k) => el('span', { className: 'swatch', title: `${k} ${c[k]}`, style: `background:${c[k]}` })))); }
+    if (a.state === 'COMPLETADO') kids.push(el('small', { className: a.wa_status === 'enviada' ? 'muted' : 'danger-text', textContent: `WhatsApp al cliente: ${a.wa_status || 'pendiente'}${a.wa_at ? ` (${fecha(a.wa_at)})` : ''}` }));
+    const files = [a.photo && !a.photo_deleted_at ? link('foto', 'Ver la foto') : a.photo_deleted_at ? el('small', { className: 'muted', textContent: `Foto borrada el ${fecha(a.photo_deleted_at)}` }) : null,
+      a.proof && !a.proof_deleted_at ? link('comprobante', 'Ver el comprobante') : a.proof_deleted_at ? el('small', { className: 'muted', textContent: `Comprobante borrado el ${fecha(a.proof_deleted_at)}` }) : null,
+      a.portrait ? link('retrato', 'Ver el retrato') : null, el('a', { href: `demo/${a.demo}`, target: '_blank', rel: 'noopener', textContent: 'Abrir la demo' })];
+    kids.push(el('div', { className: 'row' }, ...files));
+    const actions = [];
+    if (a.state === 'PENDIENTE_VALIDACION') {
+      actions.push(btn('Aprobar pago', (e) => { const b = e.currentTarget; if (b.dataset.sure) act('aprobar'); else { b.dataset.sure = '1'; b.textContent = '¿Ya viste el dinero en tu cuenta? Aprobar'; } }));
+      const why = el('input', { type: 'text', placeholder: 'Motivo (lo verá el cliente)', maxLength: 160 });
+      actions.push(why, btn('Rechazar pago', () => act('rechazar', { motivo: why.value }), 'small danger'));
+    }
+    if (a.state === 'ERROR_GENERACION') actions.push(btn('Reintentar con la misma foto', () => act('reintentar')));
+    if (a.state === 'COMPLETADO' && a.wa_status !== 'enviada') actions.push(btn('Reenviar el WhatsApp', () => act('reenviar')));
+    if (!['PENDIENTE_VALIDACION', 'PAGO_APROBADO', 'GENERANDO_AVATAR', 'AVATAR_GENERADO'].includes(a.state) && (!a.photo_deleted_at || !a.proof_deleted_at || a.portrait))
+      actions.push(btn('Borrar sus datos', (e) => { const b = e.currentTarget; if (b.dataset.sure) act('borrar'); else { b.dataset.sure = '1'; b.textContent = '¿Seguro? Borra foto, comprobantes y retrato'; } }, 'small danger'));
+    if (actions.length) kids.push(el('div', { className: 'row' }, ...actions));
+    kids.push(note);
+    return el('li', { className: 'demo-row' }, ...kids);
+  }));
+}
 
 async function loadDemos() {
   const { enabled, demos, perChat, perDay, totalToday, totalCap } = await json('demos');

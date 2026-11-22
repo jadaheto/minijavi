@@ -39,7 +39,7 @@ export interface AvatarRequest {
   photo_deleted_at: string; proof_deleted_at: string;
 }
 export const CONSENT_TEXT = 'Confirmo que la foto es mía y que soy mayor de edad. Autorizo a Javier Hermosilla (minijavi) a usarla únicamente para crear mi avatar. La foto se borra 30 días después de entregado el avatar y el comprobante de pago a los 90 días; puedo pedir que se borren antes.';
-export const WHAT_YOU_GET = 'Recibes un retrato tuyo en el estilo de los avatares y, en tu demostración, el avatar 3D del catálogo que más se te parece con tu color de piel, pelo y ojos. No es una cabeza 3D modelada con tu cara.';
+export const WHAT_YOU_GET = 'Recibes un retrato tuyo en el estilo de los avatares y, en tu demostración, el avatar 3D del catálogo que más se te parece con tu color de piel, pelo y ojos. No es una cabeza 3D modelada con tu cara: el avatar 3D no lleva tu barba, bigote, gafas ni tu peinado; esos detalles sí aparecen en el retrato.';
 const OPEN: AvatarState[] = ['FOTO_RECIBIDA', 'PENDIENTE_PAGO', 'PENDIENTE_VALIDACION', 'PAGO_RECHAZADO', 'PAGO_APROBADO', 'GENERANDO_AVATAR', 'AVATAR_GENERADO', 'AVATAR_ACTIVADO', 'ERROR_GENERACION'];
 const MESSAGES: Record<AvatarState, string> = {
   AVATAR_PREDEFINIDO: 'Estás usando un avatar del catálogo.',

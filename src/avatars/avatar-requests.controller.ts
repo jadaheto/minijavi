@@ -2,6 +2,7 @@ import { Body, Controller, Get, Header, HttpCode, HttpException, Param, Post, Qu
 import type { Request, Response } from 'express';
 import { ConfigService } from '../config/config.service';
 import { OwnerService } from '../owner/owner.service';
+import { AvatarCareService } from './avatar-care.service';
 import { AvatarRequestsService } from './avatar-requests.service';
 
 const ipOf = (req: Request) => String(req.headers['x-forwarded-for'] ?? req.socket?.remoteAddress ?? '').split(',').pop()!.trim();
@@ -73,19 +74,21 @@ export class AvatarRequestsController {
 /** Avatar personalizado, lado de Javier: lista, decidir el pago y ver la foto o el comprobante. Solo dispositivo registrado. */
 @Controller('owner/avatares')
 export class AvatarOwnerController {
-  constructor(private readonly reqs: AvatarRequestsService, private readonly owner: OwnerService) {}
+  constructor(private readonly reqs: AvatarRequestsService, private readonly owner: OwnerService, private readonly care: AvatarCareService, private readonly cfg: ConfigService) {}
   private require(req: Request) { if (!this.owner.verify(req.headers.cookie)) throw new HttpException({ error: 'no_autorizado' }, 401); }
 
   @Get()
   async list(@Req() req: Request) {
     this.require(req);
     // Ni la clave del cliente, ni la de los botones, ni la carpeta salen del servidor.
-    return { problem: this.reqs.problem, items: (await this.reqs.list()).map(({ token, nonce, dir, proof_hash, consent_text, ...r }) => r) };
+    return { problem: this.reqs.problem, price: this.cfg.avatarPrice, key: this.cfg.avatarBrebKey, photoDays: this.cfg.avatarPhotoDays, proofDays: this.cfg.avatarProofDays, template: this.cfg.whatsappAvatarTemplate, items: (await this.reqs.list()).map(({ token, nonce, dir, proof_hash, consent_text, ...r }) => r) };
   }
 
   @Post(':id')
   async decide(@Req() req: Request, @Param('id') id: string, @Body() body: { decision?: string; motivo?: string }) {
     this.require(req);
+    if (body?.decision === 'reenviar') { const s = await this.care.notify(Number(id) || 0, true); return { ok: s === 'enviada' || s === 'simulada', text: s }; }
+    if (body?.decision === 'borrar') { const e = await this.care.erase(Number(id) || 0); if (!e.ok) throw new HttpException({ error: 'no_aplica', message: e.text }, 409); return e; }
     if (body?.decision === 'reintentar') { const t = await this.reqs.retry(Number(id) || 0); if (!t.ok) throw new HttpException({ error: 'no_aplica', message: t.text }, 409); return t; }
     if (body?.decision !== 'aprobar' && body?.decision !== 'rechazar') throw new HttpException({ error: 'decision_invalida' }, 400);
     const r = await this.reqs.decide(Number(id) || 0, body.decision === 'aprobar', 'panel', String(body.motivo ?? ''));

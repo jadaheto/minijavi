@@ -9,7 +9,7 @@ export const USAGE_KEYS = [
   'deepseek_calls', 'deepseek_in', 'deepseek_cache', 'deepseek_out', 'deepseek_sin_dato',
   'eleven_calls', 'eleven_chars',
   'jev_calls', 'jev_in', 'capaz_calls', 'capaz_in', 'capaz_out', 'decisiones', 'decisiones_defecto',
-  'nvidia_calls', 'negocio_pedidos', 'negocio_citas', 'negocio_humano', 'demo_page_sesiones', 'demo_page_s', 'demo_docs', 'avatar_solicitudes', 'avatar_comprobantes', 'avatar_pagos_aprobados', 'avatar_pagos_rechazados', 'avatar_retratos', 'avatar_completados', 'avatar_errores', 'resumen_enviado', 'youtube_searches', 'spotify_searches', 'tesla_calls', 'news_fetches', 'news_articles', 'polymarket_calls', 'maps_calls', 'charger_searches', 'wa_in', 'wa_out', 'image_searches', 'image_generations', 'image_openai', 'image_magnific',
+  'nvidia_calls', 'negocio_pedidos', 'negocio_citas', 'negocio_humano', 'demo_page_sesiones', 'demo_page_s', 'demo_docs', 'avatar_solicitudes', 'avatar_comprobantes', 'avatar_pagos_aprobados', 'avatar_pagos_rechazados', 'avatar_retratos', 'avatar_completados', 'avatar_errores', 'avatar_whatsapp', 'resumen_enviado', 'youtube_searches', 'spotify_searches', 'tesla_calls', 'news_fetches', 'news_articles', 'polymarket_calls', 'maps_calls', 'charger_searches', 'wa_in', 'wa_out', 'image_searches', 'image_generations', 'image_openai', 'image_magnific',
   'claude_jobs', 'claude_s', 'claude_turns', 'claude_usd', 'respaldo_jobs', 'respaldo_calls', 'respaldo_in', 'respaldo_out',
 ] as const;
 export type UsageKey = (typeof USAGE_KEYS)[number];
