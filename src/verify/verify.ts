@@ -2427,6 +2427,52 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
     return 'archivo validado; lo de Javier apagado en código; voz y saludo del negocio; documentos leídos y a Qdrant, el que trae órdenes no entra; ficha en la base; página y consumo; sin modo dueño ni herramientas; responde con sus documentos';
   });
 
+  await check('Cliente nuevo: el comando deja una carpeta que el servidor acepta, sin copiar claves, y la revisión frena lo que falta o se repite', async () => {
+    const nc = await import('../business/new-client');
+    const { loadBusiness } = await import('../business/business');
+    const { mkdtempSync, writeFileSync, readFileSync, existsSync, statSync, readdirSync: readdirSyncV } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+    const base = mkdtempSync(join(tmpdir(), 'clientes-'));
+    must(nc.slugify('  Panadería «La Espiga» #2 ') === 'panaderia-la-espiga-2' && nc.slugify('ñandú & cía') === 'nandu-cia', 'nombre de carpeta');
+    const ok = { nombre: 'Panadería La Espiga', dominio: 'https://Espiga.minijavi.com/', color: '#B0541C', avatar: 'mujer', voz: 'k1LcwPlB8fqtr2BOqzNo', preguntas: ['¿Cuánto vale el pan?', '¿Abren domingo?', '¿Domicilios?', 'sobra'], dueno_whatsapp: '300 123 4567', funciones: ['pedidos', 'humano'] };
+    // Datos malos: cada uno se rechaza diciendo el campo.
+    for (const [patch, field] of [[{ nombre: 'ab' }, 'nombre'], [{ nombre: 'Ejemplo' }, 'nombre'], [{ dominio: 'sin punto' }, 'dominio'], [{ dominio: 'a.com; rm -rf /' }, 'dominio'], [{ color: 'rojo' }, 'color'], [{ avatar: 'dragon' }, 'avatar'], [{ voz: 'id con espacios' }, 'voz'], [{ dueno_whatsapp: '12345' }, 'dueno_whatsapp'], [{ funciones: ['pedidos', 'cobros'] }, 'funciones']] as const) {
+      let msg = ''; try { nc.buildClient({ ...ok, ...patch } as any); } catch (e) { msg = (e as Error).message; } must(msg.startsWith(`${field}:`), `debía rechazar ${JSON.stringify(patch)}: ${msg}`); }
+    const c = nc.buildClient(ok), dir = nc.writeClient(base, c), env = nc.parseEnv(c.files['variables.env']);
+    // El archivo lo acepta el validador del servidor, tal cual quedo en disco.
+    const b = loadBusiness(join(dir, 'negocio.json'));
+    must(c.id === 'panaderia-la-espiga' && b.nombre === 'Panadería La Espiga' && b.avatar === 'mujer' && b.color === '#b0541c' && b.preguntas.length === 3 && b.duenoWhatsapp === '573001234567' && b.funciones.join() === 'pedidos,humano', `negocio.json: ${JSON.stringify(b)}`);
+    must(env.MODO === 'negocio' && env.PUBLIC_URL === 'https://espiga.minijavi.com' && env.QDRANT_COLLECTION === 'cliente_panaderia_la_espiga' && env.BUSINESS_ID === c.id && env.DATA_DIR === '/app/data' && env.TELEGRAM_BUTTONS === '0', `variables: ${JSON.stringify(env).slice(0, 200)}`);
+    // Ninguna clave copiada: las del proveedor en blanco aunque el entorno las tenga; las propias, al azar y distintas cada vez.
+    process.env.DEEPGRAM_API_KEY ??= 'clave-del-entorno';
+    const all = Object.values(c.files).join('\n');
+    must(nc.REQUIRED_VARS.every((k) => env[k] === '') && env.WHATSAPP_TOKEN === '' && env.DATABASE_URL === '' && env.TELEGRAM_BOT_TOKEN === '' && ![process.env.DEEPGRAM_API_KEY, process.env.DEEPSEEK_API_KEY, process.env.MODELO_CAPAZ_KEY, process.env.WHATSAPP_TOKEN].filter((v) => v && v.length > 8).some((v) => all.includes(v!)), 'no se copia ninguna clave del entorno');
+    const c2 = nc.buildClient({ ...ok, nombre: 'Otra Tienda', dominio: 'otra.minijavi.com' }), env2 = nc.parseEnv(c2.files['variables.env']);
+    must(env.REPORTE_SECRET.length >= 32 && env.NEGOCIO_PANEL_CLAVE.length >= 12 && /^[a-f0-9]{24}$/.test(env.WHATSAPP_VERIFY_TOKEN) && env.REPORTE_SECRET !== env2.REPORTE_SECRET && env.NEGOCIO_PANEL_CLAVE !== env2.NEGOCIO_PANEL_CLAVE && env2.QDRANT_COLLECTION !== env.QDRANT_COLLECTION, 'claves propias al azar y colección distinta por cliente');
+    must((statSync(join(dir, 'variables.env')).mode & 0o077) === 0 && existsSync(join(dir, 'documentos')) && readdirSyncV(join(dir, 'documentos')).length === 0, 'variables.env solo lo lee su dueño y documentos/ nace vacía');
+    // La guia lleva los datos de ESTE cliente y dice lo que no se ha probado.
+    const g = c.files['PASOS.md'];
+    must(g.includes('https://espiga.minijavi.com/webhooks/whatsapp') && g.includes(env.WHATSAPP_VERIFY_TOKEN) && g.includes('cliente_panaderia_la_espiga') && g.includes('npm run cliente:revisar -- panaderia-la-espiga') && /no se han probado/.test(g) && g.includes('+573001234567') && !g.includes(env.REPORTE_SECRET) && !g.includes(env.NEGOCIO_PANEL_CLAVE), 'guía con los datos del cliente y sin sus claves');
+    // No pisa una carpeta que ya existe, ni repite carpeta o coleccion.
+    let twice = ''; try { nc.writeClient(base, c); } catch (e) { twice = (e as Error).message; } must(/ya existe/.test(twice), 'no pisa la carpeta');
+    let dup = ''; try { nc.buildClient(ok, nc.existing(base)); } catch (e) { dup = (e as Error).message; } must(/ya existe un cliente/.test(dup) && nc.existing(base).collections.join() === 'cliente_panaderia_la_espiga', 'cliente repetido');
+    // Revisar: recien creada le faltan las claves; llena, queda lista; lo repetido con otro cliente se frena.
+    const r0 = nc.checkClient(base, c.id);
+    must(r0.errors.length === nc.REQUIRED_VARS.length && r0.errors.every((e) => /falta /.test(e)) && r0.warnings.some((w) => /documentos\/ está vacía/.test(w)), `recién creada: ${r0.errors.join(' | ')}`);
+    const fill = (text: string, extra: Record<string, string> = {}) => text.split('\n').map((l) => { const m = /^([A-Z][A-Z0-9_]*)=$/.exec(l); const k = m?.[1] ?? ''; return k && (nc.REQUIRED_VARS as readonly string[]).includes(k) ? `${k}=${k === 'QDRANT_URL' ? 'https://qdrant.example' : 'valor-de-prueba'}` : l; }).map((l) => { const k = l.split('=')[0]; return k in extra ? `${k}=${extra[k]}` : l; }).join('\n');
+    writeFileSync(join(dir, 'variables.env'), fill(c.files['variables.env'])); writeFileSync(join(dir, 'documentos', 'menu.txt'), 'Pan de bono 6 por $7.500');
+    const r1 = nc.checkClient(base, c.id); must(r1.errors.length === 0 && !r1.warnings.some((w) => /documentos/.test(w)), `llena: ${r1.errors.join(' | ')}`);
+    const d2 = nc.writeClient(base, c2);
+    writeFileSync(join(d2, 'variables.env'), fill(c2.files['variables.env'], { QDRANT_COLLECTION: env.QDRANT_COLLECTION, REPORTE_SECRET: env.REPORTE_SECRET }));
+    const r2 = nc.checkClient(base, c2.id); must(r2.errors.some((e) => /también la usa el cliente panaderia-la-espiga/.test(e)) && r2.errors.some((e) => /REPORTE_SECRET es igual/.test(e)), `repetidos: ${r2.errors.join(' | ')}`);
+    writeFileSync(join(d2, 'variables.env'), fill(c2.files['variables.env'], { QDRANT_COLLECTION: 'minijavi', MODO: 'dueno', WHATSAPP_TOKEN: 'tok', WHATSAPP_PHONE_NUMBER_ID: '1' }));
+    const r3 = nc.checkClient(base, c2.id); must(r3.errors.some((e) => /"minijavi"/.test(e)) && r3.errors.some((e) => /MODO debe ser negocio/.test(e)) && r3.errors.some((e) => /WHATSAPP_APP_SECRET/.test(e)), `colección ajena, modo y WhatsApp sin secreto: ${r3.errors.join(' | ')}`);
+    writeFileSync(join(d2, 'negocio.json'), '{"nombre":"X"'); must(nc.checkClient(base, c2.id).errors.some((e) => /negocio\.json/.test(e)) && nc.checkClient(base, '../x').errors.length === 1 && nc.checkClient(base, 'no-existe').errors.length === 1, 'archivo roto o carpeta inexistente');
+    // La guia general del repositorio es la misma, con valores de ejemplo.
+    const doc = readFileSync(join(__dirname, '..', '..', 'docs', 'instalar-cliente.md'), 'utf8');
+    must(doc.includes('npm run cliente:nuevo') && doc.includes('/webhooks/whatsapp') && doc.includes('node --no-warnings dist/business/ingest.js'), 'guía general en docs/');
+    return 'carpeta con negocio.json válido para el servidor, variables sin claves copiadas y con claves propias al azar, guía con sus datos; datos malos rechazados por campo; no pisa ni repite; la revisión exige las claves, frena colección o claves compartidas, la colección de Javier y WhatsApp sin su secreto';
+  });
+
   await check('Modo negocio, funciones: pedidos, citas, interesados y pasar a una persona, con avisos al dueño por Telegram y WhatsApp (ventana de 24 h)', async () => {
     const { loadBusiness } = await import('../business/business');
     const { BusinessDeskService } = await import('../business/desk.service');
