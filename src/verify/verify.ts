@@ -2868,7 +2868,7 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
 
     // 2. El pase: lo crea el dueño, no sirve como cookie del panel, se revoca, vence y los intentos malos bloquean.
     const b = noJev, noop = () => undefined;
-    const ocfg: any = Object.assign(Object.create(Object.getPrototypeOf(b.cfg)), b.cfg, { ownerSecret: 'clave-de-prueba-del-bolsillo-123', ownerDays: 90, gadgetDays: 365, gadgetAheadSeconds: 1, ttsProvider: 'elevenlabs' });
+    const ocfg: any = Object.assign(Object.create(Object.getPrototypeOf(b.cfg)), b.cfg, { ownerSecret: 'clave-de-prueba-del-bolsillo-123', ownerDays: 90, gadgetDays: 365, gadgetAheadSeconds: 1, gadgetTileSeconds: 12, ttsProvider: 'elevenlabs' });
     const owner = new OwnerService(ocfg, P.db); await owner.onModuleInit();
     const pass = owner.issueGadget('Escritorio')!;
     must(/^mjb\.b-[0-9a-f]{24}\.\d+\.[\w-]{20,}$/.test(pass.token) && isGadget(pass.device.id) && !!pass.expires, 'forma del pase');
@@ -2890,7 +2890,7 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     const tts = { stream: async function* (t: string) { const c = [...t]; yield { audio: pcm.subarray(0, 50001).toString('base64'), align: { chars: c, starts: c.map((_, i) => i * 0.06), ends: c.map((_, i) => i * 0.06 + 0.06) } }; yield { audio: pcm.subarray(50001).toString('base64') }; } };
     const asked: { sys: string; ctx?: any }[] = [];
     const llm = { chat: async function* (messages: any[]) { asked.push({ sys: String(messages[0].content) }); if (messages.some((m) => m.role === 'tool')) { yield { type: 'text', delta: 'Listo, ochenta por ciento.' }; return; } yield { type: 'tool_calls', calls: [{ id: 'c1', name: 'tesla', arguments: '{}' }] }; }, complete: async () => '{}' };
-    let ctxSeen: any; const ftools = { definitions: async () => [{ type: 'function', function: { name: 'tesla' } }], run: async (_n: string, _a: string, _o: boolean, ctx: any) => { ctxSeen = ctx; return { text: 'Batería 80 %.', tesla: { battery: 80 }, scene: 'carretera', reaction: 'alegria' }; } } as any;
+    let ctxSeen: any; const ftools = { definitions: async () => [{ type: 'function', function: { name: 'tesla' } }], run: async (_n: string, _a: string, _o: boolean, ctx: any) => { ctxSeen = ctx; return { text: 'Batería 80 %.', tesla: { name: 'Ejemplo', level: 80, rangeKm: 400, locked: true }, scene: 'carretera', reaction: 'alegria' }; } } as any;
     const mkGw = (ownerSvc: any, cfg: any, biz?: any) => new (SessionGateway as any)(cfg, tts, { open: () => ({ send: noop, close: noop }) }, llm, ftools, ownerSvc, { get: noop, ids: () => [] }, { get: async () => null, valid: () => false, save: async () => undefined },
       { context: async () => '' }, { enabled: true, onDone: noop, onAudit: noop, onProgress: noop, busy: () => undefined, unseen: () => [], pendingAudits: () => [], defaultModel: { label: '' } }, { enabled: true, newState: () => ({ queue: [], index: 0 }) }, usage, { get: async () => undefined, logConversation: noop }, { enabled: true, canGenerate: true, newState: () => ({ title: '', kind: '', items: [], index: 0 }) },
       alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard, b.capable, b.catalog, { firstToday: async () => true }, undefined, undefined, biz);
@@ -2922,6 +2922,7 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     gw.onTranscript(g.client, g.sess, 'Javi, ¿cómo va la batería del carro?', true, true, 'es'); await wait(900);
     const types = new Set(g.json.map((m) => m.type));
     must([...types].every((t) => GADGET_TYPES.has(t)) && types.has('reaction') && !types.has('tesla') && !types.has('scene') && types.has('speech_start') && g.bin.length > 0, `mensajes a la placa: ${[...types].join(' ')}`);
+    const tl = g.json.find((m) => m.type === 'tile'); must(tl && tl.tiles.length === 1 && tl.tiles[0].big === '80' && tl.seconds === 12, `la consulta del Tesla debe llegar a la placa como tarjeta: ${JSON.stringify(tl)}`);
     must(ctxSeen && ctxSeen.music === undefined && ctxSeen.gallery === undefined && ctxSeen.locate === undefined && ctxSeen.canUpload === false, 'las herramientas deben saber que la placa no tiene pantalla, música ni ubicación');
     must(/DISPOSITIVO DE BOLSILLO/.test(asked.at(-1)!.sys), 'el modelo debe saber que habla por la placa');
     // Hablarle encima corta el envío: no siguen saliendo tramas de la respuesta vieja.
@@ -2953,6 +2954,65 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     must(audioFrame(0x1234, Buffer.from([9, 8])).equals(Buffer.from([1, 0, 0x34, 0x12, 9, 8])), 'cabecera del audio');
     await P.db.query('DELETE FROM devices');
     return `bocas idénticas a las del navegador (${server.length} cambios en ${total.toFixed(1)} s); pase firmado aparte de la cookie, con vencimiento, revocable y con bloqueo; saludo de 3 s en ${audio.length} tramas binarias al ritmo de la voz; paneles, fondos y música fuera; se corta al interrumpir; a 16 kHz para la placa real y corte con un toque`;
+  });
+
+  await check('Javi de bolsillo, música: control remoto de Spotify en otro dispositivo, con su tarjeta y sin sonar en la placa', async () => {
+    const { SpotifyService } = await import('../music/spotify.service');
+    const { MusicService } = await import('../music/music.service');
+    Object.assign(process.env, { SPOTIFY_CLIENT_ID: 'id-de-prueba', SPOTIFY_CLIENT_SECRET: 'secreto-de-prueba', SPOTIFY_REDIRECT_URI: 'https://avatar.invalid/api/spotify/callback' });
+    const mcfg = new ConfigService(), spotify = new SpotifyService(mcfg, P.db, usage), music = new MusicService(mcfg, usage, spotify);
+    await spotify.onModuleInit(); await spotify.disconnect();
+    const J = (o: unknown, status = 200) => new Response(o === null ? null : JSON.stringify(o), { status });
+    const TRACK = { id: 'abcdefghij0123456789ab', name: 'La rebelión', is_playable: true, artists: [{ name: 'Joe Arroyo' }], album: { name: 'Fuego', images: [{ url: 'https://i.scdn.co/image/caratula' }] } };
+    const PHONE = { id: 'cel-1', name: 'iPhone de Javier', type: 'Smartphone', is_active: false, is_restricted: false, volume_percent: 60 }, MAC = { id: 'mac-1', name: 'MacBook', type: 'Computer', is_active: false, is_restricted: false, volume_percent: 40 };
+    let scope = 'streaming user-modify-playback-state', devices: any[] = [], now: any = null; const calls: string[] = [];
+    musicFetch = (url, init) => {
+      const u = new URL(url);
+      if (url.includes('accounts.spotify.com/api/token')) return J({ access_token: 'acceso', expires_in: 3600, refresh_token: 'refresco', scope });
+      if (u.pathname === '/v1/me') return J({ display_name: 'Javier' });
+      if (u.pathname === '/v1/search') return J({ tracks: { items: [TRACK, { ...TRACK, id: 'zzzzzzzzzz0123456789zz', name: 'Otra' }] } });
+      const p = u.pathname.replace('/v1/me/player', '') || '/'; calls.push(`${init.method ?? 'GET'} ${p}${u.search}${init.body ? ` ${init.body}` : ''}`);
+      if (init.headers.Authorization !== 'Bearer acceso') return J({ error: { message: 'sin token' } }, 401);
+      if (p === '/devices') return J({ devices });
+      if (p === '/') return init.method === 'GET' || !init.method ? (now ? J(now) : J(null, 204)) : J(null, 204);
+      if (p === '/play' && !devices.length) return J({ error: { status: 404, message: 'Player command failed: No active device found', reason: 'NO_ACTIVE_DEVICE' } }, 404);
+      return J(null, 204);
+    };
+    const connect = async () => { const st = new URL(spotify.authUrl()).searchParams.get('state')!; await spotify.finish('codigo', st); };
+    const m: any = { ...music.newState(), remote: true };
+    // Sin conectar, y conectada sin el permiso nuevo: lo dice y no llama al reproductor.
+    must(music.remoteAvailable && /no está conectado/.test((await music.remote(m, 'poner', { query: 'salsa' })).text) && !calls.length, 'sin cuenta conectada');
+    must(/user-read-playback-state/.test(new URL(spotify.authUrl()).searchParams.get('scope') ?? ''), 'la autorización debe pedir el permiso para ver dispositivos');
+    await connect();
+    must(spotify.connected && !spotify.canRemote && spotify.status.remote === false && /Volver a conectar/.test((await music.remote(m, 'poner', { query: 'salsa' })).text) && !calls.length, 'una conexión vieja (sin el permiso) debe pedir reconectar, sin llamar a Spotify');
+    scope += ' user-read-playback-state'; await connect();
+    must(spotify.canRemote && spotify.status.remote === true, 'con el permiso nuevo debe quedar listo');
+    // Ningún dispositivo con Spotify abierto.
+    const none = await music.remote(m, 'poner', { query: 'salsa' });
+    must(/abra Spotify/.test(none.text) && !none.tile && !calls.some((c) => c.startsWith('PUT')), `sin dispositivos: ${none.text} ${calls}`);
+    // Con dos dispositivos y ninguno activo: el celular. Los restringidos y los que no tienen id no cuentan.
+    devices = [{ ...MAC }, { id: 'tv-1', name: 'Tele', type: 'TV', is_restricted: true }, { id: null, name: 'Fantasma', type: 'Speaker' }, { ...PHONE }]; calls.length = 0;
+    const a = await music.remote(m, 'poner', { query: 'joe arroyo' });
+    const put = calls.find((c) => c.startsWith('PUT /play'))!;
+    must(/"La rebelión" de Joe Arroyo en iPhone de Javier/.test(a.text) && /device_id=cel-1/.test(put) && /spotify:track:abcdefghij0123456789ab","spotify:track:zzzzzzzzzz0123456789zz/.test(put) && m.device.id === 'cel-1' && m.playing === false, `poner: ${a.text} · ${put}`);
+    must(/^Spotify · iPhone de J/.test((a.tile as any).title) && (a.tile as any).title.length <= 22 && (a.tile as any).big === 'Suena' && (a.tile as any).lines.join('|') === 'La rebelión|Joe Arroyo' && (a.tile as any).image === 'https://i.scdn.co/image/caratula', `tarjeta de música: ${JSON.stringify(a.tile)}`);
+    // "En el computador": ese. Uno que no está: pregunta, no manda a otro. El activo gana cuando no se dice dónde.
+    calls.length = 0; must(/en MacBook/.test((await music.remote(m, 'poner', { query: 'x', where: 'en el computador' })).text) && calls.some((c) => /PUT \/play\?device_id=mac-1/.test(c)), 'pedir el computador');
+    calls.length = 0; const no = await music.remote(m, 'poner', { query: 'x', where: 'el parlante de la sala' }); must(/No veo ese dispositivo/.test(no.text) && /MacBook, iPhone de Javier/.test(no.text) && !calls.some((c) => c.startsWith('PUT')), `dispositivo que no está: ${no.text}`);
+    devices[0].is_active = true; calls.length = 0; await music.remote(m, 'poner', { query: 'x' }); must(calls.some((c) => /device_id=mac-1/.test(c)), 'sin decir dónde, el que ya está activo');
+    // Órdenes: pausa, siguiente (con lo que quedó sonando), volumen y qué suena.
+    now = { is_playing: true, device: { ...MAC, is_active: true }, item: { name: 'Otra', artists: [{ name: 'Joe Arroyo' }], album: { images: [{ url: 'https://malo.invalid/x.jpg' }] } } };
+    calls.length = 0; must((await music.remote(m, 'pausar', {})).text === 'Música en pausa.' && calls.join() === 'PUT /pause?device_id=mac-1', `pausar: ${calls}`);
+    calls.length = 0; const nx = await music.remote(m, 'siguiente', {}); must(calls[0] === 'POST /next?device_id=mac-1' && /Suena "Otra" de Joe Arroyo en MacBook/.test(nx.text) && (nx.tile as any).image === undefined, `siguiente: ${nx.text} ${calls}`);
+    calls.length = 0; must(/55 por ciento/.test((await music.remote(m, 'volumen', { volume: 'subir' })).text) && calls.some((c) => /PUT \/volume\?volume_percent=55&device_id=mac-1/.test(c)), `volumen: ${calls}`);
+    calls.length = 0; must(/20 por ciento/.test((await music.remote(m, 'volumen', { volume: '20' })).text) && calls.length === 1, 'volumen con número');
+    now = null; must(/no hay nada sonando/.test((await music.remote(m, 'que_suena', {})).text), 'nada sonando');
+    devices = []; const fail = await music.remote(m, 'continuar', {}); must(/No se pudo: Spotify respondió 404 \(NO_ACTIVE_DEVICE\)/.test(fail.text) && /abra/.test(fail.text), `error de Spotify: ${fail.text}`);
+    // La sesión de la placa: recibe el control remoto, no el reproductor; el modelo lo sabe.
+    const gwSrc = readFileSync(resolve(__dirname, '../../src/session/session.gateway.ts'), 'utf8');
+    must(/s\.gadget && this\.music\.remoteAvailable\) s\.music = \{ \.\.\.this\.music\.newState\(\), remote: true \}/.test(gwSrc) && /s\.music\?\.remote \? REMOTE_MUSIC_RULES/.test(gwSrc) && /out\.tile && s\.gadget/.test(gwSrc), 'la sesión de la placa debe usar el control remoto');
+    musicFetch = undefined; await spotify.disconnect(); Object.assign(process.env, { SPOTIFY_CLIENT_ID: '', SPOTIFY_CLIENT_SECRET: '', SPOTIFY_REDIRECT_URI: '' });
+    return 'pide el permiso nuevo y avisa si falta; sin dispositivos lo dice; elige el activo, el celular o el que pida Javier; no manda a un dispositivo que no pidió; pausa, siguiente, volumen y qué suena; tarjeta con canción, artista y carátula solo de Spotify';
   });
 
   await check('Javi de bolsillo: la cara 2D está completa y sus recortes no se pisan', async () => {
@@ -2989,21 +3049,28 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     const bin = resolve(__dirname, '../../placa/cara.bin'), json = resolve(__dirname, '../../public/bolsillo/cara.json');
     if (!existsSync(bin) || !existsSync(json)) skip('falta generar: `npm run cara2d` y `npm run cara:placa`');
     const b = readFileSync(bin), m = JSON.parse(readFileSync(json, 'utf8'));
-    // El mismo formato que lee placa/main/face.c: 12 bytes de cabecera y 316 por capa.
-    must(b.subarray(0, 4).toString() === 'MJC1' && b.readUInt16LE(4) === m.lado && b.readUInt16LE(6) === 3, 'cabecera de cara.bin');
+    // El mismo formato que lee placa/main/face.c: dos bloques seguidos (cara grande y cara pequeña), cada uno con 16
+    // bytes de cabecera y 316 por capa; las posiciones cuentan desde el inicio de su bloque.
     const cstr = (o: number) => { const e = b.indexOf(0, o); return b.subarray(o, Math.min(e, o + 12)).toString(); };
-    let end = b.readUInt32LE(8) + m.lado * m.lado * 2; must(b.readUInt32LE(8) === 12 + 3 * 316, 'la cara base empieza tras las tres capas');
-    for (let n = 0; n < 3; n++) {
-      const o = 12 + n * 316, name = cstr(o), c = m.capas[name]; must(c, `capa desconocida en cara.bin: ${name}`);
-      must(b.readUInt16LE(o + 12) === c.x && b.readUInt16LE(o + 14) === c.y && b.readUInt16LE(o + 16) === c.w && b.readUInt16LE(o + 18) === c.h && b.readUInt16LE(o + 20) === c.cuadros.length, `medidas de la capa ${name}`);
-      must(c.cuadros.every((f: string, i: number) => cstr(o + 28 + i * 12) === f), `nombres de los cuadros de ${name}`);
-      must(b.readUInt32LE(o + 24) === end, `los datos de ${name} no están donde dice`); end += c.w * c.h * 2 * c.cuadros.length;
-    }
-    must(end === b.length && b.length < 4 * 1024 * 1024, `cara.bin mide ${b.length} y debería medir ${end} (y caber en 4 MB)`);
+    const block = (at: number, mm: any, which: string) => {
+      must(b.subarray(at, at + 4).toString() === 'MJC2' && b.readUInt16LE(at + 4) === mm.lado && b.readUInt16LE(at + 6) === 3, `cabecera de la cara ${which}`);
+      const size = b.readUInt32LE(at + 12); let end = b.readUInt32LE(at + 8) + mm.lado * mm.lado * 2; must(b.readUInt32LE(at + 8) === 16 + 3 * 316, `la cara ${which} empieza tras las tres capas`);
+      for (let n = 0; n < 3; n++) {
+        const o = at + 16 + n * 316, name = cstr(o), c = mm.capas[name]; must(c, `capa desconocida en la cara ${which}: ${name}`);
+        must(b.readUInt16LE(o + 12) === c.x && b.readUInt16LE(o + 14) === c.y && b.readUInt16LE(o + 16) === c.w && b.readUInt16LE(o + 18) === c.h && b.readUInt16LE(o + 20) === c.cuadros.length, `medidas de la capa ${name} (${which})`);
+        must(c.cuadros.every((f: string, i: number) => cstr(o + 28 + i * 12) === f), `nombres de los cuadros de ${name} (${which})`);
+        must(b.readUInt32LE(o + 24) === end, `los datos de ${name} (${which}) no están donde dice`); end += c.w * c.h * 2 * c.cuadros.length;
+      }
+      must(size >= end && size - end < 4 && size % 4 === 0, `tamaño del bloque de la cara ${which}`);
+      must(b.readUInt16LE(at + b.readUInt32LE(at + 8) + (Math.floor(mm.lado / 2) * mm.lado + Math.floor(mm.lado / 2)) * 2) !== 0, `la cara ${which} salió negra`); // en el centro hay piel
+      return size;
+    };
+    const miniJson = resolve(__dirname, '../../public/bolsillo/mini/cara.json'); must(existsSync(miniJson), 'falta la cara pequeña: `npm run cara2d`');
+    const mini = JSON.parse(readFileSync(miniJson, 'utf8')), first = block(0, m, 'grande'), second = block(first, mini, 'pequeña');
+    must(first + second === b.length && b.length < 4 * 1024 * 1024, `cara.bin mide ${b.length} y sus dos bloques suman ${first + second} (debe caber en 4 MB)`);
+    must(Object.keys(m.capas).every((l) => JSON.stringify(m.capas[l].cuadros) === JSON.stringify(mini.capas[l].cuadros)), 'la cara pequeña no tiene los mismos cuadros que la grande');
     const face = readFileSync(resolve(__dirname, '../../placa/main/face.c'), 'utf8'), parts = readFileSync(resolve(__dirname, '../../placa/partitions.csv'), 'utf8');
-    must(/sizeof\(head_t\) == 12 && sizeof\(layer_t\) == 316/.test(face) && /"MJC1"/.test(face) && /cara,\s+data,\s+0x40,\s+,\s+4M/.test(parts), 'el programa de la placa espera otro formato o no tiene la partición de la cara');
-    // El centro de la cara base no puede ser negro (se mezcló sobre negro, pero ahí hay piel).
-    const mid = b.readUInt16LE(b.readUInt32LE(8) + (233 * m.lado + 233) * 2); must(mid !== 0, 'la cara base salió negra');
+    must(/sizeof\(head_t\) == 16 && sizeof\(layer_t\) == 316/.test(face) && /"MJC2"/.test(face) && /cara,\s+data,\s+0x40,\s+,\s+4M/.test(parts), 'el programa de la placa espera otro formato o no tiene la partición de la cara');
     // Lo que el programa de la placa le dice y le oye al servidor es lo que el servidor entiende.
     const ses = readFileSync(resolve(__dirname, '../../placa/main/session.c'), 'utf8'), main = readFileSync(resolve(__dirname, '../../placa/main/main.c'), 'utf8'), gwSrc = readFileSync(resolve(__dirname, '../../src/session/session.gateway.ts'), 'utf8');
     const { GADGET_TYPES } = await import('../gadget/mouth');
@@ -3011,7 +3078,21 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     must(heard.length >= 9 && heard.every((t) => GADGET_TYPES.has(t)) && [...GADGET_TYPES].every((t) => heard.includes(t)), `la placa atiende ${heard.join(' ')} y el servidor envía ${[...GADGET_TYPES].join(' ')}`);
     for (const t of ['stop', 'wake', 'playback']) must(new RegExp(`type\\\\":\\\\"${t}`).test(main) && new RegExp(`msg\\?\\.type === '${t}'`).test(gwSrc), `el servidor no atiende el mensaje «${t}» de la placa`);
     must(/"gadget", g_cfg\.pase/.test(ses) && /"rate", AUDIO_RATE/.test(ses) && /#define AUDIO_RATE 16000/.test(readFileSync(resolve(__dirname, '../../placa/main/app.h'), 'utf8')), 'el saludo de la placa');
-    return `${(b.length / 1048576).toFixed(2)} MB; cabecera, medidas, nombres y posiciones iguales a cara.json; el programa de la placa y el servidor hablan los mismos mensajes`;
+    // Tarjetas: cada panel se resume a título, cifra, unidad, anillo y hasta tres renglones cortos; lo que no cabe no sale.
+    const { tilesFor } = await import('../gadget/tiles');
+    const t1 = tilesFor({ type: 'tesla', focus: 'todo', name: 'Ejemplo', live: true, level: 80, rangeKm: 412, charging: 'Disconnected', locked: true, doors: [false, false, false, false], trunks: [false, false], inside: 27.4, outside: 31 });
+    must(t1.length === 1 && t1[0].big === '80' && t1[0].unit === '%' && t1[0].ring === 80 && t1[0].tone === 'ok' && /412 km/.test(t1[0].lines[0]) && t1[0].lines.includes('Con seguro'), `tarjeta del Tesla: ${JSON.stringify(t1)}`);
+    must(tilesFor({ type: 'tesla', name: 'E', level: 60, locked: false })[0].tone === 'bad' && tilesFor({ type: 'tesla', name: 'E', level: 12, locked: true })[0].tone === 'bad' && /faltan 1 h 35/.test(tilesFor({ type: 'tesla', name: 'E', level: 38, charging: 'Charging', minutesLeft: 95 })[0].lines.join()), 'tonos y carga del Tesla');
+    const tr = tilesFor({ type: 'panel', kind: 'route', to: 'Montería, Córdoba', minutes: 135, km: 117.6, arrive: '2:45 p. m.', delay: 12, battery: { now: 80, arrive: 41, rangeKm: 412, enough: true } });
+    must(tr.length === 2 && tr[0].big === '2 h 15' && tr[1].ring === 41 && tilesFor({ type: 'panel', kind: 'route', to: 'X', minutes: 300, km: 500, battery: { now: 50, rangeKm: 200, enough: false, shortKm: 300 } })[1].tone === 'bad', `tarjetas del trayecto: ${JSON.stringify(tr)}`);
+    const fin = tilesFor({ type: 'panel', kind: 'finance', items: [{ id: 'trm', value: 3415.1, change: -12.35, extra: 'vigente hoy' }, { id: 'btc', name: 'Bitcoin', value: 57195, change: 2.31 }] });
+    must(fin.length === 2 && fin[0].big === '3.415' && fin[0].unit === 'COP' && /Bajó 12,35/.test(fin[0].lines[0]) && fin[1].unit === 'USD', `tarjetas de dólar y Bitcoin: ${JSON.stringify(fin)}`);
+    must(tilesFor({ type: 'weather', city: 'Sincelejo', temp: 31, desc: 'nublado', max: 33, min: 24, rain: 20 })[0].big === '31' && tilesFor({ type: 'panel', kind: 'status', rows: [{ name: 'A', ok: true }, { name: 'B', ok: false }] })[0].tone === 'bad', 'clima y servicios');
+    must(tilesFor({ type: 'panel', kind: 'brief', cards: [{ label: 'Sincelejo', value: 29, unit: '°C', note: 'a · b · c · d' }, { label: 'Taller', note: 'trabajando' }] }).length === 1, 'el resumen solo saca tarjetas con cifra');
+    must(!tilesFor({ type: 'panel', kind: 'board' }).length && !tilesFor({ type: 'music' }).length && !tilesFor({ type: 'tesla' }).length && !tilesFor(null).length && !tilesFor({ type: 'panel', kind: 'route', battery: 'x', minutes: {} }).some((t) => /undefined|NaN|\[object/.test(JSON.stringify(t))), 'lo que no cabe o viene mal no produce tarjetas rotas');
+    const long = tilesFor({ type: 'weather', city: 'Una ciudad con un nombre larguísimo de verdad', temp: 31, desc: 'x'.repeat(80), max: 1, min: 1, rain: 1 })[0];
+    must(long.title.length <= 22 && long.lines.every((l) => l.length <= 30) && long.lines.length <= 3, 'los textos se recortan a lo que cabe en la pantalla');
+    return `${(b.length / 1048576).toFixed(2)} MB con cara grande y pequeña; cabecera, medidas, nombres y posiciones iguales a cara.json; el programa de la placa y el servidor hablan los mismos mensajes; tarjetas de Tesla, clima, dólar, trayecto, servicios y resumen`;
   });
 
   rmSync(dir, { recursive: true, force: true });

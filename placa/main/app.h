@@ -52,19 +52,25 @@ void net_pause(void);
 
 // ---------- cara (face.c) ----------
 enum { FACE_BROWS, FACE_EYES, FACE_MOUTH, FACE_LAYERS };
+enum { FACE_BIG, FACE_MINI, FACE_COUNT };    // la cara de toda la pantalla y la pequeña que acompaña a las tarjetas
 bool face_load(void);                        // abre la particion "cara"
-int face_side(void);
-int face_frame(int layer, const char *name); // numero del cuadro o -1
+int face_side(int which);
+int face_frame(int layer, const char *name); // numero del cuadro (en la cara grande) o -1
 struct _lv_obj_t;
-void face_build(struct _lv_obj_t *parent);   // crea las imagenes (dentro del candado de la pantalla)
-void face_show(int layer, int frame);        // cambia un recorte (dentro del candado de la pantalla)
-void face_visible(bool on);
+void face_build(int which, struct _lv_obj_t *parent); // crea las imagenes (dentro del candado de la pantalla)
+void face_show(int layer, int frame);        // cambia un recorte en las dos caras (dentro del candado de la pantalla)
 
 // ---------- pantalla (ui.c) ----------
 void ui_start(void);
 void ui_message(const char *text);           // texto grande en vez de la cara (ajustes, errores); NULL = volver a la cara
 void ui_note(const char *text, int seconds); // aviso corto bajo la cara
 void ui_battery(int percent, bool charging);
+// Tarjetas de datos (Tesla, clima, dolar...): las arma el servidor; la placa solo las dibuja.
+#define TILE_MAX 6
+typedef struct { char title[64], big[24], unit[16], lines[260]; int ring; /* 0-100 o -1 */ int tone; /* 0 info, 1 ok, 2 aviso, 3 mal */ } tile_t;
+void ui_tiles(const tile_t *list, int count, int seconds);
+bool ui_tile_active(void);
+void ui_tile_dismiss(void);
 
 // ---------- gestos de la cara (mind.c) ----------
 void mind_react(const char *name);

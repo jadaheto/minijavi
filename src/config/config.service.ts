@@ -32,6 +32,8 @@ export class ConfigService {
   readonly gadgetDays: number;
   /** Segundos de voz que la placa puede tener guardados por delante de lo que suena (su memoria es poca). */
   readonly gadgetAheadSeconds: number;
+  /** Segundos que una tarjeta se queda en la pantalla de la placa despues de que el avatar termina de hablar. */
+  readonly gadgetTileSeconds: number;
   readonly ownerPrompt: string;
   /** Habla costeña: reglas y diccionario que se agregan al prompt ('' = apagada). HABLA_COSTENA=1 y HABLA_COSTENA_NIVEL. */
   readonly costenoPrompt: string;
@@ -312,6 +314,7 @@ export class ConfigService {
     this.ownerDays = int('OWNER_DAYS', 90, 1);
     this.gadgetDays = int('BOLSILLO_DIAS', 365, 0);
     this.gadgetAheadSeconds = Math.min(30, int('BOLSILLO_ADELANTO_S', 4, 1));
+    this.gadgetTileSeconds = Math.min(120, int('BOLSILLO_TARJETA_S', 12, 2));
     this.dataDir = str('DATA_DIR', 'data');
     this.planeMcpUrl = str('PLANE_MCP_URL');
     this.planeApiKey = str('PLANE_API_KEY');

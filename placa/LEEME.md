@@ -37,6 +37,7 @@ Para volver a los ajustes: deja el dedo 3 segundos en la pantalla, o enciéndela
 | Anillo ámbar | Prepara la respuesta. |
 | Anillo azul | Está hablando. **Un toque lo corta.** |
 | Ojos cerrados | Suspendido ("silénciate"). Un toque o decir "Javi" lo despierta. |
+| Tarjeta con una cifra y la cara pequeña | Datos de lo que preguntaste (Tesla, clima, dólar o Bitcoin, trayecto, servicios, resumen). Se va sola a los 12 s de terminar de hablar, o con un toque. |
 
 La conversación se cierra sola por inactividad (lo decide el servidor). En reposo la pantalla baja el brillo a los 45 s
 y se apaga a los 5 min; un toque la enciende.
@@ -51,7 +52,8 @@ Por eso se le corta con un toque y no con la voz.
 | `main/main.c` | Arranque y estados (reposo, conectando, oyendo, pensando, hablando, suspendido). |
 | `main/session.c` | Conversación con el servidor por WebSocket seguro. |
 | `main/audio.c` | Parlante y micrófonos, a 16 kHz como el ejemplo del fabricante. |
-| `main/face.c`, `main/mind.c`, `main/ui.c` | La cara, sus gestos y la pantalla. |
+| `main/face.c`, `main/mind.c`, `main/ui.c` | La cara (grande y pequeña), sus gestos, la pantalla y las tarjetas de datos. |
+| `main/letra/` | Letra Montserrat (licencia OFL), para que salgan las tildes. |
 | `main/portal.c`, `main/config.c`, `main/net.c` | Página de ajustes, lo guardado y el Wi-Fi. |
 | `main/power.c` | Porcentaje de batería. |
 | `partitions.csv` | Programa (6 MB) y cara (4 MB). |
@@ -67,6 +69,7 @@ este repositorio ni salen en el registro.
   (`MIC_GAIN_DB` en `audio.c`).
 - Que la boca vaya a tiempo con la voz (`OUT_DELAY_MS` en `audio.c`).
 - Que la pantalla alcance a redibujar la boca con fluidez.
+- Las tarjetas: que la letra se lea bien, el anillo, y que la cara pequeña mueva la boca.
 - El toque largo, el botón BOOT (se asumió el pin 0) y la lectura de la batería.
 - La página de ajustes desde un celular real y la conexión segura al servidor.
 - Cuánto dura la batería.

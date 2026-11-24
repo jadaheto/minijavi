@@ -36,7 +36,7 @@ static void light(int percent) { if (percent != brightness) { brightness = perce
 static const char *why_closed(void)
 {
     const char *e = session_last_error();
-    if (!strcmp(e, "pase")) return "Pase invalido o vencido";
+    if (!strcmp(e, "pase")) return "Pase inválido o vencido";
     if (!strcmp(e, "ocupado")) return "Servidor ocupado";
     if (!strcmp(e, "sin_voz")) return "El servidor no tiene voz";
     if (!strcmp(e, "inactividad") || !strcmp(e, "tiempo") || !strcmp(e, "suspension")) return "";
@@ -81,13 +81,14 @@ void app_main(void)
                     break;
                 case EV_TOUCH:
                     light(100); idle_since = esp_timer_get_time();
+                    if (ui_tile_active()) { ui_tile_dismiss(); break; } // con una tarjeta en pantalla, el toque la quita
                     if (state == ST_IDLE) want_open = true;
                     else if (state == ST_NOWIFI) ui_note("Sin Wi-Fi", 4);
                     else if (state == ST_SPEAKING) { audio_flush(); session_send_json("{\"type\":\"stop\"}"); }
                     else if (state == ST_AWAY) session_send_json("{\"type\":\"wake\"}");
                     break;
                 case EV_LONG_TOUCH:
-                    session_close(); set_state(ST_SETUP); portal_run();
+                    session_close(); ui_tile_dismiss(); set_state(ST_SETUP); portal_run();
                     break;
                 case EV_WS_READY:
                     had_ready = true; connecting_shown = false; ui_note("", 0); set_state(ST_LISTENING);

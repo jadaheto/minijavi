@@ -1,7 +1,8 @@
 // Conversacion con el servidor de minijavi por WebSocket, con el formato del "Javi de bolsillo":
 //   placa -> servidor: {"type":"hello","gadget":"<pase>","rate":16000}, audio del microfono en binario (PCM16, 16 kHz,
 //                      tramas de 40 ms), {"type":"playback","playing":bool}, {"type":"stop"} (cortar), {"type":"wake"}
-//   servidor -> placa: ready, error, user_final, speech_start, mouth, speech_end, reaction, suspend, interrupt y la voz en
+//   servidor -> placa: ready, error, user_final, speech_start, mouth, speech_end, reaction, suspend, interrupt, tile
+//                      (tarjetas de datos) y la voz en
 //                      binario: 4 bytes (1, 0, numero de la respuesta en 16 bits) + PCM16 mono
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,6 +60,30 @@ static void on_json(const char *raw)
             const cJSON *ms = cJSON_GetArrayItem(k, 0); const char *f = cJSON_GetStringValue(cJSON_GetArrayItem(k, 1));
             if (cJSON_IsNumber(ms) && f) mouth_add((uint32_t)ms->valuedouble, f[0] == '-' ? -1 : face_frame(FACE_MOUTH, f));
         }
+    }
+    else if (!strcmp(type, "tile")) { // tarjetas de datos: titulo, cifra, unidad, anillo, tono y hasta tres renglones
+        static tile_t list[TILE_MAX]; int n = 0; const cJSON *t;
+        cJSON_ArrayForEach(t, cJSON_GetObjectItem(m, "tiles")) {
+            if (n == TILE_MAX) break;
+            tile_t *o = &list[n]; memset(o, 0, sizeof(*o));
+            const char *s;
+            if ((s = cJSON_GetStringValue(cJSON_GetObjectItem(t, "title")))) strlcpy(o->title, s, sizeof(o->title));
+            if ((s = cJSON_GetStringValue(cJSON_GetObjectItem(t, "big")))) strlcpy(o->big, s, sizeof(o->big));
+            if ((s = cJSON_GetStringValue(cJSON_GetObjectItem(t, "unit")))) strlcpy(o->unit, s, sizeof(o->unit));
+            const cJSON *ring = cJSON_GetObjectItem(t, "ring"), *line; int lines = 0;
+            o->ring = cJSON_IsNumber(ring) ? (ring->valueint < 0 ? 0 : ring->valueint > 100 ? 100 : ring->valueint) : -1;
+            s = cJSON_GetStringValue(cJSON_GetObjectItem(t, "tone"));
+            o->tone = !s ? 0 : !strcmp(s, "ok") ? 1 : !strcmp(s, "warn") ? 2 : !strcmp(s, "bad") ? 3 : 0;
+            cJSON_ArrayForEach(line, cJSON_GetObjectItem(t, "lines")) {
+                const char *l = cJSON_GetStringValue(line);
+                if (!l || lines == 3) continue;
+                if (lines++) strlcat(o->lines, "\n", sizeof(o->lines));
+                strlcat(o->lines, l, sizeof(o->lines));
+            }
+            if (o->big[0] || o->title[0]) n++;
+        }
+        const cJSON *sec = cJSON_GetObjectItem(m, "seconds");
+        ui_tiles(list, n, cJSON_IsNumber(sec) ? sec->valueint : 12);
     }
     else if (!strcmp(type, "reaction")) mind_react(cJSON_GetStringValue(cJSON_GetObjectItem(m, "name")));
     else if (!strcmp(type, "suspend")) app_post(cJSON_IsTrue(cJSON_GetObjectItem(m, "on")) ? EV_SUSPEND_ON : EV_SUSPEND_OFF);

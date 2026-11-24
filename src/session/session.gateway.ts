@@ -9,6 +9,7 @@ import type { WebSocket } from 'ws';
 import { OwnerService } from '../owner/owner.service';
 import { INTERNAL } from '../calls/call-socket';
 import { Downsampler, GADGET_RATES, GADGET_TYPES, MouthTrack, audioFrame } from '../gadget/mouth';
+import { tilesFor } from '../gadget/tiles';
 import { ConfigService } from '../config/config.service';
 import { CardsService } from '../cards/cards.service';
 import { DeepSeekService, LlmEvent } from '../llm/deepseek.service';
@@ -301,7 +302,12 @@ IMÁGENES: en la pantalla puedes mostrar imágenes: la seleccionada se ve en gra
 /** Javi de bolsillo: una placa pequeña que solo muestra la cara. */
 const GADGET_RULES = `
 
-DISPOSITIVO DE BOLSILLO: Javier te habla por un aparato pequeño que solo muestra tu cara y suena por un parlante chico. No hay pantalla para paneles, imágenes, mapas, códigos QR ni música: si una herramienta dice que no hay pantalla o que no está disponible, dilo en una frase y ofrece verlo después en el computador. Responde corto, en una a tres frases, y da las cifras importantes en voz.`;
+DISPOSITIVO DE BOLSILLO: Javier te habla por un aparato pequeño, de pantalla redonda, que muestra tu cara y suena por un parlante chico. Cuando consultas el Tesla, el clima, el dólar o Bitcoin, un trayecto, el estado de los servicios o el resumen del día, en esa pantalla sale una tarjeta con la cifra principal: puedes decir «ahí lo ves» sin describir la pantalla. NO caben gráficas, mapas, listas, imágenes ni códigos QR: si una herramienta dice que no hay pantalla o que no está disponible, dilo en una frase y ofrece verlo después en el computador. Responde corto, en una a tres frases, y da las cifras importantes en voz.`;
+
+/** Musica en la placa de bolsillo: no suena ahi, se controla el Spotify de otro dispositivo. */
+const REMOTE_MUSIC_RULES = `
+
+MÚSICA: este aparato NO reproduce música. Con la herramienta musica controlas el Spotify de Javier en sus otros dispositivos (celular, computador, parlante): poner una canción, artista o género, pausar, continuar, siguiente, anterior, volumen o decir qué suena. La música sale por ese otro dispositivo (y por los audífonos que tenga conectados ahí); en la pantalla sale una tarjeta con la canción. Dile siempre en qué dispositivo quedó sonando. Si la herramienta dice que no hay ningún dispositivo con Spotify abierto o que falta volver a conectar la cuenta, dilo tal cual y no lo intentes de nuevo por tu cuenta.`;
 
 /** Modo carro: quien habla va manejando. */
 const CAR_RULES = `
@@ -510,6 +516,7 @@ export class SessionGateway implements OnGatewayConnection {
   private start(client: WebSocket, s: Session, known: VisitorMemory | null, firstToday = false) {
     s.ready = true; this.active++; this.usage.add('sesiones'); if (s.owner) this.usage.add('sesiones_dueno'); if (s.gadget) this.usage.add('sesiones_bolsillo');
     if (s.owner && !s.callerPhone && !s.gadget && this.music.enabled) s.music = this.music.newState();
+    if (s.gadget && this.music.remoteAvailable) s.music = { ...this.music.newState(), remote: true }; // la placa no reproduce: es el control remoto de Spotify
     if (!s.callerPhone && !s.gadget) s.gallery = this.images.newState(); // en una llamada o en la placa de bolsillo no hay pantalla
     this.log.log(`sesion #${s.n} abierta${s.owner ? ' [DUEÑO]' : ''} (${this.active}/${this.cfg.maxSessions})`);
     const cardIds = this.cards.ids();
@@ -525,7 +532,7 @@ export class SessionGateway implements OnGatewayConnection {
       : '';
     if (this.biz?.on) s.history.push({ role: 'system', content: this.biz.prompt() + TAG_RULES }); // MODO NEGOCIO: el asistente de ese cliente, nada de Javier
     else if (s.page) s.history.push({ role: 'system', content: pagePrompt(s.page) + TAG_RULES });
-    else s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + (s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery, this.workshop.enabled) : '') + (s.owner ? DATA_RULES + (this.connections?.voiceOn ? CONNECTION_RULES : '') : DEMO_RULES) + (s.gallery && (this.images.enabled || (s.owner && (this.workshop.enabled || this.images.canGenerate))) ? IMAGE_RULES(this.images.enabled, s.owner && this.workshop.enabled, s.owner && this.images.canGenerate) : '') + this.portfolio.prompt(!!s.gallery) + (s.owner ? '' : this.catalog.prompt()) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote + (s.gadget ? GADGET_RULES : '') + (s.car ? CAR_RULES : '') });
+    else s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + (s.music?.remote ? REMOTE_MUSIC_RULES : s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery, this.workshop.enabled) : '') + (s.owner ? DATA_RULES + (this.connections?.voiceOn ? CONNECTION_RULES : '') : DEMO_RULES) + (s.gallery && (this.images.enabled || (s.owner && (this.workshop.enabled || this.images.canGenerate))) ? IMAGE_RULES(this.images.enabled, s.owner && this.workshop.enabled, s.owner && this.images.canGenerate) : '') + this.portfolio.prompt(!!s.gallery) + (s.owner ? '' : this.catalog.prompt()) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote + (s.gadget ? GADGET_RULES : '') + (s.car ? CAR_RULES : '') });
     s.stt = this.stt.open({
       // Idioma: en modo carro la escucha es solo en español (con ruido y musica la deteccion de idioma falla y el avatar
       // terminaba respondiendo en ingles). En una sesion del dueño con musica sonando tampoco se cambia de idioma por lo
@@ -965,6 +972,8 @@ export class SessionGateway implements OnGatewayConnection {
             if (out.reaction && !turn.ctrl.signal.aborted) this.send(client, { type: 'reaction', name: out.reaction });
             if (out.card && !turn.ctrl.signal.aborted) this.send(client, { type: 'card', ...out.card });
             if (out.music) this.send(client, { type: 'music', ...out.music });
+            if (out.tile && s.gadget && !turn.ctrl.signal.aborted) this.send(client, { type: 'tile', tiles: [out.tile], seconds: this.cfg.gadgetTileSeconds });
+            if (out.weather && s.gadget && !turn.ctrl.signal.aborted) this.send(client, { type: 'weather', ...out.weather }); // solo la placa lo dibuja
             if (out.tesla && !turn.ctrl.signal.aborted) this.send(client, { type: 'tesla', ...out.tesla });
             if (out.news && !turn.ctrl.signal.aborted) this.send(client, { type: 'news', ...out.news });
             if (out.markets && !turn.ctrl.signal.aborted) this.send(client, { type: 'markets', ...out.markets });
@@ -1136,7 +1145,11 @@ export class SessionGateway implements OnGatewayConnection {
     const rate = this.gadgets.get(client);
     if (rate) {
       const type = (msg as { type?: string })?.type ?? '';
-      if (!GADGET_TYPES.has(type)) return;
+      if (!GADGET_TYPES.has(type)) { // un panel de la pagina: a la placa le llega resumido en tarjetas, si se puede
+        const tiles = tilesFor(msg);
+        if (tiles.length && client.readyState === client.OPEN) client.send(JSON.stringify({ type: 'tile', tiles, seconds: this.cfg.gadgetTileSeconds }));
+        return;
+      }
       if (type === 'speech_start') msg = { ...(msg as object), sampleRate: rate }; // la frecuencia que pidio la placa
     }
     if (client.readyState === client.OPEN) client.send(JSON.stringify(msg));

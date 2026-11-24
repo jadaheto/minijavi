@@ -85,7 +85,7 @@ export function audioFrame(id: number, pcm: Buffer): Buffer {
 }
 
 /** Lo único que se le envía a la placa además del audio: lo demás (paneles, fondos, música, galería) no tiene dónde verse. */
-export const GADGET_TYPES = new Set(['ready', 'error', 'user_final', 'speech_start', 'speech_end', 'mouth', 'reaction', 'suspend', 'interrupt']);
+export const GADGET_TYPES = new Set(['ready', 'error', 'user_final', 'speech_start', 'speech_end', 'mouth', 'reaction', 'suspend', 'interrupt', 'tile']);
 
 /**
  * Baja el audio de 24 kHz a 16 kHz para la placa (su códec trabaja a 16 kHz, como en los ejemplos del fabricante).

@@ -5,7 +5,8 @@
 //   public/bolsillo/<capa>.png  una tira con los recortes de cada capa (boca, ojos, cejas)
 //   public/bolsillo/cara.json   dónde va cada recorte y en qué orden vienen
 // Cada capa es el rectángulo mínimo donde ESA parte cambia: la pantalla solo redibuja ese pedazo.
-// Uso: npm run cara2d [-- --modelo javier] [--lado 466] [--radio 0.9]
+// Uso: npm run cara2d [-- --modelo javier] [--lado 466] [--radio 0.9] [--salida public/bolsillo]
+// La cara pequeña que acompaña a las tarjetas: npm run cara2d -- --lado 170 --radio 0.94 --salida public/bolsillo/mini
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -20,7 +21,7 @@ const arg = (name, def) => { const i = process.argv.indexOf(`--${name}`); return
 const MODEL = String(arg('modelo', 'javier')).replace(/[^a-z]/g, '');
 const SIDE = Number(arg('lado', 466));
 const RADIUS = Number(arg('radio', 0.9)); // cuánto del radio de la pantalla ocupa la cabeza (deja aire para moverla y para que baje la quijada)
-const OUT = path.join(root, 'public', 'bolsillo');
+const OUT = path.resolve(root, String(arg('salida', 'public/bolsillo'))); // la cara pequeña (para las tarjetas) va en public/bolsillo/mini
 const CHROME = process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 // Las mismas fuerzas que usa el lip sync del navegador (public/js/lipsync.js).
@@ -175,7 +176,7 @@ try {
   fs.writeFileSync(path.join(OUT, 'base.png'), PNG.sync.write(neutral));
   fs.writeFileSync(path.join(OUT, 'cara.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   const kb = (f) => Math.round(fs.statSync(path.join(OUT, f)).size / 1024);
-  console.log(`Cara 2D de «${MODEL}» en public/bolsillo (${SIDE} x ${SIDE}):`);
+  console.log(`Cara 2D de «${MODEL}» en ${path.relative(root, OUT)} (${SIDE} x ${SIDE}):`);
   console.log(`  base.png ${kb('base.png')} KB`);
   for (const [layer, c] of Object.entries(manifest.capas)) console.log(`  ${layer}.png ${kb(c.archivo)} KB · ${c.cuadros.length} cuadros de ${c.w} x ${c.h} en (${c.x}, ${c.y}) · residuo ${c.residuo}`);
   ws.close(); await finish(0);

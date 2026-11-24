@@ -26,6 +26,10 @@ export interface ToolResult { text: string; scene?: string; reaction?: string; c
   markets?: Record<string, unknown>;
   /** Panel de noticias: la lista numerada, una noticia abierta o quitarlo. */
   news?: Record<string, unknown>;
+  /** Tarjeta para la placa de bolsillo (titulo, cifra o palabra grande, renglones). La pagina no la usa. */
+  tile?: Record<string, unknown>;
+  /** Clima consultado, en cifras: la placa de bolsillo lo muestra como tarjeta (la pagina solo cambia el fondo). */
+  weather?: Record<string, unknown>;
   /** Panel animado con el estado del Tesla (bateria, carga, seguros, clima). */
   tesla?: Record<string, unknown>;
   /** La galeria de la sesion cambio: 'show' (contenido nuevo), 'select' (otra seleccionada) o 'hide'. */
@@ -140,7 +144,7 @@ export class ToolsService {
           const ciudad = String(args.ciudad || cfg.defaultCity).trim();
           const w = await weatherNow(ciudad);
           if (!w) return `No encontré la ciudad "${ciudad}".`;
-          return { text: w.text, scene: w.scene }; // el fondo lo decide el dato, no el modelo
+          return { text: w.text, scene: w.scene, weather: { city: w.city, temp: w.temp, desc: w.desc, max: w.max, min: w.min, rain: w.rain } }; // el fondo lo decide el dato, no el modelo
         },
       },
       precio_dolar: {
@@ -623,11 +627,14 @@ export class ToolsService {
           accion: { type: 'string', enum: ['poner', 'pausar', 'continuar', 'quitar', 'siguiente', 'anterior', 'volumen', 'que_suena'], description: 'Qué hacer.' },
           busqueda: { type: 'string', description: `Para "poner": canción, artista o género tal como lo dijo Javier. Si dijo "lo que sea" o no dijo nada concreto, usa "${cfg.musicDefaultQuery}".` },
           volumen: { type: 'string', description: 'Para "volumen": "subir", "bajar" o un número de 0 a 100.' },
+          donde: { type: 'string', description: 'Solo si Javier dice en qué dispositivo quiere oírla ("en el celular", "en el computador", el nombre de un parlante). Si no lo dice, déjalo vacío.' },
         },
         required: ['accion'],
       },
       run: async (args: Record<string, unknown>, ctx: ToolContext) => {
         const m = ctx.music; if (!m) return 'La música no está disponible en esta sesión.';
+        // Placa de bolsillo: no puede reproducir; le da las órdenes a Spotify en otro dispositivo de Javier.
+        if (m.remote) { const out = await music.remote(m, String(args.accion), { query: args.busqueda ? String(args.busqueda) : '', where: args.donde ? String(args.donde) : '', volume: args.volumen ? String(args.volumen) : '' }); return { text: out.text, tile: out.tile }; }
         const now = () => m.queue[m.index], where = () => (m.source === 'spotify' ? 'Spotify' : 'YouTube');
         const name = (t = now()) => (t ? (m.source === 'spotify' ? `"${t.title}" de ${t.channel}` : `"${t.title}" del canal ${t.channel}`) : 'nada');
         const play = (text: string): ToolResult => { m.playing = true; m.since ||= Date.now(); return { text, music: { action: 'play', source: m.source, queue: m.queue, index: m.index, volume: m.volume } }; };

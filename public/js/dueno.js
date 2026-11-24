@@ -761,6 +761,7 @@ async function loadSpotify() {
   $('spotify-state').className = st.connected ? 'ok' : '';
   $('spotify-note').textContent = [SPOTIFY_BACK[spotifyBack] || '', st.error || '', st.connected ? `Spotify pide volver a conectar cada 6 meses (hacia ${fecha(st.expires)}). Necesita cuenta Premium.` : 'Te lleva a Spotify para autorizar y vuelve aquí. Necesita cuenta Premium.'].filter(Boolean).join(' ');
   $('spotify-connect').textContent = st.connected ? 'Volver a conectar' : 'Conectar Spotify';
+  if (st.connected && !st.remote) $('spotify-note').textContent += ' Para controlarlo desde el Javi de bolsillo falta un permiso: pulsa «Volver a conectar».';
   $('spotify-disconnect').hidden = !st.connected;
 }
 $('spotify-connect').addEventListener('click', async () => {
