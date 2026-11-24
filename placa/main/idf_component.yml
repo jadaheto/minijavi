@@ -1,0 +1,11 @@
+## Componentes que baja el gestor de ESP-IDF al compilar.
+dependencies:
+  idf:
+    version: ">=5.5"
+  waveshare/esp32_s3_touch_amoled_1_75c:
+    version: "^3.0.0"
+  lvgl/lvgl:
+    version: "9.5.0"
+    public: true
+  espressif/esp_websocket_client:
+    version: "^1.4.0"

@@ -2848,6 +2848,172 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     return 'pedido con total y confirmación; cita como solicitud; interesado con autorización; topes; contacto del chat puesto por el servidor; pausa y reenvío; avisos por Telegram y, con la ventana abierta, WhatsApp; recordatorio antes de cerrar; panel con clave, cookie y bloqueo; chat del negocio y "hola" del dueño';
   });
 
+  await check('Javi de bolsillo: pase propio que no abre el panel, audio en binario al ritmo de la voz, bocas iguales a las del navegador y sin paneles', async () => {
+    const { MouthTrack, audioFrame, GADGET_TYPES } = await import('../gadget/mouth');
+    const { OwnerService, OWNER_COOKIE, isGadget } = await import('../owner/owner.service');
+    const { pathToFileURL } = await import('node:url');
+    // 1. Las bocas del servidor son las mismas que calcula el navegador (mismos archivos que usa la página, a pasos de 20 ms).
+    const load = new Function('u', 'return import(u)') as (u: string) => Promise<any>;
+    const lip = await load(pathToFileURL(resolve(__dirname, '../../public/js/lipsync.js')).href), face = await load(pathToFileURL(resolve(__dirname, '../../public/js/cara2d.js')).href);
+    const text = 'Tu carro tiene ochenta por ciento de batería. ¿Quieres que busque un cargador? Fíjate: puf, vamos.';
+    const chars = [...text], starts = chars.map((_, i) => i / 14), ends = chars.map((_, i) => (i + 1) / 14), total = chars.length / 14;
+    const browser: [number, string][] = []; { const L = new lip.LipSync(); L.add(chars, starts, ends); let last = '-'; for (let ms = 20; ms <= total * 1000 + 300; ms += 20) { const f = face.mouthFrame(L.update(ms / 1000, 0.02)) ?? '-'; if (f !== last) { last = f; browser.push([ms, f]); } } }
+    const track = new MouthTrack(), server: [number, string][] = [];
+    for (let a = 0; a < chars.length; a += 17) server.push(...track.add(chars.slice(a, a + 17), starts.slice(a, a + 17), ends.slice(a, a + 17))); // llega por tramos, como de ElevenLabs
+    server.push(...track.close(total));
+    must(browser.length > 40 && JSON.stringify(server) === JSON.stringify(browser), `las bocas del servidor (${server.length}) no coinciden con las del navegador (${browser.length})`);
+    const names = new Set(server.map((k) => k[1])); must(['a2', 'e1', 'o2', 'p2', 'f2', 'u1', '-'].every((f) => names.has(f)), `faltan formas de boca: ${[...names].join(' ')}`);
+    const manifest = existsSync(resolve(__dirname, '../../public/bolsillo/cara.json')) ? JSON.parse(readFileSync(resolve(__dirname, '../../public/bolsillo/cara.json'), 'utf8')) : null;
+    if (manifest) must([...names].every((f) => f === '-' || manifest.capas.boca.cuadros.includes(f)), 'el servidor pide un recorte de boca que la cara no tiene');
+
+    // 2. El pase: lo crea el dueño, no sirve como cookie del panel, se revoca, vence y los intentos malos bloquean.
+    const b = noJev, noop = () => undefined;
+    const ocfg: any = Object.assign(Object.create(Object.getPrototypeOf(b.cfg)), b.cfg, { ownerSecret: 'clave-de-prueba-del-bolsillo-123', ownerDays: 90, gadgetDays: 365, gadgetAheadSeconds: 1, ttsProvider: 'elevenlabs' });
+    const owner = new OwnerService(ocfg, P.db); await owner.onModuleInit();
+    const pass = owner.issueGadget('Escritorio')!;
+    must(/^mjb\.b-[0-9a-f]{24}\.\d+\.[\w-]{20,}$/.test(pass.token) && isGadget(pass.device.id) && !!pass.expires, 'forma del pase');
+    must(owner.verifyGadget(pass.token, '10.0.0.1')?.id === pass.device.id, 'el pase bueno no entra');
+    must(!owner.verify(`${OWNER_COOKIE}=${encodeURIComponent(pass.token)}`) && !owner.verify(`${OWNER_COOKIE}=${encodeURIComponent(pass.token.slice(4))}`), 'el pase de la placa NO debe servir como cookie del panel');
+    const cookie = owner.register('clave-de-prueba-del-bolsillo-123', 'Portátil', '10.0.0.2')!.token;
+    must(!owner.verifyGadget(cookie, '10.0.0.3') && !owner.verifyGadget(`mjb.${cookie}`, '10.0.0.3'), 'la cookie del panel no debe servir como pase de la placa');
+    const [tag, id, exp, sig] = pass.token.split('.');
+    must(!owner.verifyGadget([tag, id, String(Number(exp) + 1), sig].join('.'), '10.0.0.4') && !owner.verifyGadget([tag, id, exp, sig.slice(0, -2) + 'xx'].join('.'), '10.0.0.4'), 'un pase alterado entra');
+    const short = new OwnerService(Object.assign(Object.create(Object.getPrototypeOf(ocfg)), ocfg, { gadgetDays: 0 }), P.db); await short.onModuleInit();
+    must(short.issueGadget('Sin fecha')!.expires === null, 'con BOLSILLO_DIAS=0 el pase no vence');
+    const old = owner.issueGadget('Viejo')!; const realNow = Date.now; Date.now = () => realNow() + 366 * 86_400_000;
+    const expired = owner.verifyGadget(old.token, '10.0.0.5'); Date.now = realNow; must(!expired, 'un pase vencido entra');
+    for (let i = 0; i < 5; i++) owner.verifyGadget('mjb.b-000000000000000000000000.0.firma-inventada-000000', '10.0.0.9');
+    must(owner.blockedFor('10.0.0.9') > 0 && !owner.verifyGadget(pass.token, '10.0.0.9') && !!owner.verifyGadget(pass.token, '10.0.0.1'), 'cinco pases malos deben bloquear esa dirección (y solo esa)');
+
+    // 3. La conversación de la placa: modo dueño, solo los mensajes que entiende, audio en binario y a ritmo.
+    const pcm = Buffer.alloc(24000 * 2 * 3 + 1, 1); // 3 s de audio y un byte suelto
+    const tts = { stream: async function* (t: string) { const c = [...t]; yield { audio: pcm.subarray(0, 50001).toString('base64'), align: { chars: c, starts: c.map((_, i) => i * 0.06), ends: c.map((_, i) => i * 0.06 + 0.06) } }; yield { audio: pcm.subarray(50001).toString('base64') }; } };
+    const asked: { sys: string; ctx?: any }[] = [];
+    const llm = { chat: async function* (messages: any[]) { asked.push({ sys: String(messages[0].content) }); if (messages.some((m) => m.role === 'tool')) { yield { type: 'text', delta: 'Listo, ochenta por ciento.' }; return; } yield { type: 'tool_calls', calls: [{ id: 'c1', name: 'tesla', arguments: '{}' }] }; }, complete: async () => '{}' };
+    let ctxSeen: any; const ftools = { definitions: async () => [{ type: 'function', function: { name: 'tesla' } }], run: async (_n: string, _a: string, _o: boolean, ctx: any) => { ctxSeen = ctx; return { text: 'Batería 80 %.', tesla: { battery: 80 }, scene: 'carretera', reaction: 'alegria' }; } } as any;
+    const mkGw = (ownerSvc: any, cfg: any, biz?: any) => new (SessionGateway as any)(cfg, tts, { open: () => ({ send: noop, close: noop }) }, llm, ftools, ownerSvc, { get: noop, ids: () => [] }, { get: async () => null, valid: () => false, save: async () => undefined },
+      { context: async () => '' }, { enabled: true, onDone: noop, onAudit: noop, onProgress: noop, busy: () => undefined, unseen: () => [], pendingAudits: () => [], defaultModel: { label: '' } }, { enabled: true, newState: () => ({ queue: [], index: 0 }) }, usage, { get: async () => undefined, logConversation: noop }, { enabled: true, canGenerate: true, newState: () => ({ title: '', kind: '', items: [], index: 0 }) },
+      alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard, b.capable, b.catalog, { firstToday: async () => true }, undefined, undefined, biz);
+    const open = (gw: any, hello: any) => { const json: any[] = [], bin: { at: number; buf: Buffer }[] = [], handlers: Record<string, any> = {}; let closed = 0, sess: any;
+      const origStart = gw.start.bind(gw); gw.start = (c: any, x: any, k: any, f: any) => { if (c === client) { sess = x; x.firstToday = f; } return origStart(c, x, k, f); }; // cada conexión anota solo SU sesión
+      const client: any = { readyState: 1, OPEN: 1, send: (raw: any) => { if (typeof raw === 'string') json.push(JSON.parse(raw)); else bin.push({ at: Date.now(), buf: raw }); }, on: (ev: string, fn: any) => { handlers[ev] = fn; }, close: () => { closed++; client.readyState = 3; handlers.close?.(); } };
+      gw.handleConnection(client, { headers: {}, socket: { remoteAddress: '10.0.0.20' } }); handlers.message(Buffer.from(JSON.stringify({ type: 'hello', ...hello })), false);
+      return { json, bin, client, handlers, get closed() { return closed; }, get sess() { return sess; } }; };
+    const gw = mkGw(owner, ocfg);
+    const bad = open(gw, { gadget: 'mjb.b-111111111111111111111111.0.no-es-una-firma-valida-00' }); await wait(50);
+    must(bad.closed === 1 && bad.json.length === 1 && bad.json[0].reason === 'pase' && !bad.sess, `un pase malo no debe abrir sesión: ${JSON.stringify(bad.json)}`);
+    const neg = open(mkGw(owner, ocfg, { on: true, prompt: () => 'NEGOCIO', config: {} }), { gadget: pass.token }); await wait(50);
+    must(neg.closed === 1 && neg.json[0]?.reason === 'pase', 'en modo negocio no existe el dispositivo del dueño');
+    const mute = open(mkGw(owner, Object.assign(Object.create(Object.getPrototypeOf(ocfg)), ocfg, { ttsProvider: 'browser' })), { gadget: pass.token }); await wait(50);
+    must(mute.closed === 1 && mute.json[0]?.reason === 'sin_voz', 'sin voz del servidor la placa no puede hablar: debe decirlo');
+    const t0 = Date.now(), g = open(gw, { gadget: pass.token }); await wait(150);
+    const ready = g.json.find((m) => m.type === 'ready');
+    must(ready?.owner === true && ready.gadget === true && ready.tts === 'server' && g.sess?.owner && g.sess.gadget && !g.sess.music && !g.sess.gallery && g.sess.firstToday === false, `inicio de la placa: ${JSON.stringify(ready)}`);
+    await wait(3300); // el saludo: 3 s de audio con 1 s de adelanto permitido
+    const audio = g.bin.filter((x) => x.buf[0] === 1), bytes = audio.reduce((n, x) => n + x.buf.length - 4, 0);
+    must(audio.length > 30 && audio.every((x) => x.buf.length <= 4100 && (x.buf.length - 4) % 2 === 0 && x.buf.readUInt16LE(2) === 1) && bytes === 24000 * 2 * 3, `audio en binario: ${audio.length} tramas, ${bytes} bytes`);
+    must(!g.json.some((m) => m.type === 'audio' || m.type === 'say'), 'a la placa no se le manda audio en base64 ni texto para leer');
+    const half = audio.findIndex((x, i) => audio.slice(0, i + 1).reduce((n, y) => n + y.buf.length - 4, 0) >= 24000 * 2 * 2.5);
+    must(audio[half].at - t0 > 1200 && audio[audio.length - 1].at - t0 < 3300, `ritmo: el segundo 2,5 del audio salió a los ${audio[half].at - t0} ms (debe esperar: solo 1 s de adelanto)`);
+    const mouth = g.json.filter((m) => m.type === 'mouth').flatMap((m) => m.k);
+    must(mouth.length > 5 && mouth.every((k: any, i: number) => Number.isInteger(k[0]) && (i === 0 || k[0] > mouth[i - 1][0])) && mouth.at(-1)[1] === '-' && g.json.findIndex((m) => m.type === 'speech_end') > g.json.findIndex((m) => m.type === 'mouth'), `bocas del saludo: ${JSON.stringify(mouth).slice(0, 200)}`);
+    // Una pregunta con una herramienta que trae panel, fondo y reacción: a la placa solo le llega la reacción.
+    g.json.length = 0; g.bin.length = 0; g.sess.clientPlaying = false;
+    gw.onTranscript(g.client, g.sess, 'Javi, ¿cómo va la batería del carro?', true, true, 'es'); await wait(900);
+    const types = new Set(g.json.map((m) => m.type));
+    must([...types].every((t) => GADGET_TYPES.has(t)) && types.has('reaction') && !types.has('tesla') && !types.has('scene') && types.has('speech_start') && g.bin.length > 0, `mensajes a la placa: ${[...types].join(' ')}`);
+    must(ctxSeen && ctxSeen.music === undefined && ctxSeen.gallery === undefined && ctxSeen.locate === undefined && ctxSeen.canUpload === false, 'las herramientas deben saber que la placa no tiene pantalla, música ni ubicación');
+    must(/DISPOSITIVO DE BOLSILLO/.test(asked.at(-1)!.sys), 'el modelo debe saber que habla por la placa');
+    // Hablarle encima corta el envío: no siguen saliendo tramas de la respuesta vieja.
+    g.sess.clientPlaying = false; gw.onTranscript(g.client, g.sess, 'cuéntame otra vez la batería del carro por favor', true, true, 'es'); await wait(400);
+    gw.interrupt?.(g.client, g.sess); const n0 = g.bin.length; await wait(700);
+    must(g.bin.length - n0 <= 1, `tras interrumpir siguieron saliendo ${g.bin.length - n0} tramas`);
+    // La placa real pide la voz a 16 kHz (su chip de audio trabaja así) y corta con un toque ({type:'stop'}).
+    const { Downsampler } = await import('../gadget/mouth');
+    { const d = new Downsampler(), tone = Buffer.alloc(24000 * 2); for (let i = 0; i < 24000; i++) tone.writeInt16LE(Math.round(12000 * Math.sin(2 * Math.PI * 440 * i / 24000)), i * 2);
+      const parts = [d.push(tone.subarray(0, 7002)), d.push(tone.subarray(7002, 30000)), d.push(tone.subarray(30000))], o = Buffer.concat(parts); let peak = 0, cross = 0;
+      for (let i = 0; i + 3 < o.length; i += 2) { const v = o.readInt16LE(i), w = o.readInt16LE(i + 2); peak = Math.max(peak, Math.abs(v)); if (v < 0 && w >= 0) cross++; }
+      must(Math.abs(o.length / 2 - 16000) <= 2 && peak > 10000 && peak <= 12000 && Math.abs(cross - 440) <= 2, `bajar a 16 kHz: ${o.length / 2} muestras, pico ${peak}, ${cross} ciclos (deben ser ~16000, ~12000 y 440)`); }
+    g.client.close(); await wait(50);
+    const r = open(gw, { gadget: pass.token, rate: 16000 }); await wait(2400);
+    const st = r.json.find((m) => m.type === 'speech_start'), a16 = r.bin.reduce((n, x) => n + x.buf.length - 4, 0);
+    must(st?.sampleRate === 16000 && r.sess.gadgetRate === 16000 && a16 > 16000 * 2 * 1.5 && a16 <= 16000 * 2 * 3, `voz a 16 kHz: anuncia ${st?.sampleRate}, ${a16} bytes en 2,4 s`);
+    await wait(900); const a16all = r.bin.reduce((n, x) => n + x.buf.length - 4, 0);
+    must(Math.abs(a16all - 16000 * 2 * 3) <= 8, `los 3 s del saludo a 16 kHz deben ser ~96.000 bytes y fueron ${a16all}`);
+    { const odd = open(gw, { gadget: pass.token, rate: 8000 }); await wait(60); must(odd.sess?.gadgetRate === 24000, 'una frecuencia que el servidor no conoce debe quedar en 24 kHz'); odd.client.close(); await wait(30); }
+    r.sess.clientPlaying = false; gw.onTranscript(r.client, r.sess, 'cuéntame otra vez la batería del carro por favor', true, true, 'es'); await wait(350);
+    const j0 = r.json.length, turnBefore = r.sess.turn?.id; r.handlers.message(Buffer.from(JSON.stringify({ type: 'stop' })), false); const n1 = r.bin.length; await wait(600);
+    must(r.json.slice(j0).some((m) => m.type === 'interrupt') && r.bin.length - n1 <= 1 && !r.sess.turn, `el toque para cortar: turno ${turnBefore}; antes ${JSON.stringify(r.json.slice(0, j0).map((m) => m.type + (m.id ?? '')))}; después ${JSON.stringify(r.json.slice(j0).map((m) => m.type + (m.id ?? '')))}; ${r.bin.length - n1} tramas después con id ${[...new Set(r.bin.slice(n1).map((x) => x.buf.readUInt16LE(2)))]}; tramas antes ${n1}`);
+    r.client.close();
+    // Un visitante normal no puede cortar con ese mensaje (solo existe para la placa).
+    // Revocado: el pase deja de servir.
+    owner.revoke(pass.device.id);
+    const gone = open(gw, { gadget: pass.token }); await wait(50);
+    must(gone.closed === 1 && gone.json[0]?.reason === 'pase', 'un pase revocado no debe abrir sesión');
+    must(audioFrame(0x1234, Buffer.from([9, 8])).equals(Buffer.from([1, 0, 0x34, 0x12, 9, 8])), 'cabecera del audio');
+    await P.db.query('DELETE FROM devices');
+    return `bocas idénticas a las del navegador (${server.length} cambios en ${total.toFixed(1)} s); pase firmado aparte de la cookie, con vencimiento, revocable y con bloqueo; saludo de 3 s en ${audio.length} tramas binarias al ritmo de la voz; paneles, fondos y música fuera; se corta al interrumpir; a 16 kHz para la placa real y corte con un toque`;
+  });
+
+  await check('Javi de bolsillo: la cara 2D está completa y sus recortes no se pisan', async () => {
+    const dirB = resolve(__dirname, '../../public/bolsillo'), file = join(dirB, 'cara.json');
+    if (!existsSync(file)) skip('falta generar la cara: `npm run cara2d` (necesita Chrome)');
+    const m = JSON.parse(readFileSync(file, 'utf8'));
+    const dims = (f: string) => { const b = readFileSync(join(dirB, f)); must(b.subarray(1, 4).toString() === 'PNG', `${f} no es un PNG`); return [b.readUInt32BE(16), b.readUInt32BE(20)]; };
+    must(m.lado === 466 && dims(m.base).join() === '466,466', 'la cara base no mide 466 x 466 (la pantalla de la placa)');
+    // Los cuadros que pide public/js/cara2d.js: si falta uno, esa boca o ese gesto no se dibuja.
+    const need: Record<string, string[]> = {
+      boca: ['reposo', ...'aeioupfd'.split('').flatMap((v) => [`${v}1`, `${v}2`]), 'sonrisa1', 'sonrisa2', 'triste'],
+      ojos: ['frente', 'medio', 'cerrados', 'izquierda', 'derecha', 'pensando'],
+      cejas: ['reposo', 'arriba1', 'arriba2', 'tristes', 'ceno'],
+    };
+    const code = readFileSync(resolve(__dirname, '../../public/js/cara2d.js'), 'utf8');
+    for (const [layer, frames] of Object.entries(need)) {
+      const c = m.capas[layer]; must(c, `falta la capa ${layer}`);
+      const lost = frames.filter((f) => !c.cuadros.includes(f)); must(!lost.length, `a la capa ${layer} le faltan cuadros: ${lost.join(', ')}`);
+      const [w, h] = dims(c.archivo);
+      must(w === c.w * c.cuadros.length && h === c.h, `${c.archivo} no coincide con cara.json`);
+      must(c.x >= 0 && c.y >= 0 && c.x + c.w <= 466 && c.y + c.h <= 466, `la capa ${layer} se sale de la pantalla`);
+      must(c.cuadros[0] === frames[0], `el primer cuadro de ${layer} debe ser el de la cara base`);
+      must(c.residuo <= 40, `la capa ${layer} deja ${c.residuo} de diferencia fuera de su recorte (se vería una costura)`);
+    }
+    for (const f of [...code.matchAll(/'(reposo|sonrisa[12]|triste|o1|frente|medio|cerrados|izquierda|derecha|pensando|arriba[12]|tristes|ceno)'/g)].map((x) => x[1])) must(Object.values(need).some((l) => l.includes(f)), `cara2d.js usa un cuadro que no existe: ${f}`);
+    const L = Object.values(m.capas) as any[];
+    for (let a = 0; a < L.length; a++) for (let b = a + 1; b < L.length; b++) must(!(L[a].x < L[b].x + L[b].w && L[b].x < L[a].x + L[a].w && L[a].y < L[b].y + L[b].h && L[b].y < L[a].y + L[a].h), `las capas ${L[a].archivo} y ${L[b].archivo} se pisan`);
+    const bytes = L.reduce((n, c) => n + c.w * c.h * 2 * c.cuadros.length, 466 * 466 * 2); // RGB565, como lo guardará la placa
+    must(bytes < 8 * 1024 * 1024, `la cara ocuparía ${Math.round(bytes / 1024)} KB en la placa`);
+    return `${L.reduce((n, c) => n + c.cuadros.length, 0)} cuadros en 3 capas; ~${(bytes / 1048576).toFixed(1)} MB sin comprimir en la placa (tiene 32 MB)`;
+  });
+
+  await check('Javi de bolsillo: el paquete de la cara para la placa (cara.bin) coincide con la cara 2D', async () => {
+    const bin = resolve(__dirname, '../../placa/cara.bin'), json = resolve(__dirname, '../../public/bolsillo/cara.json');
+    if (!existsSync(bin) || !existsSync(json)) skip('falta generar: `npm run cara2d` y `npm run cara:placa`');
+    const b = readFileSync(bin), m = JSON.parse(readFileSync(json, 'utf8'));
+    // El mismo formato que lee placa/main/face.c: 12 bytes de cabecera y 316 por capa.
+    must(b.subarray(0, 4).toString() === 'MJC1' && b.readUInt16LE(4) === m.lado && b.readUInt16LE(6) === 3, 'cabecera de cara.bin');
+    const cstr = (o: number) => { const e = b.indexOf(0, o); return b.subarray(o, Math.min(e, o + 12)).toString(); };
+    let end = b.readUInt32LE(8) + m.lado * m.lado * 2; must(b.readUInt32LE(8) === 12 + 3 * 316, 'la cara base empieza tras las tres capas');
+    for (let n = 0; n < 3; n++) {
+      const o = 12 + n * 316, name = cstr(o), c = m.capas[name]; must(c, `capa desconocida en cara.bin: ${name}`);
+      must(b.readUInt16LE(o + 12) === c.x && b.readUInt16LE(o + 14) === c.y && b.readUInt16LE(o + 16) === c.w && b.readUInt16LE(o + 18) === c.h && b.readUInt16LE(o + 20) === c.cuadros.length, `medidas de la capa ${name}`);
+      must(c.cuadros.every((f: string, i: number) => cstr(o + 28 + i * 12) === f), `nombres de los cuadros de ${name}`);
+      must(b.readUInt32LE(o + 24) === end, `los datos de ${name} no están donde dice`); end += c.w * c.h * 2 * c.cuadros.length;
+    }
+    must(end === b.length && b.length < 4 * 1024 * 1024, `cara.bin mide ${b.length} y debería medir ${end} (y caber en 4 MB)`);
+    const face = readFileSync(resolve(__dirname, '../../placa/main/face.c'), 'utf8'), parts = readFileSync(resolve(__dirname, '../../placa/partitions.csv'), 'utf8');
+    must(/sizeof\(head_t\) == 12 && sizeof\(layer_t\) == 316/.test(face) && /"MJC1"/.test(face) && /cara,\s+data,\s+0x40,\s+,\s+4M/.test(parts), 'el programa de la placa espera otro formato o no tiene la partición de la cara');
+    // El centro de la cara base no puede ser negro (se mezcló sobre negro, pero ahí hay piel).
+    const mid = b.readUInt16LE(b.readUInt32LE(8) + (233 * m.lado + 233) * 2); must(mid !== 0, 'la cara base salió negra');
+    // Lo que el programa de la placa le dice y le oye al servidor es lo que el servidor entiende.
+    const ses = readFileSync(resolve(__dirname, '../../placa/main/session.c'), 'utf8'), main = readFileSync(resolve(__dirname, '../../placa/main/main.c'), 'utf8'), gwSrc = readFileSync(resolve(__dirname, '../../src/session/session.gateway.ts'), 'utf8');
+    const { GADGET_TYPES } = await import('../gadget/mouth');
+    const heard = [...ses.matchAll(/strcmp\(type, "(\w+)"\)/g)].map((x) => x[1]);
+    must(heard.length >= 9 && heard.every((t) => GADGET_TYPES.has(t)) && [...GADGET_TYPES].every((t) => heard.includes(t)), `la placa atiende ${heard.join(' ')} y el servidor envía ${[...GADGET_TYPES].join(' ')}`);
+    for (const t of ['stop', 'wake', 'playback']) must(new RegExp(`type\\\\":\\\\"${t}`).test(main) && new RegExp(`msg\\?\\.type === '${t}'`).test(gwSrc), `el servidor no atiende el mensaje «${t}» de la placa`);
+    must(/"gadget", g_cfg\.pase/.test(ses) && /"rate", AUDIO_RATE/.test(ses) && /#define AUDIO_RATE 16000/.test(readFileSync(resolve(__dirname, '../../placa/main/app.h'), 'utf8')), 'el saludo de la placa');
+    return `${(b.length / 1048576).toFixed(2)} MB; cabecera, medidas, nombres y posiciones iguales a cara.json; el programa de la placa y el servidor hablan los mismos mensajes`;
+  });
+
   rmSync(dir, { recursive: true, force: true });
   const icon = { ok: '✓', FALLA: '✗', omitida: '–' };
   console.log('\nVERIFICACIÓN DE MINIJAVI (simulación: no se envió nada a nadie)\n');

@@ -280,6 +280,20 @@
             <p id="me" class="ok"></p>
             <ul class="list" id="list"></ul>
           </div>
+          <div class="card">
+            <h2>Javi de bolsillo</h2>
+            <p>Un aparato pequeño con tu cara (una placa con pantalla redonda) que conversa en modo dueño. No tiene navegador: usa un pase que se crea aquí y se graba en la placa. El pase solo abre conversaciones de voz, no este panel, y se revoca en la lista de arriba.</p>
+            <form class="row" id="gadget-form">
+              <label for="gadget-name" class="sr">Nombre del dispositivo</label>
+              <input id="gadget-name" maxlength="60" placeholder="Nombre, por ejemplo: Escritorio" autocomplete="off">
+              <button type="submit" class="small">Crear pase</button>
+            </form>
+            <div id="gadget-out" hidden>
+              <p class="ok" id="gadget-note"></p>
+              <textarea id="gadget-token" readonly rows="3" style="width:100%;font-family:ui-monospace,Menlo,monospace" aria-label="Pase del dispositivo"></textarea>
+              <div class="row"><button type="button" class="small" id="gadget-copy">Copiar</button><a href="bolsillo.html" target="_blank" rel="noopener">Probarlo en la vista previa</a></div>
+            </div>
+          </div>
           <div class="card" id="tesla-card" hidden>
             <h2>Tesla</h2>
             <p id="tesla-state"></p>

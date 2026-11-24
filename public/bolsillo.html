@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Javi de bolsillo · vista previa</title>
+  <style>
+    :root { --bg: #0b0d12; --ink: #e8ebf2; --soft: #98a1b3; --line: #232836; --accent: #3987e5; --ok: #199e70; --warn: #c98500; --metal: #c9ced6; --gap: 16px; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); font: 16px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; display: grid; place-items: center; padding: var(--gap); }
+    main { width: min(100%, 560px); display: grid; gap: var(--gap); justify-items: center; text-align: center; }
+    h1 { font-size: 1.15rem; margin: 0; font-weight: 650; }
+    p { margin: 0; color: var(--soft); max-width: 46ch; }
+    /* La placa: caja de aluminio y pantalla redonda de 466 x 466. */
+    .device { --d: min(100%, 466px); width: calc(var(--d) + 44px); max-width: 100%; aspect-ratio: 1; border-radius: 50%; padding: 22px; background: linear-gradient(145deg, #eef0f3, var(--metal) 45%, #8d939c); box-shadow: 0 18px 50px rgb(0 0 0 / 55%); border: 0; cursor: pointer; display: block; }
+    .device.real { width: 210px; padding: 10px; }
+    .device:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+    .screen { position: relative; display: block; width: 100%; aspect-ratio: 1; border-radius: 50%; overflow: hidden; background: #000; }
+    .screen canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .ring { position: absolute; inset: 0; border-radius: 50%; border: 4px solid var(--ring, transparent); opacity: 0.9; transition: border-color 0.25s; pointer-events: none; }
+    .screen[data-state='listening'] { --ring: var(--ok); }
+    .screen[data-state='thinking'] { --ring: var(--warn); }
+    .screen[data-state='speaking'] { --ring: var(--accent); }
+    .screen[data-state='thinking'] .ring { animation: pulse 1s ease-in-out infinite; }
+    .screen[data-state='away'] canvas { filter: brightness(0.55); }
+    @keyframes pulse { 50% { opacity: 0.35; } }
+    @media (prefers-reduced-motion: reduce) { .screen[data-state='thinking'] .ring { animation: none; } }
+    #status { font-weight: 600; color: var(--ink); min-height: 1.5em; }
+    #said { min-height: 3em; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+    .row button { font: inherit; color: var(--ink); background: #151924; border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+    .row button:hover { border-color: var(--accent); }
+    .row button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .row button[aria-pressed='true'] { border-color: var(--accent); color: #fff; }
+    small { color: var(--soft); }
+    .pase { width: 100%; text-align: left; border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
+    .pase summary { cursor: pointer; font-weight: 600; }
+    .pase p { margin: 10px 0; max-width: none; }
+    .pase label { display: block; font-size: 0.9rem; color: var(--soft); margin-bottom: 4px; }
+    .pase input { width: 100%; font: inherit; color: var(--ink); background: #151924; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+    .pase input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Javi de bolsillo · vista previa de la cara 2D</h1>
+    <button class="device" id="device" type="button" aria-label="Pantalla de la placa: toca para hablar">
+      <span class="screen" id="screen" data-state="idle"><canvas id="face" width="466" height="466"></canvas><span class="ring"></span></span>
+    </button>
+    <div id="status" role="status">Toca la pantalla para hablar</div>
+    <p id="said"></p>
+    <div class="row">
+      <button type="button" id="demo">Ver una demostración sin micrófono</button>
+      <button type="button" id="real" aria-pressed="false">Tamaño aproximado real</button>
+    </div>
+    <details class="pase">
+      <summary>Probar como la placa (modo dueño)</summary>
+      <p>Pega aquí el pase que da el panel en Dispositivos → Javi de bolsillo. La página conversa igual que lo hará la placa: audio en binario y bocas calculadas por el servidor. El pase no se guarda: se borra al cerrar la pestaña.</p>
+      <label for="pase">Pase del dispositivo</label>
+      <input id="pase" type="password" autocomplete="off" spellcheck="false" placeholder="mjb.…">
+    </details>
+    <small>Pantalla redonda de 466 × 466. Las imágenes salen del modelo 3D; la placa solo cambia recortes de boca, ojos y cejas.</small>
+  </main>
+  <script type="module" src="js/bolsillo.js"></script>
+</body>
+</html>

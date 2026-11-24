@@ -13,6 +13,8 @@
     "negocio:cargar": "tsc -p tsconfig.json && node --no-warnings dist/business/ingest.js",
     "verificar": "tsc -p tsconfig.json && node --no-warnings dist/verify/verify.js",
     "latencia": "node scripts/latencia.mjs",
+    "cara2d": "node scripts/cara-2d.mjs",
+    "cara:placa": "node scripts/cara-placa.mjs",
     "probar-modelo": "tsc -p tsconfig.json && node --no-warnings dist/llm/probe.js",
     "avatar": "tsc -p tsconfig.json && node --no-warnings dist/avatars/cli.js",
     "cliente:nuevo": "tsc -p tsconfig.json && node --no-warnings dist/business/new-client.js nuevo",

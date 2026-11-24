@@ -1,0 +1,68 @@
+{
+  "modelo": "javier",
+  "lado": 466,
+  "base": "base.png",
+  "capas": {
+    "cejas": {
+      "archivo": "cejas.png",
+      "x": 125,
+      "y": 171,
+      "w": 217,
+      "h": 41,
+      "residuo": 0,
+      "cuadros": [
+        "reposo",
+        "arriba1",
+        "arriba2",
+        "tristes",
+        "ceno"
+      ]
+    },
+    "ojos": {
+      "archivo": "ojos.png",
+      "x": 124,
+      "y": 218,
+      "w": 219,
+      "h": 82,
+      "residuo": 2,
+      "cuadros": [
+        "frente",
+        "medio",
+        "cerrados",
+        "izquierda",
+        "derecha",
+        "pensando"
+      ]
+    },
+    "boca": {
+      "archivo": "boca.png",
+      "x": 85,
+      "y": 300,
+      "w": 291,
+      "h": 166,
+      "residuo": 25,
+      "cuadros": [
+        "reposo",
+        "a1",
+        "a2",
+        "e1",
+        "e2",
+        "i1",
+        "i2",
+        "o1",
+        "o2",
+        "u1",
+        "u2",
+        "p1",
+        "p2",
+        "f1",
+        "f2",
+        "d1",
+        "d2",
+        "sonrisa1",
+        "sonrisa2",
+        "triste"
+      ]
+    }
+  }
+}

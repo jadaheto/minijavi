@@ -733,9 +733,21 @@ async function loadDevices() {
   $('list').replaceChildren(...devices.map((d) => {
     const btn = el('button', { type: 'button', className: 'small danger', textContent: 'Revocar' });
     btn.addEventListener('click', async () => { await api(`devices/${d.id}`, { method: 'DELETE' }); refresh(); });
-    return el('li', {}, el('div', { className: 'row between' }, el('div', {}, el('strong', { textContent: d.name + (d.current ? ' (este)' : '') }), el('small', { style: 'display:block', textContent: `Registrado ${fecha(d.createdAt)} · último uso ${fecha(d.lastSeen)}` })), btn));
+    return el('li', {}, el('div', { className: 'row between' }, el('div', {}, el('strong', { textContent: d.name + (d.current ? ' (este)' : '') + (d.gadget ? ' · de bolsillo' : '') }), el('small', { style: 'display:block', textContent: `Registrado ${fecha(d.createdAt)} · último uso ${fecha(d.lastSeen)}` })), btn));
   }));
 }
+
+// Javi de bolsillo: el pase se muestra una sola vez (el servidor no lo guarda en claro).
+$('gadget-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const r = await api('gadgets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: $('gadget-name').value }) });
+  if (!r.ok) return;
+  const out = await r.json();
+  $('gadget-token').value = out.token; $('gadget-out').hidden = false; $('gadget-name').value = '';
+  $('gadget-note').textContent = `Pase de «${out.name}» creado${out.expires ? `; vence el ${fecha(out.expires)}` : '; no vence'}. Cópialo ahora: no se vuelve a mostrar.`;
+  loadDevices();
+});
+$('gadget-copy').addEventListener('click', async () => { try { await navigator.clipboard.writeText($('gadget-token').value); $('gadget-copy').textContent = 'Copiado'; } catch { $('gadget-token').select(); } });
 
 // Spotify: la cuenta se conecta aqui (el avatar pone la musica por Spotify y, si no puede, por YouTube).
 const SPOTIFY_BACK = { ok: 'Cuenta de Spotify conectada.', cancelado: 'No se conectó: la autorización se canceló en Spotify.', error: 'No se pudo conectar con Spotify. Inténtalo de nuevo.' };

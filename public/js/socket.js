@@ -7,7 +7,7 @@ export function connect(code, visitor, handlers, extra = {}) {
   let ready = false;
   ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'hello', code, visitor, ...extra })));
   ws.addEventListener('message', (ev) => {
-    if (typeof ev.data !== 'string') return;
+    if (typeof ev.data !== 'string') { handlers.onBinary?.(ev.data); return; } // audio en binario: solo lo usa el dispositivo de bolsillo
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'ready') ready = true;
     handlers.onMessage?.(msg);

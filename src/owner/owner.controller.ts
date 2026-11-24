@@ -4,7 +4,7 @@ import { DemoDocsService } from '../demo/demo-docs.service';
 import { ConfigService } from '../config/config.service';
 import type { Request, Response } from 'express';
 import { LeadsService, STATUSES } from '../leads/leads.service';
-import { OWNER_COOKIE, OwnerService } from './owner.service';
+import { OWNER_COOKIE, OwnerService, isGadget } from './owner.service';
 import { spawn } from 'node:child_process';
 import { dirname } from 'node:path';
 import * as QRCode from 'qrcode';
@@ -67,7 +67,16 @@ export class OwnerController {
   @Get('devices')
   devices(@Req() req: Request) {
     const me = this.require(req);
-    return this.owner.list().map((d) => ({ id: d.id, name: d.name, createdAt: d.createdAt, lastSeen: d.lastSeen, current: d.id === me.id }));
+    return this.owner.list().map((d) => ({ id: d.id, name: d.name, createdAt: d.createdAt, lastSeen: d.lastSeen, current: d.id === me.id, gadget: isGadget(d.id) }));
+  }
+
+  /** Crea el pase de un "Javi de bolsillo". El pase se muestra UNA vez: no se guarda en claro ni se puede volver a pedir. */
+  @Post('gadgets')
+  gadget(@Req() req: Request, @Body() body: { name?: string }) {
+    this.require(req);
+    const out = this.owner.issueGadget(String(body?.name ?? '').trim());
+    if (!out) throw new HttpException({ error: 'desactivado' }, 404);
+    return { ok: true, id: out.device.id, name: out.device.name, token: out.token, expires: out.expires };
   }
 
   @Delete('devices/:id')

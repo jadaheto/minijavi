@@ -28,6 +28,10 @@ export class ConfigService {
   /** Clave para registrar dispositivos del dueño. Vacia = modo dueño desactivado. */
   readonly ownerSecret: string;
   readonly ownerDays: number;
+  /** Días que vale el pase de un dispositivo de bolsillo (0 = no vence; se revoca desde el panel). */
+  readonly gadgetDays: number;
+  /** Segundos de voz que la placa puede tener guardados por delante de lo que suena (su memoria es poca). */
+  readonly gadgetAheadSeconds: number;
   readonly ownerPrompt: string;
   /** Habla costeña: reglas y diccionario que se agregan al prompt ('' = apagada). HABLA_COSTENA=1 y HABLA_COSTENA_NIVEL. */
   readonly costenoPrompt: string;
@@ -306,6 +310,8 @@ export class ConfigService {
 
     this.ownerSecret = str('OWNER_SECRET');
     this.ownerDays = int('OWNER_DAYS', 90, 1);
+    this.gadgetDays = int('BOLSILLO_DIAS', 365, 0);
+    this.gadgetAheadSeconds = Math.min(30, int('BOLSILLO_ADELANTO_S', 4, 1));
     this.dataDir = str('DATA_DIR', 'data');
     this.planeMcpUrl = str('PLANE_MCP_URL');
     this.planeApiKey = str('PLANE_API_KEY');

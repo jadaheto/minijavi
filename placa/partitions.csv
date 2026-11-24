@@ -1,0 +1,6 @@
+# Nombre, Tipo, Subtipo, Inicio, Tamano
+# nvs: Wi-Fi, servidor y pase (los escribe la pagina de ajustes). cara: los recortes de la cara 2D (cara.bin).
+nvs,      data, nvs,     0x9000,  0x6000,
+phy_init, data, phy,     0xf000,  0x1000,
+factory,  app,  factory, ,        6M,
+cara,     data, 0x40,    ,        4M,

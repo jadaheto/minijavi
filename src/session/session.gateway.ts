@@ -8,6 +8,7 @@ import type { IncomingMessage } from 'node:http';
 import type { WebSocket } from 'ws';
 import { OwnerService } from '../owner/owner.service';
 import { INTERNAL } from '../calls/call-socket';
+import { Downsampler, GADGET_RATES, GADGET_TYPES, MouthTrack, audioFrame } from '../gadget/mouth';
 import { ConfigService } from '../config/config.service';
 import { CardsService } from '../cards/cards.service';
 import { DeepSeekService, LlmEvent } from '../llm/deepseek.service';
@@ -51,6 +52,8 @@ interface Turn {
   tainted?: boolean;     // en este turno el modelo ya leyo texto de terceros: no puede ejecutar acciones (GATED)
   sources?: Set<string>; // de donde vino ese texto: 'cx:<conexion>' o el nombre de la herramienta
   tags: string;         // etiquetas de reaccion que uso el modelo (se guardan en el historial para que las siga usando)
+  // Javi de bolsillo: bocas de esta respuesta, byte suelto entre tramos de audio y ritmo de envio (la placa guarda poco).
+  mouth?: MouthTrack; carry?: Buffer; paced?: number; paceT0?: number; down?: Downsampler;
 }
 /** Respuesta del modelo pedida por adelantado, antes de confirmar el fin de frase (baja la latencia). */
 interface Spec { text: string; lang: string; ctrl: AbortController; events: LlmEvent[]; done: boolean; err?: Error; wake?: () => void; tFirst?: number; }
@@ -101,6 +104,8 @@ interface Session {
   places?: { chargers: any[]; from?: any }; // cargadores mostrados por ultima vez
   marketList?: { items: any[]; title: string }; // mercados de prediccion mostrados por ultima vez (para abrir uno por su numero)
   news?: { index: number; part?: number; section?: string }; // noticia que se esta viendo (0 = la lista) y parte de la lectura completa
+  gadgetRate?: number;   // frecuencia del audio que pidio la placa (16000 o 24000)
+  gadget?: boolean;      // Javi de bolsillo: una placa con pantalla pequeña (audio en binario, bocas ya calculadas, sin paneles)
   car?: boolean;         // modo carro: solo atiende las frases que traen su nombre (o las que siguen a una respuesta)
   carHeard?: boolean;    // la frase en curso ya fue aceptada (para no soltarla a la mitad cuando se cierra la ventana)
   starting?: boolean;    // ya llego el saludo del navegador y se esta abriendo la sesion
@@ -293,6 +298,11 @@ IMÁGENES: en la pantalla puedes mostrar imágenes: la seleccionada se ve en gra
 - Imagen creada con IA: si Javier pide crear, generar o dibujar una imagen, usa generar_imagen con todos los detalles. Salen 3 versiones y tarda uno o dos minutos: dile que ya las estás creando. Cuando lleguen, pregúntale cuál le gusta. Cuando elija una ("la dos"), muéstrala con galeria y pregúntale si le quiere hacer algún cambio. Si pide cambios, usa generar_imagen con cambiar = el número de esa imagen y en descripcion SOLO los cambios: saldrán otras 3 versiones con esos cambios, y se repite lo mismo. Si no quiere cambios, dile que quedó guardada en su panel. Un mensaje que empieza por "(Aviso del sistema" lo escribió el sistema, no Javier.` : ''}${sketches ? `
 - BOCETOS PRIMERO: todo proyecto NUEVO que tenga algo que se ve (sitio, landing, videojuego, aplicación) empieza con bocetos, no con programar, aunque Javier diga "hazme" o "créame": pásale todas sus ideas, el tipo (sitio, juego o aplicacion) y, si el tema se presta, un tema de fotos, y dile que en unos minutos le muestras tres propuestas para que elija. Las únicas excepciones: que Javier diga que lo hagas directo o sin opciones, o que el encargo no tenga nada visual (un script, un cálculo); entonces usa programar con directo en true. Cuando llegue el aviso del taller con los bocetos en pantalla, empieza con "Así podría quedar", di en una frase en qué se diferencia cada uno y pregúntale cuál le gusta. Cuando elija, usa programar con el MISMO proyecto pidiendo construirlo completo a partir de ese boceto (di cuál número y repite sus ideas).` : ''}`;
 
+/** Javi de bolsillo: una placa pequeña que solo muestra la cara. */
+const GADGET_RULES = `
+
+DISPOSITIVO DE BOLSILLO: Javier te habla por un aparato pequeño que solo muestra tu cara y suena por un parlante chico. No hay pantalla para paneles, imágenes, mapas, códigos QR ni música: si una herramienta dice que no hay pantalla o que no está disponible, dilo en una frase y ofrece verlo después en el computador. Responde corto, en una a tres frases, y da las cifras importantes en voz.`;
+
 /** Modo carro: quien habla va manejando. */
 const CAR_RULES = `
 
@@ -437,6 +447,16 @@ export class SessionGateway implements OnGatewayConnection {
       let msg: any; try { msg = JSON.parse(raw.toString()); } catch { return; }
       if (!s.ready) {
         if (msg?.type !== 'hello') return;
+        // Javi de bolsillo: la placa no tiene navegador ni cookie; manda su pase (creado en el panel) en el saludo. Se decide
+        // aqui, antes de abrir la sesion: un pase malo cierra la conexion y cuenta como intento fallido.
+        if (typeof msg.gadget === 'string' && !internal) {
+          const ip = String(req?.headers?.['x-forwarded-for'] ?? req?.socket?.remoteAddress ?? '').split(',').pop()!.trim();
+          if (this.biz?.on || !this.ownerAuth.verifyGadget(msg.gadget, ip)) { this.send(client, { type: 'error', reason: 'pase' }); client.close(4401, 'pase'); return; }
+          if (this.cfg.ttsProvider === 'browser') { this.send(client, { type: 'error', reason: 'sin_voz' }); client.close(4401, 'sin voz'); return; } // la placa no tiene voz propia
+          s.owner = true; s.gadget = true; s.browserTts = false;
+          s.gadgetRate = GADGET_RATES.includes(msg.rate) ? msg.rate : TTS_SAMPLE_RATE; // la placa dice a que frecuencia trabaja su parlante
+          this.gadgets.set(client, s.gadgetRate!);
+        }
         if (!s.owner && !internal && !this.codeOk(String(msg.code ?? ''))) { this.send(client, { type: 'error', reason: 'codigo' }); client.close(4401, 'codigo'); return; }
         if (this.active >= this.cfg.maxSessions) { this.send(client, { type: 'error', reason: 'ocupado' }); client.close(4429, 'ocupado'); return; }
         if (!s.owner && this.memory.valid(msg.visitor)) s.visitor = msg.visitor;
@@ -456,7 +476,7 @@ export class SessionGateway implements OnGatewayConnection {
         }
         // La memoria del visitante se consulta en la base antes de saludar; si falla, se saluda como a alguien nuevo.
         // Para el dueño se mira tambien si es la primera sesion del dia (guardado en la base): entonces el avatar le muestra el resumen.
-        const first = s.owner && !s.car && !s.callerPhone && this.brief ? this.brief.firstToday() : Promise.resolve(false);
+        const first = s.owner && !s.car && !s.callerPhone && !s.gadget && this.brief ? this.brief.firstToday() : Promise.resolve(false);
         void Promise.all([(s.visitor ? this.memory.get(s.visitor) : Promise.resolve(null)).catch(() => null), first.catch(() => false)])
           .then(([known, firstToday]) => { if (client.readyState === client.OPEN) this.start(client, s, known, firstToday); });
         return;
@@ -477,6 +497,8 @@ export class SessionGateway implements OnGatewayConnection {
         for (const done of waiting) done(ok ? { lat, lng } : undefined);
         return;
       }
+      // La placa de bolsillo corta lo que el avatar esta diciendo con un toque (no tiene cancelacion de eco para hacerlo con la voz).
+      if (msg?.type === 'stop') { if (s.gadget && (s.turn || s.clientPlaying)) { s.clientPlaying = false; this.interrupt(client, s); } return; }
       if (msg?.type === 'wake') { if (s.suspended) { this.wake(client, s); this.greetAwake(client, s); } return; } // toque en la pantalla
       if (msg?.type === 'playback' && !msg.playing) s.lastPlayEnd = Date.now();
       if (msg?.type === 'playback' && !(s.turn && !msg.playing)) s.clientPlaying = !!msg.playing; // mientras el turno sigue generando, se considera hablando
@@ -486,9 +508,9 @@ export class SessionGateway implements OnGatewayConnection {
   }
 
   private start(client: WebSocket, s: Session, known: VisitorMemory | null, firstToday = false) {
-    s.ready = true; this.active++; this.usage.add('sesiones'); if (s.owner) this.usage.add('sesiones_dueno');
-    if (s.owner && !s.callerPhone && this.music.enabled) s.music = this.music.newState();
-    if (!s.callerPhone) s.gallery = this.images.newState(); // en una llamada no hay pantalla
+    s.ready = true; this.active++; this.usage.add('sesiones'); if (s.owner) this.usage.add('sesiones_dueno'); if (s.gadget) this.usage.add('sesiones_bolsillo');
+    if (s.owner && !s.callerPhone && !s.gadget && this.music.enabled) s.music = this.music.newState();
+    if (!s.callerPhone && !s.gadget) s.gallery = this.images.newState(); // en una llamada o en la placa de bolsillo no hay pantalla
     this.log.log(`sesion #${s.n} abierta${s.owner ? ' [DUEÑO]' : ''} (${this.active}/${this.cfg.maxSessions})`);
     const cardIds = this.cards.ids();
     const cardRules = cardIds.length
@@ -503,7 +525,7 @@ export class SessionGateway implements OnGatewayConnection {
       : '';
     if (this.biz?.on) s.history.push({ role: 'system', content: this.biz.prompt() + TAG_RULES }); // MODO NEGOCIO: el asistente de ese cliente, nada de Javier
     else if (s.page) s.history.push({ role: 'system', content: pagePrompt(s.page) + TAG_RULES });
-    else s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + (s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery, this.workshop.enabled) : '') + (s.owner ? DATA_RULES + (this.connections?.voiceOn ? CONNECTION_RULES : '') : DEMO_RULES) + (s.gallery && (this.images.enabled || (s.owner && (this.workshop.enabled || this.images.canGenerate))) ? IMAGE_RULES(this.images.enabled, s.owner && this.workshop.enabled, s.owner && this.images.canGenerate) : '') + this.portfolio.prompt(!!s.gallery) + (s.owner ? '' : this.catalog.prompt()) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote + (s.car ? CAR_RULES : '') });
+    else s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + (s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery, this.workshop.enabled) : '') + (s.owner ? DATA_RULES + (this.connections?.voiceOn ? CONNECTION_RULES : '') : DEMO_RULES) + (s.gallery && (this.images.enabled || (s.owner && (this.workshop.enabled || this.images.canGenerate))) ? IMAGE_RULES(this.images.enabled, s.owner && this.workshop.enabled, s.owner && this.images.canGenerate) : '') + this.portfolio.prompt(!!s.gallery) + (s.owner ? '' : this.catalog.prompt()) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote + (s.gadget ? GADGET_RULES : '') + (s.car ? CAR_RULES : '') });
     s.stt = this.stt.open({
       // Idioma: en modo carro la escucha es solo en español (con ruido y musica la deteccion de idioma falla y el avatar
       // terminaba respondiendo en ingles). En una sesion del dueño con musica sonando tampoco se cambia de idioma por lo
@@ -538,7 +560,7 @@ export class SessionGateway implements OnGatewayConnection {
       if (!working && Date.now() - s.startedAt > this.cfg.sessionMaxSeconds * 1000) { this.send(client, { type: 'error', reason: 'tiempo' }); client.close(4408, 'duracion'); return; }
       if (Date.now() - s.lastActivity > this.cfg.idleSeconds * 1000) { this.send(client, { type: 'error', reason: 'inactividad' }); client.close(4408, 'inactividad'); }
     }, 5000));
-    this.send(client, { type: 'ready', owner: s.owner, ...(s.page ? { page: { business: s.page.business, color: s.page.config.color, questions: s.page.config.preguntas, minutes: this.cfg.demoPageMinutes, contact: this.cfg.contactUrl || '' } } : {}), gate: this.cfg.micGateRms, wake: this.cfg.wakeWords[0], tts: s.browserTts ? 'browser' : 'server', voice: this.cfg.browserVoice, rate: this.cfg.browserVoiceRate, car: !!s.car });
+    this.send(client, { type: 'ready', owner: s.owner, ...(s.page ? { page: { business: s.page.business, color: s.page.config.color, questions: s.page.config.preguntas, minutes: this.cfg.demoPageMinutes, contact: this.cfg.contactUrl || '' } } : {}), gate: this.cfg.micGateRms, wake: this.cfg.wakeWords[0], tts: s.browserTts ? 'browser' : 'server', voice: this.cfg.browserVoice, rate: this.cfg.browserVoiceRate, car: !!s.car, ...(s.gadget ? { gadget: true } : {}) });
     // En modo carro no saluda: la sesion se abre sola con cualquier ruido y solo debe hablar cuando lo llaman.
     const greeting = s.page ? s.page.config.saludo : s.car ? '' : s.owner ? this.ownerGreeting(firstToday) : known?.name ? `¡Hola de nuevo, ${known.name}! ¿En qué te ayudo hoy?` : this.cfg.greeting;
     if (greeting) {
@@ -920,7 +942,7 @@ export class SessionGateway implements OnGatewayConnection {
             result = 'NO se ejecutó. Por seguridad, esta acción no corre en la misma respuesta en que leíste datos de terceros ni en un aviso automático. Dile a Javier qué ibas a hacer y pídele que te lo confirme; si dice que sí, vuelve a llamar la herramienta.';
           }
           else {
-            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, news: (s.news ??= { index: 0 }), marketList: (s.marketList ??= { items: [], title: '' }), places: (s.places ??= { chargers: [] }), locate: s.owner && !s.callerPhone ? () => this.locate(client, s) : undefined, demo: s.demo, canUpload: !!this.demoDocs?.enabled && !s.callerPhone && (!s.demo.doc || s.demo.doc.state === 'esperando'), source: s.callerPhone ? 'llamada' : 'voz',
+            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, news: (s.news ??= { index: 0 }), marketList: (s.marketList ??= { items: [], title: '' }), places: (s.places ??= { chargers: [] }), locate: s.owner && !s.callerPhone && !s.gadget ? () => this.locate(client, s) : undefined, demo: s.demo, canUpload: !!this.demoDocs?.enabled && !s.callerPhone && !s.gadget && (!s.demo.doc || s.demo.doc.state === 'esperando'), source: s.callerPhone ? 'llamada' : 'voz',
               notify: (note) => { if (s.ready) { s.notes.push(note); this.pumpNotes(client, s); } },
               cxRead: (slug, raw) => { const all = (s.cxSeen ??= new Map<string, Set<string>>()); if (!all.has(slug)) all.set(slug, new Set()); remember(all.get(slug)!, raw); } });
             if (c.name === 'buscar_imagenes' && out.gallery) s.imageSearches++;
@@ -1025,6 +1047,7 @@ export class SessionGateway implements OnGatewayConnection {
           turn.samples += Buffer.byteLength(c.audio, 'base64') / 2;
           const align = c.align && { chars: [...c.align.chars], starts: c.align.starts.map((t) => t + offset), ends: c.align.ends.map((t) => t + offset) };
           if (align && align.chars.length && !spaced) { spaced = true; align.chars.unshift(' '); align.starts.unshift(align.starts[0]); align.ends.unshift(align.starts[0]); }
+          if (s.gadget) { if (!(await this.sayGadget(client, turn, c.audio, align, s.gadgetRate ?? TTS_SAMPLE_RATE))) return; continue; }
           this.send(client, { type: 'audio', id: turn.id, audio: c.audio, align });
         }
         if (done) return;
@@ -1036,6 +1059,7 @@ export class SessionGateway implements OnGatewayConnection {
   private async finish(client: WebSocket, s: Session, turn: Turn, kind: string) {
     await turn.chain;
     const aborted = turn.ctrl.signal.aborted;
+    if (!aborted && turn.mouth) { const keys = turn.mouth.close(turn.samples / TTS_SAMPLE_RATE); if (keys.length) this.send(client, { type: 'mouth', id: turn.id, k: keys }); } // la boca vuelve a reposo
     if (!aborted) this.send(client, { type: 'speech_end', id: turn.id });
     if (turn.spoken) s.history.push({ role: 'assistant', content: (turn.tags ? turn.tags + ' ' : '') + turn.spoken });
     if (s.turn === turn) s.turn = undefined;
@@ -1080,7 +1104,41 @@ export class SessionGateway implements OnGatewayConnection {
     return a.length === b.length && timingSafeEqual(a, b);
   }
 
+  /**
+   * Voz para la placa de bolsillo: el audio va en tramas binarias cortas (sin base64) y la boca ya calculada
+   * ({type:'mouth', id, k:[[ms, recorte], ...]}). Se envia al ritmo en que suena, con unos segundos de adelanto: la placa
+   * tiene poca memoria y una respuesta larga no le cabria entera. Devuelve false si el turno se corto.
+   */
+  private async sayGadget(client: WebSocket, turn: Turn, audio: string, align: { chars: string[]; starts: number[]; ends: number[] } | null | undefined, rate: number): Promise<boolean> {
+    let pcm: Buffer = Buffer.from(audio, 'base64');
+    if (turn.carry) { pcm = Buffer.concat([turn.carry, pcm]); turn.carry = undefined; }
+    if (pcm.length % 2) { turn.carry = pcm.subarray(pcm.length - 1); pcm = pcm.subarray(0, pcm.length - 1); } // siempre muestras completas
+    if (rate !== TTS_SAMPLE_RATE) pcm = (turn.down ??= new Downsampler()).push(pcm); // la placa pidio 16 kHz
+    if (align?.chars.length) { const keys = (turn.mouth ??= new MouthTrack()).add(align.chars, align.starts, align.ends); if (keys.length) this.send(client, { type: 'mouth', id: turn.id, k: keys }); }
+    for (let o = 0; o < pcm.length; o += 4096) {
+      turn.paceT0 ??= Date.now();
+      for (;;) {
+        const ahead = (turn.paced ?? 0) / rate - (Date.now() - turn.paceT0) / 1000;
+        if (turn.ctrl.signal.aborted || client.readyState !== client.OPEN) return false;
+        if (ahead <= this.cfg.gadgetAheadSeconds) break;
+        await new Promise((r) => setTimeout(r, Math.min(400, (ahead - this.cfg.gadgetAheadSeconds) * 1000 + 20)));
+      }
+      const part = pcm.subarray(o, o + 4096);
+      client.send(audioFrame(turn.id, part)); turn.paced = (turn.paced ?? 0) + part.length / 2;
+    }
+    return true;
+  }
+
+  /** Clientes que son una placa de bolsillo (y la frecuencia de su audio): solo reciben los mensajes que saben usar. */
+  private readonly gadgets = new WeakMap<WebSocket, number>();
+
   private send(client: WebSocket, msg: unknown) {
+    const rate = this.gadgets.get(client);
+    if (rate) {
+      const type = (msg as { type?: string })?.type ?? '';
+      if (!GADGET_TYPES.has(type)) return;
+      if (type === 'speech_start') msg = { ...(msg as object), sampleRate: rate }; // la frecuencia que pidio la placa
+    }
     if (client.readyState === client.OPEN) client.send(JSON.stringify(msg));
   }
 }

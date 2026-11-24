@@ -5,6 +5,10 @@ import { DbService } from '../db/db.service';
 
 export interface Device { id: string; name: string; createdAt: string; lastSeen: string; }
 
+/** Los dispositivos de bolsillo (placas con pantalla pequeña) se distinguen por su identificador. */
+export const GADGET_PREFIX = 'b-';
+export const isGadget = (id: string) => id.startsWith(GADGET_PREFIX);
+
 export const OWNER_COOKIE = 'minijavi_owner';
 
 /**
@@ -85,6 +89,45 @@ export class OwnerService implements OnModuleInit {
     if (good.length !== got.length || !timingSafeEqual(good, got) || Number(exp) < Date.now()) return null;
     const device = this.devices.find((d) => d.id === id);
     if (!device) return null; // revocado
+    device.lastSeen = new Date().toISOString();
+    return device;
+  }
+
+  /**
+   * Pase para un "Javi de bolsillo" (una placa sin navegador): lo crea Javier desde el panel y se graba en la placa.
+   * Va firmado con otro prefijo, así que NO sirve como cookie: abre conversaciones de voz en modo dueño, nunca el panel.
+   * Vence a los `BOLSILLO_DIAS` (0 = no vence) y se revoca como cualquier dispositivo.
+   */
+  issueGadget(name: string): { token: string; device: Device; expires: string | null } | null {
+    if (!this.enabled) return null;
+    const now = new Date().toISOString();
+    const device: Device = { id: GADGET_PREFIX + randomBytes(12).toString('hex'), name: (name || 'Javi de bolsillo').slice(0, 60), createdAt: now, lastSeen: now };
+    this.devices.push(device); this.store(device);
+    const exp = this.cfg.gadgetDays ? Date.now() + this.cfg.gadgetDays * 86_400_000 : 0;
+    const payload = `${device.id}.${exp}`;
+    this.log.log(`dispositivo de bolsillo creado: ${device.name}`);
+    return { token: `mjb.${payload}.${this.sign(`bolsillo:${payload}`)}`, device, expires: exp ? new Date(exp).toISOString() : null };
+  }
+
+  /** Valida el pase que manda la placa al abrir la conversación. Los intentos fallidos cuentan como los de la clave. */
+  verifyGadget(token: unknown, ip: string): Device | null {
+    if (!this.enabled || typeof token !== 'string' || token.length > 200 || this.blockedFor(ip)) return null;
+    const now = Date.now(); this.recent = this.recent.filter((t) => now - t < 15 * 60_000);
+    if (this.recent.length >= 20) return null;
+    const [tag, id, exp, sig] = token.split('.');
+    let device: Device | undefined;
+    if (tag === 'mjb' && id && exp && sig && isGadget(id) && /^\d+$/.test(exp)) {
+      const good = Buffer.from(this.sign(`bolsillo:${id}.${exp}`)), got = Buffer.from(sig);
+      if (good.length === got.length && timingSafeEqual(good, got) && (exp === '0' || Number(exp) > now)) device = this.devices.find((d) => d.id === id); // si no está, fue revocado
+    }
+    if (!device) {
+      this.recent.push(now);
+      const f = this.fails.get(ip) ?? { count: 0, until: 0 };
+      f.count++; if (f.count >= 5) { f.until = now + 15 * 60_000; f.count = 0; }
+      this.fails.set(ip, f);
+      this.log.warn(`pase de dispositivo de bolsillo rechazado desde ${ip}`);
+      return null;
+    }
     device.lastSeen = new Date().toISOString();
     return device;
   }

@@ -13,3 +13,10 @@ clientes/*
 !clientes/ejemplo/
 # Salida del comando `npm run avatar` (imágenes generadas; pueden ser retratos de personas)
 avatares-salida/
+
+# Programa de la placa (Javi de bolsillo): lo que se baja o se genera al compilar no va al repositorio.
+placa/build/
+placa/managed_components/
+placa/sdkconfig
+placa/sdkconfig.old
+placa/cara.bin
