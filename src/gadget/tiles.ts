@@ -14,6 +14,8 @@ export interface Tile {
   ring?: number;
   tone?: 'ok' | 'warn' | 'bad' | 'info';
   lines: string[];
+  /** 'list': sin cifra grande; `lines` son hasta tres entradas de una lista (cada una ocupa hasta dos renglones). */
+  kind?: 'list';
 }
 type Data = Record<string, any>;
 
@@ -73,18 +75,75 @@ function status(d: Data): Tile[] {
     lines: bad.length ? bad.slice(0, 3).map((r) => r.name) : [`${rows.filter((r) => r.ok === true).length} funcionando`] })];
 }
 
+/**
+ * Listas (noticias, mercados, tareas, cargadores): tarjetas de tres entradas que pasan solas. La pantalla no alcanza
+ * para más: el avatar dice lo importante y la tarjeta acompaña.
+ */
+const LIST_ROWS = 3, LIST_CHARS = 52, LIST_PAGES = 4;
+function listTiles(title: string, rows: string[], tone: Tile['tone'] = 'info'): Tile[] {
+  const clean = rows.map((r) => clip(r, LIST_CHARS)).filter(Boolean).slice(0, LIST_ROWS * LIST_PAGES), out: Tile[] = [];
+  for (let i = 0; i < clean.length; i += LIST_ROWS) out.push({ kind: 'list', title: clip(title, 22), big: '', tone, lines: clean.slice(i, i + LIST_ROWS) });
+  return out;
+}
+
+function news(d: Data): Tile[] {
+  const items: Data[] = Array.isArray(d.items) ? d.items : [];
+  if (d.action === 'hide' || !items.length) return [];
+  const k = Number(d.index) || 0, one = k >= 1 && k <= items.length ? items[k - 1] : undefined;
+  if (one) return listTiles(one.source || d.title || 'Noticia', wrapLines(String(one.title ?? ''), LIST_CHARS, LIST_ROWS)); // una noticia abierta: su titular entero
+  return listTiles(d.title || 'Noticias', items.map((i) => `${i.n ?? ''}. ${i.title ?? ''}`));
+}
+
+function markets(d: Data): Tile[] {
+  const items: Data[] = Array.isArray(d.items) ? d.items : [];
+  if (d.action === 'hide' || !items.length) return [];
+  const top = (e: Data) => (Array.isArray(e.options) && e.options[0] && Number.isFinite(Number(e.options[0].pct)) ? e.options[0] : undefined);
+  const k = Number(d.index) || 0, one = d.action === 'open' && k >= 1 && k <= items.length ? items[k - 1] : undefined;
+  if (one) { // un mercado abierto: la opción que va adelante en grande y las demás debajo
+    const o = top(one); if (!o) return [];
+    return [tile({ title: one.title ?? 'Mercado', big: num(o.pct), unit: '%', ring: Number(o.pct), tone: 'info', lines: [String(o.label ?? ''), ...(one.options as Data[]).slice(1, 3).map((x) => `${x.label}: ${num(x.pct)} %`)] })];
+  }
+  return listTiles(d.title || 'Mercados', items.map((e) => { const o = top(e); return o ? `${clip(e.title, 36)} · ${clip(o.label, 8)} ${num(o.pct)} %` : String(e.title ?? ''); }));
+}
+
+function board(d: Data): Tile[] {
+  if (!Array.isArray(d.columns)) return [];
+  const cards = (g: string): Data[] => (d.columns as Data[]).find((c) => c.group === g)?.cards ?? [];
+  const head = tile({ title: d.project || 'Tareas', big: num(d.open), unit: Number(d.open) === 1 ? 'tarea' : 'tareas', ring: Number(d.total) ? (Number(d.done) / Number(d.total)) * 100 : undefined, tone: Number(d.late) ? 'bad' : Number(d.dueToday) ? 'warn' : 'ok',
+    lines: [Number(d.late) ? `${d.late} atrasada${Number(d.late) === 1 ? '' : 's'}` : 'Nada atrasado', Number(d.dueToday) ? `${d.dueToday} para hoy` : '', `${num(d.done)} hecha${Number(d.done) === 1 ? '' : 's'}`] });
+  const rows = [...cards('started'), ...cards('unstarted')].map((c) => `${c.late ? 'Atrasada: ' : c.today ? 'Hoy: ' : ''}${c.name ?? ''}`);
+  return [head, ...listTiles('Lo que sigue', rows, Number(d.late) ? 'bad' : 'info').slice(0, 2)];
+}
+
+function chargers(d: Data): Tile[] {
+  const items: Data[] = Array.isArray(d.items) ? d.items : [];
+  return listTiles('Cargadores', items.map((c) => `${c.n ?? ''}. ${clip(c.title, 26)} · ${num(c.km, 1)} km${Number(c.kw) ? ` · ${num(c.kw)} kW` : ''}`), 'ok');
+}
+
+/** Un texto partido en renglones cortos por palabras (para decir en la tarjeta qué pasó con una orden). */
+export function wrapLines(text: string, width = 30, max = 3): string[] {
+  const out: string[] = []; let line = '';
+  for (const w of String(text ?? '').replace(/\s+/g, ' ').trim().split(' ')) {
+    if (line && (line + ' ' + w).length > width) { out.push(line); line = w; } else line = line ? `${line} ${w}` : w;
+  }
+  if (line) out.push(line);
+  return out.length > max ? [...out.slice(0, max - 1), clip(out.slice(max - 1).join(' '), width)] : out;
+}
+
 /** Tarjeta de lo que suena en Spotify (control remoto). `image`: carátula, para las pantallas que pueden mostrarla. */
 export function musicTile(o: { device: string; playing: boolean; title: string; artist: string; image?: string }): Record<string, unknown> {
   return { ...tile({ title: `Spotify · ${o.device}`, big: o.playing ? 'Suena' : 'Pausa', tone: o.playing ? 'ok' : 'info', lines: [o.title, o.artist] }), kind: 'music', playing: o.playing, ...(o.image ? { image: o.image } : {}) };
 }
 
-/** Tarjetas para un mensaje que iba a la página ({type:'tesla'}, {type:'panel', kind}, {type:'weather'}). Vacío = no hay cómo mostrarlo. */
+/** Tarjetas para un mensaje que iba a la página ({type:'tesla'}, {type:'panel', kind}, {type:'weather'}, {type:'news'}, {type:'markets'}). Vacío = no hay cómo mostrarlo. */
 export function tilesFor(msg: unknown): Tile[] {
   const m = (msg ?? {}) as Data;
   try {
     if (m.type === 'tesla') return tesla(m);
     if (m.type === 'weather') return weather(m);
-    if (m.type === 'panel') return m.kind === 'finance' ? finance(m) : m.kind === 'route' ? route(m) : m.kind === 'brief' ? brief(m) : m.kind === 'status' ? status(m) : [];
+    if (m.type === 'news') return news(m);
+    if (m.type === 'markets') return markets(m);
+    if (m.type === 'panel') return m.kind === 'finance' ? finance(m) : m.kind === 'route' ? route(m) : m.kind === 'brief' ? brief(m) : m.kind === 'status' ? status(m) : m.kind === 'board' ? board(m) : m.kind === 'chargers' ? chargers(m) : [];
   } catch { /* un dato con otra forma: sin tarjeta, el avatar igual lo dice */ }
   return [];
 }

@@ -77,7 +77,7 @@ export class ApprovalsService implements OnModuleInit, OnModuleDestroy {
    * Decide una solicitud. Devuelve el texto de lo que paso. Solo la primera decision cuenta: el cambio de estado se hace
    * con una sola instruccion que exige que siga pendiente.
    */
-  async decide(id: number, approve: boolean, by: 'panel' | 'telegram'): Promise<{ ok: boolean; text: string }> {
+  async decide(id: number, approve: boolean, by: 'panel' | 'telegram' | 'placa'): Promise<{ ok: boolean; text: string }> {
     // Aprobar: solo lo pendiente. Rechazar: lo pendiente, o cancelar algo ya aprobado que sigue esperando su momento.
     const [a] = await this.db.query<Approval>(`UPDATE approvals SET status = $1, decided_at = $2, decided_by = $3 WHERE id = $4 AND business = $5 AND (status = 'pendiente'${approve ? '' : ` OR status = 'en_espera'`}) RETURNING *`,
       [approve ? 'aprobada' : 'rechazada', new Date().toISOString(), by, id, this.cfg.businessId]);
@@ -86,7 +86,7 @@ export class ApprovalsService implements OnModuleInit, OnModuleDestroy {
     if (!approve) { await this.actions.rejected(this.request(a), by); text = 'Rechazada: no se hizo nada.'; }
     else text = await this.execute(a);
     await this.db.query('UPDATE approvals SET result = $1 WHERE id = $2', [text, a.id]);
-    if (by === 'panel' && a.tg_message) void this.telegram.edit(Number(a.tg_message), `${this.describe(a)}\n\n${approve ? '✅' : '✖️'} ${text} (desde el panel)`); // que el mensaje no quede con botones vivos
+    if (by !== 'telegram' && a.tg_message) void this.telegram.edit(Number(a.tg_message), `${this.describe(a)}\n\n${approve ? '✅' : '✖️'} ${text} (desde ${by === 'placa' ? 'el Javi de bolsillo' : 'el panel'})`); // que el mensaje no quede con botones vivos
     this.log.log(`aprobación #${a.id}: ${text}`);
     return { ok: true, text };
   }
@@ -140,6 +140,12 @@ export class ApprovalsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Aprobadas que esperan su momento (horario, tope del dia). */
+  /** Lo minimo para mostrar una solicitud pendiente en una pantalla pequeña; undefined si ya no esta pendiente. */
+  async brief(id: number): Promise<{ what: string; who: string } | undefined> {
+    const [a] = await this.db.query<Approval>(`SELECT * FROM approvals WHERE id = $1 AND business = $2 AND status = 'pendiente'`, [Math.floor(id) || 0, this.cfg.businessId]);
+    return a ? { what: (ACTION_KINDS as Record<string, { label: string }>)[a.kind]?.label ?? a.kind, who: a.contact.includes('@') ? a.contact : `+${a.contact}` } : undefined;
+  }
+
   waiting(): Promise<Approval[]> { return this.db.query<Approval>(`SELECT * FROM approvals WHERE business = $1 AND status = 'en_espera' ORDER BY id`, [this.cfg.businessId]); }
   pending(): Promise<Approval[]> { return this.db.query<Approval>(`SELECT * FROM approvals WHERE business = $1 AND status = 'pendiente' ORDER BY id`, [this.cfg.businessId]); }
   recent(limit = 50): Promise<Approval[]> { return this.db.query<Approval>(`SELECT * FROM approvals WHERE business = $1 AND status IN ('aprobada', 'rechazada') ORDER BY id DESC LIMIT $2`, [this.cfg.businessId, limit]); }

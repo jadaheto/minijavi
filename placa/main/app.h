@@ -25,6 +25,7 @@ typedef enum {
     EV_PLAY_START, EV_PLAY_STOP,
     EV_MUSIC_TOGGLE, EV_MUSIC_NEXT, EV_MUSIC_PREV,   // toques sobre la tarjeta de musica
     EV_NOTICE, EV_NOTICE_TALK, EV_NOTICE_DISMISS,    // llego un aviso; toque arriba (que lo cuente) o sobre la cara (quitarlo)
+    EV_NOTICE_APPROVE,                               // dedo 2 s sobre el aviso de una solicitud: aprobarla
 } app_event_t;
 
 void app_post(app_event_t ev);
@@ -71,13 +72,20 @@ void ui_battery(int percent, bool charging);
 #define TILE_MAX 6
 typedef struct { char title[64], big[24], unit[16], lines[260]; int ring; /* 0-100 o -1 */ int tone; /* 0 info, 1 ok, 2 aviso, 3 mal */
                  bool music, playing, cover; /* tarjeta de musica: si suena y si llego su caratula */
-                 int notice; /* aviso que llego solo: su numero (0 = no es un aviso) */ } tile_t;
+                 int notice; /* aviso que llego solo: su numero (0 = no es un aviso) */
+                 bool list; /* lista: sin cifra, hasta tres entradas de dos renglones */
+                 bool hold; /* aviso de una solicitud pendiente: se aprueba dejando el dedo 2 s */ } tile_t;
 #define COVER_SIDE 150
 void ui_cover(const uint8_t *rgb565, int w, int h);  // caratula de lo que suena (la manda el servidor ya reducida)
 bool ui_music_playing(void);                         // la tarjeta de musica en pantalla dice que esta sonando
 void ui_tiles(const tile_t *list, int count, int seconds);
 bool ui_tile_active(void);
 void ui_tile_dismiss(void);
+int ui_hold_notice(void);                              // el aviso sobre el que se dejo el dedo (para aprobarlo)
+// Reloj de reposo: hora, fecha y un renglon (clima y carro). La hora la da el servidor una vez; la placa sigue contando.
+void ui_clock(bool on);                                // mostrarlo cuando no haya nada mas en pantalla
+bool ui_clock_wanted(void);
+void ui_clock_data(int64_t local_seconds, const char *date, const char *extra);
 
 // ---------- gestos de la cara (mind.c) ----------
 void mind_react(const char *name);
@@ -113,6 +121,7 @@ void session_mic_pause(int ms);
 void notices_start(void);
 int notices_shown(int *ids, int max);   // los avisos que estan en pantalla
 void notices_seen(void);                // ya se vieron: se le avisa al servidor
+void notices_approve(int id);           // aprobar la solicitud de ese aviso (lo hace la tarea de avisos y muestra el resultado)
 
 // ---------- bateria (power.c) ----------
 int power_battery_percent(bool *charging);           // -1 si no se pudo leer

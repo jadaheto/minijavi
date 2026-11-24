@@ -306,7 +306,7 @@ IMÁGENES: en la pantalla puedes mostrar imágenes: la seleccionada se ve en gra
 /** Javi de bolsillo: una placa pequeña que solo muestra la cara. */
 const GADGET_RULES = `
 
-DISPOSITIVO DE BOLSILLO: Javier te habla por un aparato pequeño, de pantalla redonda, que muestra tu cara y suena por un parlante chico. Cuando consultas el Tesla, el clima, el dólar o Bitcoin, un trayecto, el estado de los servicios o el resumen del día, en esa pantalla sale una tarjeta con la cifra principal: puedes decir «ahí lo ves» sin describir la pantalla. NO caben gráficas, mapas, listas, imágenes ni códigos QR: si una herramienta dice que no hay pantalla o que no está disponible, dilo en una frase y ofrece verlo después en el computador. Responde corto, en una a tres frases, y da las cifras importantes en voz.`;
+DISPOSITIVO DE BOLSILLO: Javier te habla por un aparato pequeño, de pantalla redonda, que muestra tu cara y suena por un parlante chico. Cuando consultas el Tesla, el clima, el dólar o Bitcoin, un trayecto, el estado de los servicios o el resumen del día, en esa pantalla sale una tarjeta con la cifra principal: puedes decir «ahí lo ves» sin describir la pantalla. Las noticias, los mercados, las tareas y los cargadores salen como una lista corta de tres renglones que va pasando sola: di tú lo importante en voz. NO caben gráficas, mapas, imágenes ni códigos QR: si una herramienta dice que no hay pantalla o que no está disponible, dilo en una frase y ofrece verlo después en el computador. Responde corto, en una a tres frases, y da las cifras importantes en voz.`;
 
 /** Musica en la placa de bolsillo: no suena ahi, se controla el Spotify de otro dispositivo. */
 const REMOTE_MUSIC_RULES = `
@@ -597,8 +597,11 @@ export class SessionGateway implements OnGatewayConnection {
       void Promise.all(ids.map((id) => this.notices!.get(id))).then((list) => {
         const found = list.filter((n): n is NonNullable<typeof n> => !!n);
         if (!found.length || client.readyState !== client.OPEN) return;
-        const lines = found.map((n) => `- ${n.title}${n.body ? `: ${n.untrusted ? asData(`el aviso de ${n.source}`, n.body) : n.body}` : ''}${n.ref?.kind === 'aprobacion' ? ' (se aprueba o rechaza en el panel o en Telegram)' : n.ref?.kind === 'avatar' ? ' (hay que revisar el comprobante contra la cuenta, en el panel)' : ''}`);
-        s.notes.push({ text: `(Aviso del centro de avisos: Javier acaba de tocar ${found.length === 1 ? 'este aviso' : 'estos avisos'} en su dispositivo. Cuéntaselo en una o dos frases, sin saludar antes y sin inventar detalles.)\n${lines.join('\n')}` });
+        const brief = found.some((n) => n.ref?.kind === 'resumen'), rest = found.filter((n) => n.ref?.kind !== 'resumen');
+        const lines = rest.map((n) => `- ${n.title}${n.body ? `: ${n.untrusted ? asData(`el aviso de ${n.source}`, n.body) : n.body}` : ''}${n.ref?.kind === 'aprobacion' ? ' (se aprueba dejando el dedo 2 segundos sobre el aviso en este dispositivo; rechazar, en el panel o en Telegram)' : n.ref?.kind === 'avatar' ? ' (hay que revisar el comprobante contra la cuenta, en el panel)' : ''}`);
+        if (rest.length) s.notes.push({ text: `(Aviso del centro de avisos: Javier acaba de tocar ${rest.length === 1 ? 'este aviso' : 'estos avisos'} en su dispositivo. Cuéntaselo en una o dos frases, sin saludar antes y sin inventar detalles.)\n${lines.join('\n')}` });
+        // El resumen de la mañana: no trae el texto, se arma al momento con la herramienta (y salen sus tarjetas).
+        if (brief) s.notes.push({ text: '(Aviso del sistema: Javier tocó el aviso del resumen de la mañana en su dispositivo. Llama ya a resumen_del_dia y cuéntaselo en tres a cinco frases, sin saludar antes y sin preguntarle si lo quiere.)' });
         void this.notices!.seen(found.map((n) => n.id));
         this.pumpNotes(client, s);
       }).catch(() => undefined);

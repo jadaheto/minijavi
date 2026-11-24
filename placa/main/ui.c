@@ -16,10 +16,18 @@ extern const uint8_t ttf_end[] asm("_binary_Montserrat_Medium_ttf_end");
 
 #define SCREEN 466
 #define TILE_STEP_MS 4500   // cada cuanto pasa a la tarjeta siguiente
+#define LIST_STEP_MS 7000   // una lista se lee mas despacio
+#define HOLD_MS 2000        // dedo puesto sobre una solicitud: aprobar
 
 static lv_obj_t *face_box, *ring, *note, *message, *battery;
 static lv_obj_t *tile_box, *tile_arc, *tile_title, *tile_row, *tile_big, *tile_unit, *tile_lines, *tile_dots;
 static lv_obj_t *cover_img, *music_prev, *music_next;
+static lv_obj_t *clock_box, *clock_time, *clock_date, *clock_extra;
+// Reloj de reposo: `clock_base` es la hora local (segundos) que dio el servidor y `clock_base_us` cuando llego.
+static volatile bool clock_want; static bool clock_shown, clock_dirty; static int clock_minute = -1;
+static int64_t clock_base, clock_base_us; static char clock_day[48], clock_more[72];
+// Dedo puesto sobre el aviso de una solicitud: desde cuando, y sobre cual.
+static int64_t hold_since; static int hold_id; static volatile int hold_fired_id;
 // Caratula: llega por la conexion a `cover_in` y la tarea de la pantalla la copia a `cover_px`, que es lo que se dibuja.
 static uint8_t *cover_in, *cover_px;
 static lv_image_dsc_t cover_dsc;
@@ -61,8 +69,14 @@ static void draw_tile(void)
     lv_obj_t *only_music[] = { cover_img, music_prev, music_next }, *only_data[] = { tile_row, tile_dots };
     for (int i = 0; i < 3; i++) if (only_music[i]) { if (music) lv_obj_remove_flag(only_music[i], LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(only_music[i], LV_OBJ_FLAG_HIDDEN); }
     for (int i = 0; i < 2; i++) { if (music) lv_obj_add_flag(only_data[i], LV_OBJ_FLAG_HIDDEN); else lv_obj_remove_flag(only_data[i], LV_OBJ_FLAG_HIDDEN); }
+    // Lista: sin cifra; las entradas ocupan el lugar de la cifra y de los renglones, y cada una puede doblar a dos renglones.
+    bool list = t->list && !music;
+    if (list) lv_obj_add_flag(tile_row, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_long_mode(tile_lines, list ? LV_LABEL_LONG_MODE_WRAP : LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_width(tile_lines, list ? 336 : 350); lv_obj_set_height(tile_lines, list ? 176 : 90);
+    lv_obj_set_style_text_line_space(tile_lines, list ? 3 : 5, 0);
     lv_obj_align(tile_title, LV_ALIGN_TOP_MID, 0, music ? 200 : 50);
-    lv_obj_align(tile_lines, LV_ALIGN_TOP_MID, 0, music ? 228 : 182);
+    lv_obj_align(tile_lines, LV_ALIGN_TOP_MID, 0, music ? 228 : list ? 86 : 182);
     if (music) {
         char where[96]; snprintf(where, sizeof(where), "%s%s", t->playing ? "" : "En pausa · ", t->title);
         lv_label_set_text(tile_title, where); lv_label_set_text(tile_lines, t->lines);
@@ -114,14 +128,40 @@ static void tick(lv_timer_t *t)
     // Tarjetas: llegan, pasan solas si son varias y se van unos segundos despues de que el avatar termina de hablar.
     if (tiles_off) { tiles_off = false; tiles_new = false; if (tile_on) show_tile(false); }
     if (tiles_new && !has_message) { tiles_new = false; tile_index = 0; tile_next = now + TILE_STEP_MS * 1000LL; tile_until = 0; draw_tile(); show_tile(true); }
-    if (tile_on) {
-        if (tile_count > 1 && now >= tile_next) { tile_index = (tile_index + 1) % tile_count; tile_next = now + TILE_STEP_MS * 1000LL; draw_tile(); }
+    if (tile_on && hold_id) { // dedo puesto sobre una solicitud: el anillo se llena en 2 s y la tarjeta no cambia ni se va
+        int64_t ms = (now - hold_since) / 1000;
+        lv_obj_set_style_arc_color(tile_arc, lv_color_hex(TONES[1]), LV_PART_INDICATOR);
+        lv_arc_set_value(tile_arc, ms >= HOLD_MS ? 100 : (int)(ms * 100 / HOLD_MS));
+        lv_obj_remove_flag(tile_arc, LV_OBJ_FLAG_HIDDEN);
+        tile_until = 0; tile_next = now + TILE_STEP_MS * 1000LL;
+    } else if (tile_on) {
+        if (tile_count > 1 && now >= tile_next) { tile_index = (tile_index + 1) % tile_count; tile_next = now + (tiles[tile_index].list ? LIST_STEP_MS : TILE_STEP_MS) * 1000LL; draw_tile(); }
         if (st == ST_SPEAKING) tile_until = 0; // mientras habla, se queda
         else {
-            int64_t left = (int64_t)(tile_count - tile_index) * TILE_STEP_MS * 1000LL, hold = (int64_t)tile_seconds * 1000000LL;
+            int64_t left = (int64_t)(tile_count - tile_index) * (tiles[tile_index].list ? LIST_STEP_MS : TILE_STEP_MS) * 1000LL, hold = (int64_t)tile_seconds * 1000000LL;
             if (!tile_until) tile_until = now + (hold > left ? hold : left);
             // Las tarjetas de datos son de la conversacion; un aviso que llego solo se queda aunque no haya conversacion.
             if (now >= tile_until || !(st == ST_LISTENING || st == ST_THINKING || st == ST_AWAY || (notice_on && st == ST_IDLE))) show_tile(false);
+        }
+    }
+    // Reloj de reposo: solo cuando no hay tarjeta ni mensaje, y ya se sabe la hora.
+    bool want_clock = clock_want && clock_base && !tile_on && !has_message;
+    if (want_clock != clock_shown) {
+        clock_shown = want_clock; clock_minute = -1;
+        if (want_clock) { lv_obj_remove_flag(clock_box, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(face_box, LV_OBJ_FLAG_HIDDEN); }
+        else { lv_obj_add_flag(clock_box, LV_OBJ_FLAG_HIDDEN); if (!tile_on && !has_message) lv_obj_remove_flag(face_box, LV_OBJ_FLAG_HIDDEN); }
+    }
+    if (clock_shown) {
+        int64_t local = clock_base + (now - clock_base_us) / 1000000LL;
+        int minute = (int)((local / 60) % 1440);
+        if (minute != clock_minute || clock_dirty) {
+            static const int8_t SX[5] = { 0, 10, -8, 6, -12 }, SY[5] = { 0, -8, 10, -12, 6 };
+            int h = minute / 60, m = minute % 60; char line[80];
+            clock_minute = minute; clock_dirty = false;
+            lv_label_set_text_fmt(clock_time, "%d:%02d", h % 12 ? h % 12 : 12, m);
+            snprintf(line, sizeof(line), "%s · %s", clock_day, h < 12 ? "a. m." : "p. m."); lv_label_set_text(clock_date, line);
+            lv_label_set_text(clock_extra, clock_more);
+            lv_obj_align(clock_box, LV_ALIGN_CENTER, SX[m % 5], SY[m % 5]); // se corre cada minuto: la pantalla AMOLED se marca si algo queda fijo
         }
     }
     xSemaphoreGive(lock);
@@ -132,7 +172,15 @@ static void on_touch(lv_event_t *e)
 {
     static int64_t pressed_at; static bool fired;
     lv_event_code_t code = lv_event_get_code(e);
-    if (code == LV_EVENT_PRESSED) { pressed_at = esp_timer_get_time(); fired = false; }
+    if (code == LV_EVENT_PRESSED) {
+        pressed_at = esp_timer_get_time(); fired = false;
+        // Sobre el aviso de una solicitud pendiente: dejar el dedo la aprueba (y ya no abre los ajustes).
+        hold_id = tile_on && notice_on && tiles[tile_index].hold ? tiles[tile_index].notice : 0; hold_since = pressed_at;
+    }
+    else if (code == LV_EVENT_RELEASED) { if (hold_id) { hold_id = 0; if (tile_on) draw_tile(); } }
+    else if (code == LV_EVENT_LONG_PRESSED_REPEAT && hold_id) {
+        if (!fired && esp_timer_get_time() - pressed_at > HOLD_MS * 1000LL) { fired = true; hold_fired_id = hold_id; app_post(EV_NOTICE_APPROVE); }
+    }
     else if (code == LV_EVENT_SHORT_CLICKED) {
         // Sobre la tarjeta de musica: la caratula pausa o sigue, « y » cambian de cancion; mas abajo (la cara) la quita.
         lv_point_t p = { 233, 400 }; lv_indev_t *in = lv_indev_active(); if (in) lv_indev_get_point(in, &p);
@@ -223,6 +271,13 @@ void ui_start(void)
     int small = face_side(FACE_MINI);
     if (small) { lv_obj_t *mini = box(tile_box, small, small); lv_obj_align(mini, LV_ALIGN_TOP_MID, 0, 280); face_build(FACE_MINI, mini); }
 
+    // Reloj de reposo: hora grande, fecha y un renglon con el clima y el carro, en tonos apagados.
+    clock_box = box(scr, 400, 220); lv_obj_center(clock_box); lv_obj_add_flag(clock_box, LV_OBJ_FLAG_HIDDEN);
+    clock_time = label(clock_box, f_big, 0xdfe3ea); lv_obj_align(clock_time, LV_ALIGN_TOP_MID, 0, 6);
+    clock_date = label(clock_box, f_text, 0xaab3c5); lv_obj_align(clock_date, LV_ALIGN_TOP_MID, 0, 122);
+    clock_extra = label(clock_box, f_text, 0x7d8698); lv_obj_align(clock_extra, LV_ALIGN_TOP_MID, 0, 158);
+    lv_label_set_long_mode(clock_extra, LV_LABEL_LONG_MODE_DOTS); lv_obj_set_width(clock_extra, 380);
+
     note = label(scr, f_text, 0xffffff);
     lv_obj_set_style_bg_color(note, lv_color_black(), 0); lv_obj_set_style_bg_opa(note, LV_OPA_70, 0);
     lv_obj_set_style_pad_hor(note, 12, 0); lv_obj_set_style_pad_ver(note, 6, 0); lv_obj_set_style_radius(note, 14, 0);
@@ -245,6 +300,7 @@ void ui_start(void)
     lv_obj_add_flag(touch, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(touch, on_touch, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(touch, on_touch, LV_EVENT_SHORT_CLICKED, NULL);
+    lv_obj_add_event_cb(touch, on_touch, LV_EVENT_RELEASED, NULL);
     lv_obj_add_event_cb(touch, on_touch, LV_EVENT_LONG_PRESSED_REPEAT, NULL);
 
     lv_timer_create(tick, 40, NULL);
@@ -285,6 +341,17 @@ void ui_tiles(const tile_t *list, int count, int seconds)
 }
 
 bool ui_tile_active(void) { return tile_on; }
+int ui_hold_notice(void) { return hold_fired_id; }
+
+void ui_clock(bool on) { clock_want = on; }
+bool ui_clock_wanted(void) { return clock_want; }
+void ui_clock_data(int64_t local_seconds, const char *date, const char *extra)
+{
+    xSemaphoreTake(lock, portMAX_DELAY);
+    clock_base = local_seconds; clock_base_us = esp_timer_get_time(); clock_dirty = true;
+    strlcpy(clock_day, date ? date : "", sizeof(clock_day)); strlcpy(clock_more, extra ? extra : "", sizeof(clock_more));
+    xSemaphoreGive(lock);
+}
 bool ui_music_playing(void) { return music_playing; }
 
 void ui_cover(const uint8_t *rgb565, int w, int h)

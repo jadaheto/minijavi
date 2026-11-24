@@ -4,6 +4,8 @@
 //   - Un toque abre la conversacion; desde ahi oye con manos libres hasta que el servidor la cierra por inactividad.
 //   - Mientras el avatar habla el microfono no se envia (aun no hay cancelacion de eco): se le corta con un toque.
 //   - Dejar el dedo 3 s (o tener oprimido BOOT al encender) abre la pagina de ajustes.
+//   - En reposo muestra un reloj tenue (hora, clima, carro); enchufada se queda asi, con bateria se apaga a los 5 min.
+//   - Sobre el aviso de una solicitud por aprobar, dejar el dedo 2 s la aprueba.
 #include <stdio.h>
 #include <string.h>
 #include "bsp/esp-bsp.h"
@@ -20,12 +22,14 @@
 
 #define BOOT_BUTTON GPIO_NUM_0      // boton BOOT (el pin de arranque de todo ESP32-S3; sin confirmar en el esquema de esta placa)
 #define DIM_AFTER_S 45              // sin conversacion: baja el brillo
-#define SLEEP_AFTER_S 300           // y despues apaga la pantalla (un toque la enciende)
+#define SLEEP_AFTER_S 300           // y despues, con bateria, apaga la pantalla (un toque la enciende); enchufada queda el reloj
+#define CLOCK_LIGHT 14              // brillo del reloj de reposo
 
 static QueueHandle_t events;
 static volatile app_state_t state = ST_BOOT;
 static int64_t idle_since;
 static int brightness = 100;
+static bool on_power;               // enchufada (cargando): el reloj de reposo no se apaga
 
 void app_post(app_event_t ev) { if (events) xQueueSend(events, &ev, 0); }
 app_state_t app_state(void) { return state; }
@@ -116,6 +120,10 @@ void app_main(void)
                     if (state == ST_IDLE && n) { session_tell(ids, n); notices_seen(); want_open = true; }
                     break;
                 }
+                case EV_NOTICE_APPROVE: // dedo 2 s sobre una solicitud: la aprueba la tarea de avisos y muestra que paso
+                    light(100); idle_since = esp_timer_get_time();
+                    if (ui_hold_notice() > 0) notices_approve(ui_hold_notice());
+                    break;
                 case EV_NOTICE_DISMISS: light(100); idle_since = esp_timer_get_time(); ui_tile_dismiss(); notices_seen(); break;
                 case EV_MUSIC_TOGGLE: session_send_json(ui_music_playing() ? "{\"type\":\"music\",\"cmd\":\"pausar\"}" : "{\"type\":\"music\",\"cmd\":\"continuar\"}"); break;
                 case EV_MUSIC_NEXT: session_send_json("{\"type\":\"music\",\"cmd\":\"siguiente\"}"); break;
@@ -133,13 +141,15 @@ void app_main(void)
         int64_t now = esp_timer_get_time();
         if (state == ST_IDLE || state == ST_NOWIFI) {
             int64_t idle = (now - idle_since) / 1000000;
-            light(idle > SLEEP_AFTER_S ? 0 : idle > DIM_AFTER_S ? 25 : 100);
-        } else if (state == ST_AWAY) light(25);
-        else light(100);
+            bool resting = state == ST_IDLE && idle > DIM_AFTER_S && !ui_tile_active();
+            ui_clock(resting);
+            if (ui_tile_active()) light(100); // un aviso en pantalla se ve a pleno brillo
+            else light(idle > SLEEP_AFTER_S && !on_power ? 0 : idle > DIM_AFTER_S ? (state == ST_IDLE ? CLOCK_LIGHT : 25) : 100);
+        } else { ui_clock(false); light(state == ST_AWAY ? 25 : 100); }
         if (now - last_battery > 60 * 1000000LL || !last_battery) {
             last_battery = now ? now : 1;
             bool charging = false; int pct = power_battery_percent(&charging);
-            ui_battery(pct, charging);
+            ui_battery(pct, charging); on_power = charging;
         }
         // BOOT oprimido 3 s con la placa encendida: ajustes.
         static int boot_held;

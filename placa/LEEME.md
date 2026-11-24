@@ -40,6 +40,9 @@ Para volver a los ajustes: deja el dedo 3 segundos en la pantalla, o enciéndela
 | Tarjeta con una cifra y la cara pequeña | Datos de lo que preguntaste (Tesla, clima, dólar o Bitcoin, trayecto, servicios, resumen). Se va sola a los 12 s de terminar de hablar, o con un toque. |
 | Carátula con « y » | Música en Spotify (suena en tu celular o computador, no en la placa). Toca la carátula para pausar o seguir, « y » para cambiar de canción; tocar la cara quita la tarjeta. |
 | Tarjeta que aparece sola, con un tono | Un aviso (interesado nuevo, algo por aprobar, pago por revisar, taller, servicio caído). Tócala arriba y el avatar te lo cuenta; toca la cara para quitarla. De 9 p. m. a 7 a. m. no llegan: salen en la mañana. |
+| Aviso «Por aprobar» (dice «Deja el dedo 2 s: aprobar») | Una solicitud de la bandeja. **Deja el dedo 2 segundos** (el anillo se llena) y queda aprobada; la tarjeta dice si salió, quedó en espera o no salió. Rechazar: en el panel o en Telegram. Los pagos de avatar no se aprueban aquí. |
+| Tarjeta con título y tres renglones, sin cifra | Una lista (noticias, mercados, tareas, cargadores). Pasa sola de tres en tres. |
+| Hora grande, fecha y un renglón tenue | Reloj de reposo: sale a los 45 s sin usarla, con el clima y la batería del carro. Enchufada se queda así; con batería se apaga a los 5 min. Un toque abre la conversación. |
 
 La conversación se cierra sola por inactividad (lo decide el servidor). En reposo la pantalla baja el brillo a los 45 s
 y se apaga a los 5 min; un toque la enciende.
@@ -76,5 +79,6 @@ este repositorio ni salen en el registro.
 - Los avisos: que lleguen enchufada y con batería, el tono, y cuánta batería gasta preguntar cada 5 minutos.
 - La tarjeta de música: que la carátula llegue y se vea, y que los toques caigan donde deben (si la pantalla táctil sale volteada, « y » quedarían al revés).
 - El toque largo, el botón BOOT (se asumió el pin 0) y la lectura de la batería.
+- Aprobar con el dedo (que no se confunda con el toque largo de 3 s de los ajustes), el reloj de reposo (brillo, que la hora no se atrase, que se corra cada minuto) y cómo se leen las listas de tres renglones.
 - La página de ajustes desde un celular real y la conexión segura al servidor.
 - Cuánto dura la batería.

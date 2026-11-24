@@ -3125,6 +3125,112 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     return 'cualquier fuente emite (también las futuras, como el correo); detalle de terceros marcado y recortado; de 9 p. m. a 7 a. m. no sale nada y se entrega en la mañana; la petición espera y responde al instante; solo con pase de la placa; al tocarlo, el avatar lo cuenta sin saludar y lo de fuera va como dato';
   });
 
+  await check('Javi de bolsillo: aprobar con el dedo (no los pagos de avatar), tarjetas de lista, reloj de reposo y resumen de la mañana como aviso', async () => {
+    const { NoticesService } = await import('../notices/notices.service');
+    const { NoticesController } = await import('../notices/notices.controller');
+    const { emitNotice } = await import('../notices/bus');
+    const { OwnerService } = await import('../owner/owner.service');
+    const { tilesFor, wrapLines } = await import('../gadget/tiles');
+    const b = noJev, noop = () => undefined, src = (f: string) => readFileSync(resolve(__dirname, `../../${f}`), 'utf8');
+    const ncfg: any = Object.assign(Object.create(Object.getPrototypeOf(b.cfg)), b.cfg, { noticesEnabled: true, noticesQuiet: [21, 7], gadgetNoticeSeconds: 40, timezone: 'America/Bogota', ownerSecret: 'clave-de-prueba-del-bolsillo-123', gadgetDays: 365, gadgetAheadSeconds: 1, gadgetTileSeconds: 12, ttsProvider: 'elevenlabs', clockTeslaMinutes: 120, defaultCity: 'Ciudad' });
+
+    // --- Tarjetas de lista: tres entradas por tarjeta, recortadas; lo que se quita de la pantalla no deja tarjeta.
+    const news = tilesFor({ type: 'news', action: 'show', title: 'Noticias de IA', index: 0, items: Array.from({ length: 8 }, (_, k) => ({ n: k + 1, title: `Titular número ${k + 1} ${'muy largo '.repeat(12)}`, source: 'Medio', date: 'hoy' })) }) as any[];
+    must(news.length === 3 && news.every((t) => t.kind === 'list' && t.big === '' && t.title === 'Noticias de IA' && t.lines.every((l: string) => l.length <= 52)) && news.map((t) => t.lines.length).join() === '3,3,2' && news[0].lines[0].startsWith('1. Titular'), `noticias en lista: ${JSON.stringify(news).slice(0, 300)}`);
+    const one = tilesFor({ type: 'news', action: 'open', title: 'Noticias', index: 2, items: [{ n: 1, title: 'A', source: 'M1' }, { n: 2, title: 'El segundo titular completo que no cabe en un solo renglón de la pantalla redonda', source: 'El Medio' }] }) as any[];
+    must(one.length === 1 && one[0].title === 'El Medio' && one[0].lines.length >= 2 && one[0].lines.join(' ').startsWith('El segundo titular'), `una noticia abierta: ${JSON.stringify(one)}`);
+    must(tilesFor({ type: 'news', action: 'hide' }).length === 0 && tilesFor({ type: 'markets', action: 'hide' }).length === 0, 'quitar de la pantalla no produce tarjeta');
+    const mk = [{ n: 1, title: '¿Bajará la tasa en diciembre?', options: [{ label: 'Sí', pct: 63.4 }, { label: 'No', pct: 36.6 }] }, { n: 2, title: 'Otro mercado', options: [] }];
+    const ml = tilesFor({ type: 'markets', action: 'list', title: 'Mercados del momento', items: mk }) as any[], mo = tilesFor({ type: 'markets', action: 'open', title: 'x', index: 1, items: mk }) as any[];
+    must(ml.length === 1 && ml[0].kind === 'list' && /Sí 63 %/.test(ml[0].lines[0]) && ml[0].lines[1] === 'Otro mercado' && mo.length === 1 && mo[0].big === '63' && mo[0].unit === '%' && mo[0].ring === 63 && mo[0].lines[0] === 'Sí', `mercados: ${JSON.stringify([ml, mo])}`);
+    const bd = tilesFor({ type: 'panel', kind: 'board', project: 'Proyecto', total: 10, open: 6, done: 4, late: 1, dueToday: 2, columns: [{ group: 'started', cards: [{ name: 'Entregar informe', late: true }] }, { group: 'unstarted', cards: [{ name: 'Llamar al cliente', today: true }, { name: 'Otra' }] }, { group: 'completed', cards: [{ name: 'Hecha' }] }] }) as any[];
+    must(bd.length === 2 && bd[0].big === '6' && bd[0].ring === 40 && bd[0].tone === 'bad' && bd[0].lines[0] === '1 atrasada' && bd[1].kind === 'list' && bd[1].lines.join('|') === 'Atrasada: Entregar informe|Hoy: Llamar al cliente|Otra', `tablero: ${JSON.stringify(bd)}`);
+    const ch = tilesFor({ type: 'panel', kind: 'chargers', items: [{ n: 1, title: 'Estación de prueba con nombre largo', km: 2.84, kw: 50 }, { n: 2, title: 'Otra', km: 12, kw: 0 }] }) as any[];
+    must(ch.length === 1 && ch[0].kind === 'list' && /^1\. Estación de prueba.* · 2,8 km · 50 kW$/.test(ch[0].lines[0]) && ch[0].lines[1] === '2. Otra · 12,0 km', `cargadores: ${JSON.stringify(ch)}`);
+    must(tilesFor({ type: 'panel', kind: 'board' }).length === 0 && tilesFor({ type: 'news', items: 'x' }).length === 0, 'datos con otra forma: sin tarjeta');
+    must(wrapLines('Aprobada. Modo simulación: no se envió nada, quedó en la bitácora.', 30, 3).every((l) => l.length <= 30) && wrapLines('uno dos', 30, 3).join() === 'uno dos', 'los renglones del resultado deben caber');
+
+    // --- Aprobar con el dedo: solo el aviso de una solicitud de la bandeja; pasa por la misma puerta; una sola vez.
+    await P.db.query('DELETE FROM notices'); await P.db.query('DELETE FROM devices');
+    for (const a of await P.approvals.pending()) await P.approvals.decide(a.id, false, 'panel');
+    const simWas = P.policy.simulation, prodWas = P.policy.production;
+    at('2026-11-24T15:00:00.000Z'); await setP('simulacion', false); await setP('produccion', true); sent.length = 0; tg.length = 0;
+    const svc = new NoticesService(ncfg, P.db, usage); svc.onModuleInit(); svc.now = () => new Date('2026-11-24T15:00:00-05:00');
+    const owner = new OwnerService(ncfg, P.db); await owner.onModuleInit();
+    const pass = owner.issueGadget('Placa')!, req = (auth?: string) => ({ headers: auth ? { authorization: auth } : {}, socket: { remoteAddress: '10.2.0.2' }, on: noop }) as any, ok = req(`Bearer ${pass.token}`);
+    const ctl = new NoticesController(svc, owner, ncfg, P.approvals, undefined);
+    await newLead('3006670001'); // deja la plantilla de bienvenida por aprobar → aviso «Por aprobar»
+    emitNotice({ source: 'avatares', title: 'Pago de avatar por revisar', body: 'Cliente', tone: 'warn', untrusted: true, ref: { kind: 'avatar', id: 5 } }); await wait(80);
+    const list: any = await ctl.list(ok, '0', '0'), ap = list.notices.find((t: any) => t.ref?.kind === 'aprobacion'), av = list.notices.find((t: any) => t.ref?.kind === 'avatar'), ld = list.notices.find((t: any) => t.ref?.kind === 'interesado');
+    must(ap && ap.hold === true && ap.lines[1] === '+573006670001' && /2 s/.test(ap.lines[2]) && av && !('hold' in av) && ld && !('hold' in ld), `solo la solicitud se puede aprobar con el dedo: ${JSON.stringify(list.notices)}`);
+    const code = (r: any, id: any) => ctl.approve(r, String(id)).then(() => 0, (e: any) => e.getStatus());
+    must((await code(req(), ap.id)) === 401 && (await code(ok, av.id)) === 404 && (await code(ok, ld.id)) === 404 && (await code(ok, 999999)) === 404 && waSent() === 0, 'sin pase 401; un pago de avatar, un interesado o un aviso inexistente no se aprueban (404)');
+    const done: any = await ctl.approve(ok, String(ap.id));
+    const [row] = await P.db.query<any>('SELECT status, decided_by FROM approvals WHERE id = $1', [Number(ap.ref.id)]);
+    must(done.ok === true && done.tile.title === 'Aprobada' && done.tile.tone === 'ok' && done.tile.big === 'Listo' && done.tile.lines.length >= 1 && done.tile.lines.every((l: string) => l.length <= 30) && !done.tile.hold && waSent() === 1 && row.status === 'aprobada' && row.decided_by === 'placa', `aprobar desde la placa: ${JSON.stringify(done)} · ${JSON.stringify(row)} · envíos ${waSent()}`);
+    must(!!(await svc.recent()).find((n) => n.id === ap.id)?.seenAt, 'el aviso aprobado queda como visto');
+    const again: any = await ctl.approve(ok, String(ap.id));
+    must(again.ok === false && again.tile.title === 'No se aprobó' && waSent() === 1, `aprobar dos veces no envía dos veces: ${JSON.stringify(again)}`);
+    must(tg.some((t) => t.method === 'editMessageText' && /desde el Javi de bolsillo/.test(String(t.body.text))), 'el mensaje de Telegram debe quedar sin botones y decir desde dónde se aprobó');
+    // Fuera de horario: queda aprobada y en espera, y la tarjeta lo dice.
+    at('2026-11-25T04:00:00.000Z'); svc.now = () => new Date('2026-11-24T15:00:00-05:00'); await newLead('3006670002'); await wait(80);
+    const l2: any = await ctl.list(ok, String(ap.id), '0'), ap2 = l2.notices.find((t: any) => t.hold), late: any = await ctl.approve(ok, String(ap2.id));
+    must(late.ok === true && /sale sola|no puede salir/.test(late.text) && waSent() === 1 && late.tile.big === 'Ojo' && late.tile.tone === 'warn' && late.tile.lines.every((l: string) => l.length <= 30), `aprobar de noche: ${JSON.stringify(late)}`);
+    for (const a of await P.approvals.waiting()) await P.approvals.decide(a.id, false, 'panel');
+
+    // --- Reloj de reposo: hora del negocio, clima con memoria y sin pase no responde.
+    let weatherCalls = 0;
+    briefFetch = (url) => { if (url.includes('geocoding')) return new Response(JSON.stringify({ results: [{ name: 'Ciudad', admin1: 'Depto', country: 'Colombia', latitude: 9, longitude: -75 }] }), { status: 200 }); weatherCalls++;
+      return new Response(JSON.stringify({ current: { temperature_2m: 30.6, apparent_temperature: 33, relative_humidity_2m: 70, weather_code: 2, wind_speed_10m: 8, is_day: 1 }, daily: { temperature_2m_max: [32], temperature_2m_min: [24], precipitation_probability_max: [60] } }), { status: 200 }); };
+    let reports = 0; const car = { connected: true, report: async () => { reports++; return { vehicle: { name: 'Carro' }, live: true, data: { charge_state: { battery_level: 72, charging_state: 'Charging' } } }; } };
+    const cctl = new NoticesController(svc, owner, ncfg, P.approvals, car as any);
+    try {
+      must((await cctl.clock(req()).then(() => 0, (e: any) => e.getStatus())) === 401, 'el reloj sin pase: 401');
+      const c1: any = await cctl.clock(ok), c2: any = await cctl.clock(ok);
+      must(Math.abs(c1.now - Date.now()) < 2000 && c1.offset === -300 && /^[A-ZÁÉÍÓÚ][a-záéíóú]+, \d+ de [a-z]+$/.test(c1.date) && c1.weather?.temp === 31 && c1.weather.desc.length <= 22 && c1.tesla?.level === 72 && c1.tesla.charging === true, `reloj: ${JSON.stringify(c1)}`);
+      must(weatherCalls === 1 && reports === 1 && c2.tesla?.level === 72, `dos consultas seguidas no vuelven a preguntar al clima ni al carro (clima ${weatherCalls}, carro ${reports})`);
+      const off: any = await new NoticesController(svc, owner, Object.assign(Object.create(Object.getPrototypeOf(ncfg)), ncfg, { clockTeslaMinutes: 0 }), P.approvals, car as any).clock(ok);
+      must(off.tesla === null && reports === 1, 'con RELOJ_TESLA_MIN=0 no se consulta el carro');
+      svc.now = () => new Date('2026-11-24T23:00:00-05:00');
+      const night: any = await new NoticesController(svc, owner, ncfg, P.approvals, car as any).clock(ok);
+      must(night.quiet === true && night.tesla === null && reports === 1, 'en el horario silencioso no se consulta el carro');
+      svc.now = () => new Date('2026-11-24T15:00:00-05:00');
+      // El clima falla: no se queda 20 minutos sin dato; se conserva lo anterior y se reintenta pronto.
+      const flaky = new NoticesController(svc, owner, ncfg, P.approvals, undefined); let fail = true; const goodFetch = briefFetch!;
+      briefFetch = (url, init) => (fail ? new Response('x', { status: 500 }) : goodFetch(url, init));
+      const f1: any = await flaky.clock(ok); fail = false; (flaky as any).clockWeather.at -= 3 * 60_000; const f2: any = await flaky.clock(ok); await wait(50); const f3: any = await flaky.clock(ok);
+      must(f1.weather === null && (f2.weather?.temp === 31 || f3.weather?.temp === 31), `tras un fallo del clima debe reintentar pronto: ${JSON.stringify([f1.weather, f2.weather, f3.weather])}`);
+      const dead: any = await new NoticesController(svc, owner, ncfg, P.approvals, { connected: true, report: async () => { throw new Error('caído'); } } as any).clock(ok);
+      must(dead.tesla === null && typeof dead.now === 'number', 'si el carro falla, el reloj responde igual');
+    } finally { briefFetch = undefined; }
+
+    // --- Resumen de la mañana: llega como aviso y, al tocarlo, el avatar llama a la herramienta (no trae el texto).
+    must(/emitNotice\(\{ source: 'resumen'[^}]*ref: \{ kind: 'resumen'/.test(src('src/brief/brief.service.ts')), 'el resumen de la mañana debe emitir su aviso al enviarse');
+    emitNotice({ source: 'resumen', title: 'Resumen de la mañana', body: 'Ya está listo', word: 'Hoy', ref: { kind: 'resumen', id: '2026-11-24' } }); await wait(60);
+    const rs = (await svc.pending(0)).find((n) => n.source === 'resumen')!;
+    const asked: string[] = [], out: any[] = [], handlers: Record<string, any> = {};
+    const llm = { chat: async function* (messages: any[]) { asked.push(String(messages.at(-1).content)); yield { type: 'text', delta: 'Hoy está tranquilo.' }; }, complete: async () => '{}' };
+    const tts = { stream: async function* (t: string) { out.push(t); yield { audio: Buffer.alloc(4800, 1).toString('base64') }; } };
+    const gw = new (SessionGateway as any)(ncfg, tts, { open: () => ({ send: noop, close: noop }) }, llm, { definitions: async () => [], run: async () => ({ text: '' }) }, owner, { get: noop, ids: () => [] }, { get: async () => null, valid: () => false, save: async () => undefined },
+      { context: async () => '' }, { enabled: false, onDone: noop, onAudit: noop, onProgress: noop, busy: () => undefined, unseen: () => [], pendingAudits: () => [], defaultModel: { label: '' } }, { enabled: false, remoteAvailable: false }, usage, { get: async () => undefined, logConversation: noop }, { enabled: false, canGenerate: false, newState: () => ({ title: '', kind: '', items: [], index: 0 }) },
+      alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard, b.capable, b.catalog, undefined, undefined, undefined, undefined, undefined, undefined, svc);
+    const client: any = { readyState: 1, OPEN: 1, send: noop, on: (ev: string, fn: any) => { handlers[ev] = fn; }, close: () => { client.readyState = 3; handlers.close?.(); } };
+    gw.handleConnection(client, { headers: {}, socket: { remoteAddress: '10.2.0.3' } });
+    handlers.message(Buffer.from(JSON.stringify({ type: 'hello', gadget: pass.token, rate: 16000, notice: [rs.id, ap2.id] })), false);
+    for (let k = 0; k < 40 && asked.length < 2; k++) { await wait(150); if (asked.length === 1 && k % 4 === 3) handlers.message(Buffer.from(JSON.stringify({ type: 'playback', playing: false })), false); } // el segundo aviso se cuenta al terminar el primero
+    must(asked.some((a) => /tocó el aviso del resumen de la mañana[\s\S]*resumen_del_dia/.test(a)) && asked.some((a) => a.startsWith('(Aviso del centro de avisos') && /dejando el dedo 2 segundos/.test(a) && !/Resumen de la mañana/.test(a)) && !out.some((t) => /Hola|Buen/.test(t)), `al tocar el resumen: ${JSON.stringify(asked).slice(0, 400)}`);
+    client.close(); svc.onModuleDestroy();
+
+    // --- La vista previa y el programa de la placa usan las mismas rutas y el mismo gesto.
+    const nc = src('placa/main/notices.c'), ui = src('placa/main/ui.c'), mc = src('placa/main/main.c'), js = src('public/js/bolsillo.js');
+    must(/avisos\/%d\/aprobar/.test(nc) && /"reposo"/.test(nc) && /"hold"/.test(nc) && /#define HOLD_MS 2000/.test(ui) && /tiles\[tile_index\]\.hold/.test(ui) && /EV_NOTICE_APPROVE/.test(mc) && /"list"/.test(src('placa/main/session.c')), 'el programa de la placa debe aprobar con el dedo, pedir el reloj y dibujar listas');
+    must(/api\/placa\/avisos\/\$\{t\.id\}\/aprobar/.test(js) && /api\/placa\/reposo/.test(js) && /2000\)/.test(js) && /t\.kind === 'list'/.test(js), 'la vista previa debe hacer lo mismo que la placa');
+    must(!/rechazar|Rechaz/.test(nc + ui) , 'desde la placa no se rechaza');
+    await setP('simulacion', simWas); await setP('produccion', prodWas); A.now = () => new Date();
+    await P.db.query('DELETE FROM notices'); await P.db.query('DELETE FROM devices');
+    return 'noticias, mercados, tareas y cargadores en listas de tres; solo el aviso de una solicitud se aprueba con el dedo (pagos de avatar e interesados no), por la misma puerta y una sola vez; de noche queda en espera; reloj con la hora del negocio, clima y carro con memoria, sin carro de noche; el resumen llega como aviso y el avatar lo arma al tocarlo';
+  });
+
   await check('Javi de bolsillo: la cara 2D está completa y sus recortes no se pisan', async () => {
     const dirB = resolve(__dirname, '../../public/bolsillo'), file = join(dirB, 'cara.json');
     if (!existsSync(file)) skip('falta generar la cara: `npm run cara2d` (necesita Chrome)');

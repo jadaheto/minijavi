@@ -58,6 +58,19 @@
     .tile-dots { top: calc(272 * var(--u)); font-size: calc(12 * var(--u)); letter-spacing: calc(6 * var(--u)); color: #4a5266; }
     .tile-dots b { color: #fff; font-weight: 400; }
     .screen #mini { position: absolute; inset: auto; left: 50%; top: calc(280 * var(--u)); width: calc(170 * var(--u)); height: calc(170 * var(--u)); transform: translateX(-50%); }
+    /* Lista (noticias, mercados, tareas, cargadores): sin cifra; tres entradas de hasta dos renglones. */
+    .tile.list .tile-big, .tile.list .tile-ring { display: none; }
+    .tile.list .tile-lines { top: calc(88 * var(--u)); line-height: calc(27 * var(--u)); padding: 0 calc(62 * var(--u)); }
+    .tile.list .tile-lines span { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; margin-bottom: calc(6 * var(--u)); }
+    /* Aprobar dejando el dedo: el anillo se llena en 2 s. */
+    .tile.holding .tile-ring { display: block; } .tile.holding .tile-ring .arc { transition: stroke-dashoffset 2s linear; stroke-dashoffset: 0 !important; }
+    /* Reloj de reposo: hora grande, fecha y un renglón con clima y carro; tenue, y se corre un poco cada minuto. */
+    .clock { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; color: #c9cfdb; opacity: 0.72; --u: calc(100cqw / 466); transform: translate(calc(var(--sx, 0) * var(--u)), calc(var(--sy, 0) * var(--u))); }
+    .clock[hidden] { display: none; }
+    .clock b { display: block; font-size: calc(104 * var(--u)); font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; color: #fff; }
+    .clock span { display: block; font-size: calc(22 * var(--u)); margin-top: calc(10 * var(--u)); }
+    .clock span + span { color: #8a93a6; }
+    .screen.has-clock #face, .screen.has-clock .ring { visibility: hidden; }
     @media (prefers-reduced-motion: reduce) { .tile-ring .arc { transition: none; } }
     @media (prefers-reduced-motion: reduce) { .screen[data-state='thinking'] .ring { animation: none; } }
     #status { font-weight: 600; color: var(--ink); min-height: 1.5em; }
@@ -89,7 +102,8 @@
           <span class="tile-dots" id="tile-dots"></span>
           <span class="tile-music"><b class="tile-prev" aria-hidden="true">«</b><canvas id="tile-cover" width="150" height="150"></canvas><b class="tile-next" aria-hidden="true">»</b></span>
           <canvas id="mini" width="170" height="170"></canvas>
-        </span></span>
+        </span>
+        <span class="clock" id="clock" hidden><b id="clock-time"></b><span id="clock-date"></span><span id="clock-extra"></span></span></span>
     </button>
     <div id="status" role="status">Toca la pantalla para hablar</div>
     <p id="said"></p>
@@ -99,7 +113,7 @@
     </div>
     <details class="pase">
       <summary>Probar como la placa (modo dueño)</summary>
-      <p>Pega aquí el pase que da el panel en Dispositivos → Javi de bolsillo. La página conversa igual que lo hará la placa: audio en binario y bocas calculadas por el servidor. Con el pase puesto también llegan los avisos (interesado nuevo, solicitud por aprobar…), con un tono corto. El pase no se guarda: se borra al cerrar la pestaña.</p>
+      <p>Pega aquí el pase que da el panel en Dispositivos → Javi de bolsillo. La página conversa igual que lo hará la placa: audio en binario y bocas calculadas por el servidor. Con el pase puesto también llegan los avisos (interesado nuevo, solicitud por aprobar…), con un tono corto; una solicitud se aprueba dejando el dedo 2 segundos sobre su aviso, y tras 45 segundos sin usarla sale el reloj de reposo. El pase no se guarda: se borra al cerrar la pestaña.</p>
       <label for="pase">Pase del dispositivo</label>
       <input id="pase" type="password" autocomplete="off" spellcheck="false" placeholder="mjb.…">
     </details>

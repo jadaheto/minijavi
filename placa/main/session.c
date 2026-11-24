@@ -81,6 +81,7 @@ static void on_json(const char *raw)
             s = cJSON_GetStringValue(cJSON_GetObjectItem(t, "tone"));
             o->tone = !s ? 0 : !strcmp(s, "ok") ? 1 : !strcmp(s, "warn") ? 2 : !strcmp(s, "bad") ? 3 : 0;
             s = cJSON_GetStringValue(cJSON_GetObjectItem(t, "kind"));
+            o->list = s && !strcmp(s, "list");
             o->music = s && !strcmp(s, "music"); o->cover = cJSON_IsTrue(cJSON_GetObjectItem(t, "cover")); o->playing = !cJSON_IsFalse(cJSON_GetObjectItem(t, "playing"));
             cJSON_ArrayForEach(line, cJSON_GetObjectItem(t, "lines")) {
                 const char *l = cJSON_GetStringValue(line);

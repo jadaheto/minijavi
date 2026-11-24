@@ -39,6 +39,8 @@ export class ConfigService {
   readonly noticesQuiet: [number, number];
   /** Segundos que un aviso se queda en la pantalla de la placa si nadie lo toca. */
   readonly gadgetNoticeSeconds: number;
+  /** Reloj de reposo de la placa: cada cuantos minutos, como mucho, se consulta el Tesla (0 = no se muestra). */
+  readonly clockTeslaMinutes: number;
   readonly ownerPrompt: string;
   /** Habla costeña: reglas y diccionario que se agregan al prompt ('' = apagada). HABLA_COSTENA=1 y HABLA_COSTENA_NIVEL. */
   readonly costenoPrompt: string;
@@ -322,6 +324,7 @@ export class ConfigService {
     this.gadgetTileSeconds = Math.min(120, int('BOLSILLO_TARJETA_S', 12, 2));
     this.noticesEnabled = str('AVISOS', '1') !== '0';
     this.gadgetNoticeSeconds = Math.min(600, int('AVISOS_PANTALLA_S', 40, 5));
+    this.clockTeslaMinutes = Math.min(1440, int('RELOJ_TESLA_MIN', 120, 0));
     { const m = /^(\d{1,2})-(\d{1,2})$/.exec(str('AVISOS_SILENCIO', '21-7').trim()); const a = m ? Number(m[1]) : 21, b = m ? Number(m[2]) : 7; this.noticesQuiet = a <= 23 && b <= 23 ? [a, b] : [21, 7]; }
     this.dataDir = str('DATA_DIR', 'data');
     this.planeMcpUrl = str('PLANE_MCP_URL');

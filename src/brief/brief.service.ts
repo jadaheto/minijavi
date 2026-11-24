@@ -1,3 +1,4 @@
+import { emitNotice } from '../notices/bus';
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, Optional } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
 import { DbService } from '../db/db.service';
@@ -247,6 +248,8 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
     const err = await this.alerts.send(text);
     if (err) throw new Error(`no salió por Telegram: ${err}`);
     this.usage.add('resumen_enviado');
+    // A los dispositivos de Javier (el Javi de bolsillo): un aviso; al tocarlo, el avatar se lo cuenta con sus tarjetas.
+    emitNotice({ source: 'resumen', title: 'Resumen de la mañana', body: b.quiet ? 'Sin novedades' : 'Ya está listo', word: 'Hoy', tone: 'info', ref: { kind: 'resumen', id: this.local(now).day } });
     let voice = 'apagada';
     if (this.cfg.briefVoice && this.cfg.ttsProvider === 'elevenlabs') {
       const say = text.replace(/\p{Extended_Pictographic}️?/gu, '').replace(/[*_~`#>()]/g, '').replace(/\s*\n\s*/g, '. ').replace(/\.\s*\./g, '.').replace(/[ \t]{2,}/g, ' ').trim().slice(0, 1500);

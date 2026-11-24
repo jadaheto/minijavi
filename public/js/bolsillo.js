@@ -40,24 +40,28 @@ function drawTile() {
   // Tarjeta de música con la carátula que mandó el servidor (ya reducida, como le llega a la placa).
   const music = t.kind === 'music' && !!t.cover && coverReady;
   $('tile').classList.toggle('music', music); $('music-help').hidden = !music;
+  $('tile').classList.toggle('list', t.kind === 'list'); $('tile').classList.remove('holding');
   if (music) $('tile-title').textContent = (t.playing === false ? 'En pausa · ' : '') + t.title;
   $('tile-lines').replaceChildren(...(t.lines || []).map((l) => el('span', l)));
-  const ring = $('tile-arc').parentElement; ring.classList.toggle('none', t.ring === undefined);
+  const ring = $('tile-arc').parentElement; ring.classList.toggle('none', t.ring === undefined && !t.hold); // en una solicitud el anillo va vacío: se llena al dejar el dedo
   $('tile-arc').style.strokeDashoffset = '1395'; // el anillo se llena desde cero cada vez
   if (t.ring !== undefined) requestAnimationFrame(() => requestAnimationFrame(() => { $('tile-arc').style.strokeDashoffset = String(1395 * (1 - t.ring / 100)); }));
   $('tile-dots').replaceChildren(...(tiles.list.length > 1 ? tiles.list.map((_, i) => el(i === tiles.index ? 'b' : 'i', '●')) : []));
 }
+const stepOf = (t) => (t?.kind === 'list' ? 7000 : 4500); // una lista se lee más despacio
 function showTiles(list, seconds) {
   if (!Array.isArray(list) || !list.length) return;
-  tiles = { list, index: 0, next: performance.now() + 4500, seconds: seconds || 12, until: 0 };
+  hideClock(); idleAt = performance.now();
+  tiles = { list, index: 0, next: performance.now() + stepOf(list[0]), seconds: seconds || 12, until: 0 };
   $('tile').hidden = false; $('screen').classList.add('has-tile'); drawTile();
 }
-function hideTiles() { tiles = null; $('tile').hidden = true; $('screen').classList.remove('has-tile'); }
+function hideTiles() { idleAt = performance.now(); tiles = null; $('tile').hidden = true; $('screen').classList.remove('has-tile'); }
 function tickTiles(now) {
   if (!tiles) return;
-  if (tiles.list.length > 1 && now >= tiles.next) { tiles.index = (tiles.index + 1) % tiles.list.length; tiles.next = now + 4500; drawTile(); }
+  if (holding) return; // con el dedo puesto, la tarjeta no cambia ni se va
+  if (tiles.list.length > 1 && now >= tiles.next) { tiles.index = (tiles.index + 1) % tiles.list.length; tiles.next = now + stepOf(tiles.list[tiles.index]); drawTile(); }
   if (mind.state === 'speaking') tiles.until = 0; // mientras habla, se queda
-  else { tiles.until ||= now + Math.max(tiles.seconds * 1000, (tiles.list.length - tiles.index) * 4500); if (now >= tiles.until) hideTiles(); } // un aviso que nadie tocó NO queda como visto: sigue pendiente en el panel y en Telegram
+  else { tiles.until ||= now + Math.max(tiles.seconds * 1000, tiles.list.slice(tiles.index).reduce((a, t) => a + stepOf(t), 0)); if (now >= tiles.until) hideTiles(); } // un aviso que nadie tocó NO queda como visto: sigue pendiente en el panel y en Telegram
 }
 
 function setState(s) { mind.setState(s); $('screen').dataset.state = s; $('status').textContent = TEXT[s]; }
@@ -101,6 +105,7 @@ function onBinary(data) {
 }
 
 function shutdown(message) {
+  idleAt = performance.now();
   live = false; suspended = false; stopSpeech(); hideTiles(); setState('idle');
   if (message) $('status').textContent = message;
 }
@@ -143,6 +148,52 @@ function noticeTouch(ev) {
   pendingNotice = ids; return false; // sigue a begin(): abre la conversación con esos avisos
 }
 
+// ---------- aprobar dejando el dedo ----------
+// Sobre el aviso de una solicitud pendiente (`hold`), 2 segundos con el dedo puesto la aprueban; soltar antes es un toque
+// normal. Los pagos de avatar no traen `hold`: no se aprueban desde aquí.
+let holding = null, skipClick = false;
+function holdStart() {
+  const t = tiles && tiles.list[tiles.index]; if (!t || t.kind !== 'notice' || !t.hold || holding) return;
+  $('tile').dataset.tone = 'ok'; $('tile').classList.add('holding');
+  holding = setTimeout(() => { holding = null; skipClick = true; approve(t); }, 2000);
+}
+function holdEnd() { if (!holding) return; clearTimeout(holding); holding = null; $('tile').classList.remove('holding'); if (tiles) drawTile(); }
+async function approve(t) {
+  const pase = $('pase').value.trim();
+  let out = { tile: { kind: 'notice', id: 0, title: 'Aprobada', big: 'Listo', tone: 'ok', lines: ['(demostración: no se', 'aprobó nada de verdad)'] }, seconds: 8 };
+  if (!demo && pase && t.id) {
+    try { const r = await fetch(`api/placa/avisos/${t.id}/aprobar`, { method: 'POST', headers: { Authorization: `Bearer ${pase}` } }); out = r.ok ? await r.json() : { tile: { kind: 'notice', id: t.id, title: 'No se aprobó', big: 'No', tone: 'warn', lines: [r.status === 404 ? 'Ese aviso no se aprueba aquí' : 'El servidor no respondió bien'] } }; }
+    catch { out = { tile: { kind: 'notice', id: t.id, title: 'No se aprobó', big: 'No', tone: 'warn', lines: ['Sin conexión'] } }; }
+  }
+  const others = tiles ? tiles.list.filter((x) => x !== t) : [];
+  showTiles([out.tile, ...others], out.seconds || 12); tiles.until = performance.now() + (out.seconds || 12) * 1000; chime();
+}
+
+// ---------- reloj de reposo ----------
+// Tras 45 s sin conversación ni tarjetas (y con el pase puesto, o en la demostración) sale el reloj: la hora la da el
+// servidor una vez y la página sigue contando, como hará la placa. Un toque lo quita.
+let idleAt = performance.now(), clock = null, clockAsked = 0;
+const two = (n) => String(n).padStart(2, '0');
+function showClock(d) { clock = { base: d.now + d.offset * 60000, at: performance.now(), date: d.date, weather: d.weather, tesla: d.tesla }; $('clock').hidden = false; $('screen').classList.add('has-clock'); drawClock(); }
+function hideClock() { if (!clock) return; clock = null; $('clock').hidden = true; $('screen').classList.remove('has-clock'); }
+function drawClock() {
+  const t = new Date(clock.base + (performance.now() - clock.at)), h = t.getUTCHours();
+  $('clock-time').textContent = `${h % 12 || 12}:${two(t.getUTCMinutes())}`;
+  $('clock-date').textContent = `${clock.date} · ${h < 12 ? 'a. m.' : 'p. m.'}`;
+  $('clock-extra').textContent = [clock.weather ? `${clock.weather.temp}° ${clock.weather.desc}` : '', clock.tesla ? `${clock.tesla.charging ? 'Cargando' : 'Carro'} ${clock.tesla.level} %` : ''].filter(Boolean).join(' · ');
+  const m = t.getUTCMinutes(); $('clock').style.setProperty('--sx', String([0, 10, -8, 6, -12][m % 5])); $('clock').style.setProperty('--sy', String([0, -8, 10, -12, 6][m % 5])); // se corre cada minuto: la pantalla AMOLED se marca si algo queda fijo
+}
+async function tickClock(now) {
+  if (clock) { if (live || tiles) hideClock(); else { drawClock(); if (!demo && now - clockAsked > 15 * 60000) askClock(); } return; }
+  const pase = $('pase').value.trim();
+  if (demo || live || tiles || !pase.startsWith('mjb.') || now - idleAt < 45000 || now - clockAsked < 20000) return;
+  askClock();
+}
+async function askClock() {
+  clockAsked = performance.now();
+  try { const r = await fetch('api/placa/reposo', { headers: { Authorization: `Bearer ${$('pase').value.trim()}` }, cache: 'no-store' }); if (r.ok && !live && !tiles) showClock(await r.json()); } catch { /* sin red: sigue la cara */ }
+}
+
 /** Toque sobre la tarjeta de música: la carátula pausa o sigue, « y » cambian de canción. Devuelve si lo atendió. */
 function musicTouch(ev) {
   const t = tiles && tiles.list[tiles.index]; if (!t || !$('tile').classList.contains('music') || !ev) return false;
@@ -155,6 +206,9 @@ function musicTouch(ev) {
 }
 
 async function begin(ev) {
+  if (skipClick) { skipClick = false; return; } // ese toque fue el dedo sostenido que aprobó
+  idleAt = performance.now();
+  if (clock) { hideClock(); if (demo) return; }
   if (tiles && musicTouch(ev)) return;
   if (tiles && noticeTouch(ev)) return;
   if (tiles) { hideTiles(); return; } // con una tarjeta en pantalla, el toque la quita
@@ -185,13 +239,16 @@ const DEMO = [
   { at: 17, state: 'thinking' },
   { at: 18.2, say: 'Listo, suena en tu celular.', music: 0 },
   { at: 20.5, state: 'listening', said: 'Música: toca la carátula para pausar, « y » para cambiar de canción. Se queda 20 segundos.' },
-  { at: 42, state: 'idle', said: 'Aviso que llega solo: suena un tono y sale la tarjeta. Tocarla abre la conversación.', hide: true, notice: [{ kind: 'notice', id: 0, title: 'Interesado nuevo', big: 'Nuevo', tone: 'ok', lines: ['Marta de Ejemplo · Panadería', 'Toca para que te lo cuente'] }, { kind: 'notice', id: 0, title: 'Por aprobar', big: 'Aprobar', tone: 'warn', lines: ['Plantilla de bienvenida', 'Toca para que te lo cuente'] }] },
-  { at: 54, react: 'alegria', said: 'Reacción: alegría', hide: true },
-  { at: 57.4, react: 'sorpresa', said: 'Reacción: sorpresa' },
-  { at: 60.6, react: 'pena', said: 'Reacción: pena' },
-  { at: 63.8, react: 'pensativo', said: 'Reacción: pensativo' },
-  { at: 67, state: 'away', said: 'Suspendido' },
-  { at: 71, state: 'idle', said: '' },
+  { at: 42, state: 'idle', said: 'Aviso que llega solo: suena un tono y sale la tarjeta. Tocarla abre la conversación; en «Por aprobar», deja el dedo 2 segundos.', hide: true, notice: [{ kind: 'notice', id: 0, title: 'Interesado nuevo', big: 'Nuevo', tone: 'ok', lines: ['Marta de Ejemplo · Panadería', 'Toca para que te lo cuente'] }, { kind: 'notice', id: 0, hold: true, title: 'Por aprobar', big: 'Aprobar', tone: 'warn', lines: ['Plantilla de bienvenida', '+57 300 000 0000', 'Deja el dedo 2 s: aprobar'] }] },
+  { at: 56, state: 'listening', said: '«Javi, ¿qué noticias hay?»', hide: true },
+  { at: 58, say: 'Hay ocho noticias. Te dejo los titulares en pantalla.', tiles: [{ kind: 'list', title: 'Noticias de ejemplo', big: '', lines: ['1. Titular de ejemplo sobre inteligencia artificial', '2. Otro titular inventado para la demostración', '3. Un tercero, corto'] }, { kind: 'list', title: 'Noticias de ejemplo', big: '', lines: ['4. Las listas pasan solas, de tres en tres', '5. El avatar dice lo importante en voz'] }] },
+  { at: 74, state: 'idle', said: 'Reloj de reposo: sale tras 45 segundos sin usarla; un toque lo quita.', hide: true, clock: { offset: 0, date: 'Martes, 24 de noviembre', weather: { temp: 31, desc: 'Parcialmente nublado' }, tesla: { level: 80, charging: false } } },
+  { at: 84, react: 'alegria', said: 'Reacción: alegría', hide: true, noclock: true },
+  { at: 87.4, react: 'sorpresa', said: 'Reacción: sorpresa' },
+  { at: 90.6, react: 'pena', said: 'Reacción: pena' },
+  { at: 93.8, react: 'pensativo', said: 'Reacción: pensativo' },
+  { at: 97, state: 'away', said: 'Suspendido' },
+  { at: 101, state: 'idle', said: '' },
 ];
 // Música de EJEMPLO para la demostración: canciones inventadas y carátulas dibujadas aquí (no son de ningún disco).
 const DEMO_SONGS = [['Tarde en la sabana', 'Los de Ejemplo', '#c2410c', '#fbbf24'], ['Brisa del río', 'Conjunto Demo', '#0e7490', '#a7f3d0'], ['Noche de porro', 'La Banda Prueba', '#6d28d9', '#f9a8d4']];
@@ -208,6 +265,7 @@ function demoMusic(cmd) {
 }
 
 function startDemo() {
+  hideClock();
   if (live) { socket?.close(); shutdown(''); }
   hideTiles(); demo = { t: 0, step: 0, speakAt: -1 }; lips.reset(); $('said').textContent = '';
 }
@@ -221,6 +279,8 @@ function runDemo(dt) {
     if (s.notice) { showTiles(s.notice, 12); chime(); }
     if (s.music !== undefined) { demoSong = s.music; demoPlaying = true; demoMusic(''); }
     if (s.hide) hideTiles();
+    if (s.noclock) hideClock();
+    if (s.clock) { const n = new Date(); showClock({ ...s.clock, now: Date.UTC(2026, 10, 24, n.getHours(), n.getMinutes(), n.getSeconds()) }); }
     if (s.said !== undefined) $('said').textContent = s.said;
     if (s.say) { // tiempos estimados: 14 caracteres por segundo, como la voz del navegador
       const chars = [...s.say], starts = chars.map((_, i) => i / 14), ends = chars.map((_, i) => (i + 1) / 14);
@@ -234,6 +294,8 @@ function runDemo(dt) {
 }
 
 $('device').addEventListener('click', begin);
+$('device').addEventListener('pointerdown', holdStart);
+for (const e of ['pointerup', 'pointerleave', 'pointercancel']) $('device').addEventListener(e, holdEnd);
 $('demo').addEventListener('click', startDemo);
 // Al pegar el pase empiezan a llegar los avisos, como en la placa.
 $('pase').addEventListener('change', () => { const p = $('pase').value.trim(); if (p.startsWith('mjb.')) pollNotices(p); else polling = ''; });
@@ -257,10 +319,10 @@ function frame(now) {
   }
   shown = mind.update(dt, lips.update(mind.state === 'speaking' ? t : -1, dt), given);
   if (tiles) mini.draw(shown.frames, 0, 0); else face.draw(shown.frames, shown.dx, shown.dy);
-  tickTiles(now);
+  tickTiles(now); tickClock(now);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 if (new URLSearchParams(location.search).get('demo') === '1') startDemo();
 // Para pruebas: poner un cuadro a mano o leer lo que se está mostrando.
-window.__bolsillo = { tiles: showTiles, get tile() { return tiles && tiles.list[tiles.index]; }, get shown() { return shown; }, get state() { return mind.state; }, react: (n) => mind.react(n), state_: setState, demo: startDemo, message: onMessage, draw: (frames) => face.draw(frames, 0, 0) };
+window.__bolsillo = { clock: showClock, get clockOn() { return !!clock; }, holdStart, holdEnd, tiles: showTiles, get tile() { return tiles && tiles.list[tiles.index]; }, get shown() { return shown; }, get state() { return mind.state; }, react: (n) => mind.react(n), state_: setState, demo: startDemo, message: onMessage, draw: (frames) => face.draw(frames, 0, 0) };
