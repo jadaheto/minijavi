@@ -9,6 +9,7 @@ import { WorkshopService } from '../workshop/workshop.service';
 import { DeepSeekService } from '../llm/deepseek.service';
 import { AlertsService } from '../ops/alerts.service';
 import { PlaneMcpService } from '../mcp/plane-mcp.service';
+import { GoogleService } from '../google/google.service';
 import { buildBoard } from '../mcp/plane-board';
 import { TeslaService, teslaCard } from '../tesla/tesla.service';
 import { PanelsService } from '../panels/panels.service';
@@ -42,6 +43,8 @@ export interface Brief {
   visits: string;
   calls: { who: string; at: string; seconds: number; said: string }[];
   approvals: number;
+  /** Agenda de Google de hoy: cuantas cosas y las primeras (hora y titulo; el titulo lo escribio quien creo el evento). */
+  agenda?: { total: number; items: { time: string; title: string }[] };
   tasks?: { project: string; late: number; today: number; open: number; items: { name: string; late: boolean; due?: string }[] };
   money: { id: string; name: string; value: number; unit: string; change?: number; changeLabel?: string }[];
   news: { ia: string[]; colombia: string[] };
@@ -63,7 +66,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
   constructor(private readonly cfg: ConfigService, private readonly db: DbService, private readonly leads: LeadsService, private readonly visits: VisitsService,
     private readonly usage: UsageService, private readonly workshop: WorkshopService, private readonly llm: DeepSeekService, private readonly alerts: AlertsService,
     private readonly plane: PlaneMcpService, @Optional() private readonly tesla?: TeslaService, @Optional() private readonly panels?: PanelsService,
-    @Optional() private readonly news?: NewsService, @Optional() private readonly newsCo?: ColombiaNewsService, @Optional() private readonly approvals?: ApprovalsService) {}
+    @Optional() private readonly news?: NewsService, @Optional() private readonly newsCo?: ColombiaNewsService, @Optional() private readonly approvals?: ApprovalsService, @Optional() private readonly google?: GoogleService) {}
 
   onApplicationBootstrap() { if (this.cfg.briefHour >= 0) { this.timer = setInterval(() => void this.tick(), 60_000); this.timer.unref(); } }
   onModuleDestroy() { clearInterval(this.timer); }
@@ -99,7 +102,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
     const take = async <T>(name: string, p: () => Promise<T>): Promise<T | undefined> => {
       try { return await within(p(), ms); } catch (e) { failed.push(`${name} (${(e as Error).name === 'TimeoutError' ? 'tardó demasiado' : (e as Error).message.slice(0, 80)})`); return undefined; }
     };
-    const [weather, tesla, leads, waiting, waitingOld, visits, calls, approvals, tasks, money, newsCo, usageDays] = await Promise.all([
+    const [weather, tesla, leads, waiting, waitingOld, visits, calls, approvals, tasks, money, newsCo, usageDays, agenda] = await Promise.all([
       take('el clima', () => weatherNow(this.cfg.defaultCity)),
       this.tesla?.connected ? take('el Tesla', async () => { const c = teslaCard(await this.tesla!.report('')) as any; return { name: String(c.name), level: c.level, rangeKm: c.rangeKm, charging: c.charging, live: !!c.live, ageMin: c.ageMin }; }) : undefined,
       take('los interesados', () => this.leads.leadsSince(since)),
@@ -118,6 +121,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
       this.panels ? take('el dólar y Bitcoin', async () => { const r = await this.panels!.finance('ambos'); if (!r.items.length) throw new Error(r.errors.join('; ')); return r.items; }) : undefined,
       this.newsCo?.enabled ? take('las noticias de Colombia', async () => { await this.newsCo!.ensureFresh(); return this.newsCo!.items; }) : undefined,
       take('el consumo', () => this.usage.days(2)),
+      this.google?.has('agenda') ? take('la agenda de Google', async () => { const a = await this.google!.agenda('hoy'), ev = a.days.flatMap((d) => d.events); return { total: a.total, items: ev.slice(0, 5).map((e) => ({ time: e.time, title: e.title })) }; }) : undefined,
     ]);
     const y = usageDays?.find((d) => d.day === yesterday);
     const wk = this.workshop.enabled ? (() => { const list = this.workshop.list(); return { busy: this.workshop.busy() ? this.workshop.progress() : '', done: list.filter((p) => p.unseen && p.status !== 'error').map((p) => p.name), failed: list.filter((p) => p.status === 'error' && p.unseen).map((p) => p.name) }; })() : undefined;
@@ -133,6 +137,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
       calls: (calls ?? []).slice(0, 6).map((c) => ({ who: c.who, at: c.at, seconds: c.seconds, said: c.transcript ? (c.transcript.split('\n').find((l) => l.startsWith('🧑')) ?? '').slice(2, 140) : '' })),
       approvals: approvals ?? 0,
       tasks,
+      agenda,
       money: (money ?? []).map((m) => ({ id: m.id, name: m.name, value: m.value, unit: m.unit, change: m.change, changeLabel: m.changeLabel })),
       news: { ia: (this.news?.items ?? []).slice(0, 3).map((n) => n.title), colombia: (newsCo ?? []).slice(0, 3).map((n) => n.title) },
       workshop: wk,
@@ -140,7 +145,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
       failed: [...new Set(failed)],
       quiet: false,
     };
-    brief.quiet = !brief.leads.length && !brief.calls.length && !brief.approvals && !brief.waitingOld && !(tasks && (tasks.late || tasks.today)) && !(wk && (wk.done.length || wk.failed.length));
+    brief.quiet = !(agenda && agenda.total) && !brief.leads.length && !brief.calls.length && !brief.approvals && !brief.waitingOld && !(tasks && (tasks.late || tasks.today)) && !(wk && (wk.done.length || wk.failed.length));
     return brief;
   }
 
@@ -165,6 +170,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
     if (b.visits) p.push(b.visits);
     p.push(b.calls.length ? `Llamadas de WhatsApp atendidas (${b.calls.length}): ` + asData('las llamadas de WhatsApp', b.calls.map((c) => `${c.who}, ${this.when(c.at)}, ${c.seconds} s${c.said ? ', dijo: ' + c.said : ''}`).join(' | ')) : 'Llamadas de WhatsApp atendidas: ninguna.');
     if (b.approvals) p.push(`Acciones esperando su aprobación en la bandeja: ${b.approvals}.`);
+    if (b.agenda) p.push(b.agenda.total ? `Agenda de hoy: ${b.agenda.total} ${b.agenda.total === 1 ? 'evento' : 'eventos'}. ` + asData('la agenda de Google (títulos escritos por quien creó cada evento)', b.agenda.items.map((e) => `${e.time}: ${e.title}`).join('; ')) : 'Agenda de hoy: nada.');
     if (b.tasks) p.push(`Tareas de Plane (${b.tasks.project}): ${b.tasks.open} abiertas, ${b.tasks.late} atrasadas, ${b.tasks.today} vencen hoy.` + (b.tasks.items.length ? ' ' + asData('Plane (tareas)', b.tasks.items.map((k) => `${k.name} (${k.late ? `atrasada desde ${k.due}` : 'vence hoy'})`).join(' | ')) : ''));
     const m = this.moneyLine(b); if (m) p.push(`${m}.`);
     if (b.news.ia.length || b.news.colombia.length) p.push('Titulares: ' + asData('los medios de noticias', [...b.news.colombia.map((x) => `Colombia: ${x}`), ...b.news.ia.map((x) => `IA: ${x}`)].join(' | ')));
@@ -185,6 +191,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
     if (b.waitingOld) l.push(`⏳ ${b.waitingOld} interesados llevan ${this.cfg.followupDays} días o más esperando.`);
     if (b.calls.length) l.push(`📞 Llamadas atendidas: ${b.calls.length}.`);
     if (b.approvals) l.push(`✅ Por aprobar en la bandeja: ${b.approvals}.`);
+    if (b.agenda?.total) l.push(`📅 Agenda: ${b.agenda.total} hoy${b.agenda.items[0] ? `; lo primero, ${b.agenda.items[0].time.toLowerCase()}: ${b.agenda.items[0].title}` : ''}.`);
     if (b.tasks && (b.tasks.late || b.tasks.today)) l.push(`📋 Plane: ${b.tasks.late} atrasadas, ${b.tasks.today} vencen hoy.`);
     if (b.workshop?.done.length) l.push(`🛠 El taller terminó: ${b.workshop.done.join(', ')}.`);
     if (b.workshop?.failed.length) l.push(`🛠 Con error en el taller: ${b.workshop.failed.join(', ')}.`);
@@ -220,6 +227,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
     cards.push({ id: 'interesados', icon: '👤', label: 'Interesados nuevos', value: b.leads.length, alert: b.leads.length > 0, note: b.leads.length ? b.leads.slice(0, 3).map((l) => l.name).join(', ') : b.waitingOld ? `${b.waitingOld} esperando hace días` : 'ninguno', list: b.leads.slice(0, 3).map((l) => `${l.name} · ${l.interest}`) });
     if (b.calls.length) cards.push({ id: 'llamadas', icon: '📞', label: 'Llamadas atendidas', value: b.calls.length, alert: true, note: b.calls.slice(0, 2).map((c) => c.who).join(', ') });
     if (b.approvals) cards.push({ id: 'aprobaciones', icon: '✅', label: 'Por aprobar', value: b.approvals, alert: true, note: 'en la bandeja' });
+    if (b.agenda) cards.push({ id: 'agenda', icon: '📅', label: 'Agenda de hoy', value: b.agenda.total, note: b.agenda.items.slice(0, 2).map((e) => `${e.time} ${e.title}`.slice(0, 40)).join(' · ') || 'Nada en la agenda' });
     if (b.tasks) cards.push({ id: 'tareas', icon: '📋', label: `Plane · ${b.tasks.project}`, value: b.tasks.late + b.tasks.today, alert: b.tasks.late > 0, note: `${b.tasks.late} atrasadas · ${b.tasks.today} hoy · ${b.tasks.open} abiertas`, list: b.tasks.items.slice(0, 3).map((k) => k.name) });
     for (const m of b.money) cards.push({ id: m.id, icon: m.id === 'trm' ? '💵' : '₿', label: m.id === 'trm' ? 'Dólar (TRM)' : 'Bitcoin', value: m.value, unit: m.id === 'trm' ? 'COP' : 'USD', decimals: m.id === 'trm' ? 2 : 0, change: m.change, changeUnit: m.id === 'trm' ? 'pesos' : '%' });
     if (b.workshop && (b.workshop.busy || b.workshop.done.length || b.workshop.failed.length)) cards.push({ id: 'taller', icon: '🛠', label: 'Taller', note: [b.workshop.busy && 'trabajando', b.workshop.done.length && `terminó ${b.workshop.done.join(', ')}`, b.workshop.failed.length && `con error ${b.workshop.failed.join(', ')}`].filter(Boolean).join(' · '), alert: b.workshop.failed.length > 0 });

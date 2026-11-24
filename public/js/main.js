@@ -67,6 +67,14 @@ if (new URLSearchParams(location.search).get('demo') === 'resumen') {
   ];
   setTimeout(() => { $('gate').hidden = true; dataPanel.show({ kind: 'brief', title: 'Buenos días, Javier', subtitle: 'Sábado, 21 de noviembre (ejemplo)', scene: 'soleado', cards, headlines: ['Titular de ejemplo de Colombia', 'Titular de ejemplo de inteligencia artificial'], failed: [] }); }, 1500);
 }
+// Vista previa de la agenda con datos de EJEMPLO (no consulta nada): abrir con ?demo=agenda.
+if (new URLSearchParams(location.search).get('demo') === 'agenda') {
+  const days = [
+    { date: '', label: 'Hoy · martes, 24 de noviembre', events: [{ time: 'Todo el día', title: 'Cumpleaños de ejemplo', allDay: true }, { time: '9:00 a. m.', title: 'Reunión de ejemplo con un cliente', where: 'Videollamada', others: 2 }, { time: '3:30 p. m.', title: 'Revisión del proyecto de ejemplo', where: 'Oficina', others: 1, tentative: true }] },
+    { date: '', label: 'Mañana · miércoles, 25 de noviembre', events: [{ time: '11:00 a. m.', title: 'Llamada de ejemplo', others: 1 }] },
+  ];
+  setTimeout(() => { $('gate').hidden = true; dataPanel.show({ kind: 'agenda', title: 'Agenda · Esta semana (ejemplo)', days, total: 4 }); backdrop.show(restScene()); }, 900);
+}
 // Vista previa de los mercados con datos de EJEMPLO (no consulta nada): abrir con ?demo=mercados.
 if (new URLSearchParams(location.search).get('demo') === 'mercados') {
   const o = (label, pct, d1, trend) => ({ label, pct, d1, trend });
@@ -137,7 +145,7 @@ let work = null;
 // cargadores y Tesla cargando: energia; tablero, servicios y consumo: los suyos). La musica de YouTube lleva ondas; la de
 // Spotify, su caratula desenfocada (otra capa). Las imagenes generadas y los bocetos no llevan fondo.
 let newsScene = null, sceneHold = 0, hadPanelScene = false;
-const DATA_SCENES = { finance: 'mercado', status: 'radar', usage: 'flujo', board: 'tablero', route: 'carretera', chargers: 'energia', brief: 'soleado' };
+const DATA_SCENES = { finance: 'mercado', status: 'radar', usage: 'flujo', board: 'tablero', route: 'carretera', chargers: 'energia', brief: 'soleado', agenda: 'tablero' };
 /** Fondo del panel que esta en pantalla (null si no hay ninguno). Manda sobre el fondo que pida una respuesta. */
 const panelScene = () => (news.active ? newsScene || 'neuronal' : markets.active ? 'mercado' : tesla.active ? (tesla.charging ? 'energia' : 'carretera')
   : dataPanel.active ? dataPanel.scene || DATA_SCENES[dataPanel.kind] || null : null);

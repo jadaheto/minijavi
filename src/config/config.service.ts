@@ -123,6 +123,12 @@ export class ConfigService {
   readonly teslaRedirectUri: string;
   readonly teslaApiUrl: string;
   readonly teslaDailyCalls: number;
+  /** Google de Javier (solo lectura): cliente creado en Google Cloud, retorno y tope propio de consultas al dia. */
+  readonly googleEnabled: boolean;
+  readonly googleClientId: string;
+  readonly googleClientSecret: string;
+  readonly googleRedirectUri: string;
+  readonly googleDailyCalls: number;
   /** Noticias de IA: webhook (https) que devuelve la pagina del boletin, y hora local desde la que se piden una vez al dia. */
   readonly newsUrl: string;
   readonly newsHour: number;
@@ -398,6 +404,11 @@ export class ConfigService {
     // Region inicial (Norteamerica y Asia-Pacifico); al conectar, Tesla dice la region real de la cuenta.
     this.teslaApiUrl = /^https:\/\/fleet-api\.prd\.[a-z]{2}\.vn\.cloud\.tesla\.(com|cn)$/.test(str('TESLA_API_URL')) ? str('TESLA_API_URL') : 'https://fleet-api.prd.na.vn.cloud.tesla.com';
     this.teslaDailyCalls = int('TESLA_CONSULTAS_DIA', 60, 1);
+    this.googleEnabled = str('GOOGLE', '1') !== '0';
+    this.googleClientId = str('GOOGLE_CLIENT_ID');
+    this.googleClientSecret = str('GOOGLE_CLIENT_SECRET');
+    this.googleRedirectUri = str('GOOGLE_REDIRECT_URI');
+    this.googleDailyCalls = int('GOOGLE_CONSULTAS_DIA', 400, 1);
     this.spotifyMarket = /^[A-Za-z]{2}$/.test(str('SPOTIFY_MARKET')) ? str('SPOTIFY_MARKET').toUpperCase() : 'CO';
     this.musicDefaultQuery = str('MUSIC_DEFAULT_QUERY', 'lofi para programar');
     this.musicVolume = Math.min(100, int('MUSIC_VOLUME', 15, 0));

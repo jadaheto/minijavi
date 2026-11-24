@@ -120,6 +120,15 @@ function chargers(d: Data): Tile[] {
   return listTiles('Cargadores', items.map((c) => `${c.n ?? ''}. ${clip(c.title, 26)} · ${num(c.km, 1)} km${Number(c.kw) ? ` · ${num(c.kw)} kW` : ''}`), 'ok');
 }
 
+/** Agenda: cuántas cosas hay y, debajo, las más cercanas con su hora. */
+function agenda(d: Data): Tile[] {
+  const days: Data[] = Array.isArray(d.days) ? d.days : [], rows: string[] = [];
+  for (const day of days) for (const e of Array.isArray(day.events) ? day.events : []) rows.push(`${days.length > 1 ? `${String(day.label ?? '').split(' ')[0].replace('·', '').slice(0, 3)} ` : ''}${e.time ?? ''} · ${e.title ?? ''}`);
+  const n = Number(d.total) || rows.length;
+  const head = tile({ title: String(d.title ?? 'Agenda'), big: String(n), unit: n === 1 ? 'cita' : 'citas', tone: n ? 'info' : 'ok', lines: n ? rows.slice(0, 3).map((r) => clip(r, 30)) : ['No hay nada en la agenda'] });
+  return n > 3 ? [head, ...listTiles(String(d.title ?? 'Agenda'), rows.slice(3)).slice(0, 2)] : [head];
+}
+
 /** Un texto partido en renglones cortos por palabras (para decir en la tarjeta qué pasó con una orden). */
 export function wrapLines(text: string, width = 30, max = 3): string[] {
   const out: string[] = []; let line = '';
@@ -143,7 +152,7 @@ export function tilesFor(msg: unknown): Tile[] {
     if (m.type === 'weather') return weather(m);
     if (m.type === 'news') return news(m);
     if (m.type === 'markets') return markets(m);
-    if (m.type === 'panel') return m.kind === 'finance' ? finance(m) : m.kind === 'route' ? route(m) : m.kind === 'brief' ? brief(m) : m.kind === 'status' ? status(m) : m.kind === 'board' ? board(m) : m.kind === 'chargers' ? chargers(m) : [];
+    if (m.type === 'panel') return m.kind === 'finance' ? finance(m) : m.kind === 'route' ? route(m) : m.kind === 'brief' ? brief(m) : m.kind === 'status' ? status(m) : m.kind === 'board' ? board(m) : m.kind === 'chargers' ? chargers(m) : m.kind === 'agenda' ? agenda(m) : [];
   } catch { /* un dato con otra forma: sin tarjeta, el avatar igual lo dice */ }
   return [];
 }

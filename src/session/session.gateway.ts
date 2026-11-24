@@ -179,6 +179,7 @@ const FILLERS: Record<string, string | Record<string, string>> = {
   noticias: { ver: 'Déjame traer las noticias.', leer_completa: 'Voy a abrir la nota.', actualizar: 'Ya las actualizo.' },
   mercados: { tendencias: 'Déjame mirar los mercados.', buscar: 'Déjame buscar ese mercado.' },
   tesla: 'Déjame preguntarle al carro.',
+  agenda: 'Reviso tu agenda.',
   trayecto: 'Déjame calcular la ruta.',
   cargadores: 'Déjame buscar cargadores.',
   tablero_tareas: 'Déjame abrir el tablero.',

@@ -201,7 +201,25 @@ function brief(msg) {
   if (Array.isArray(msg.failed) && msg.failed.length) wrap.append(el('small', 'pnl-source', `No se pudo consultar: ${msg.failed.join(', ')}`));
   return wrap;
 }
-const KINDS = { finance, status, usage, board, route, chargers, brief };
+/** Agenda de Google: los días con sus eventos (hora, título, lugar). Los textos los escribió quien creó cada evento. */
+function agenda(msg) {
+  const wrap = el('div', 'pnl-agenda'), days = (msg.days || []).filter((d) => (d.events || []).length);
+  if (!days.length) { wrap.append(el('p', 'pnl-empty', 'No hay nada en la agenda.')); return wrap; }
+  for (const d of days.slice(0, 7)) {
+    const sec = el('section', 'pnl-day'); sec.append(el('h4', '', String(d.label || '')));
+    const list = el('ul', 'pnl-events');
+    for (const e of d.events.slice(0, 8)) {
+      const li = el('li', e.tentative ? 'maybe' : '');
+      const text = el('div', 'pnl-ev'); text.append(el('strong', '', String(e.title || '')), el('small', '', [e.where, e.others ? `con ${e.others} más` : '', e.tentative ? 'sin confirmar' : ''].filter(Boolean).join(' · ')));
+      li.append(el('time', '', String(e.time || '')), text); list.append(li);
+    }
+    if (d.events.length > 8) list.append(el('li', 'more', `+${d.events.length - 8} más`));
+    sec.append(list); wrap.append(sec);
+  }
+  return wrap;
+}
+
+const KINDS = { finance, status, usage, board, route, chargers, brief, agenda };
 export function createDataPanel(box) {
   let timer = 0;
   const hide = () => { clearTimeout(timer); box.hidden = true; box.replaceChildren(); document.body.classList.remove('panel'); };
@@ -215,7 +233,7 @@ export function createDataPanel(box) {
       box.append(head, render(msg));
       box.hidden = false; document.body.classList.add('panel');
       box.classList.remove('in'); void box.offsetWidth; box.classList.add('in');
-      timer = setTimeout(hide, ['board', 'route', 'chargers', 'brief'].includes(msg.kind) ? 120000 : 45000); // son consultas puntuales: se van solas (el tablero dura mas)
+      timer = setTimeout(hide, ['board', 'route', 'chargers', 'brief', 'agenda'].includes(msg.kind) ? 120000 : 45000); // son consultas puntuales: se van solas (el tablero dura mas)
     },
     hide,
     get active() { return !box.hidden; },

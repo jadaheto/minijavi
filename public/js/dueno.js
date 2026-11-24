@@ -755,7 +755,7 @@ async function loadProjects() {
 
 // ---------- dispositivos ----------
 async function loadDevices() {
-  loadSpotify(); loadTesla();
+  loadSpotify(); loadTesla(); loadGoogle();
   const devices = await json('devices');
   $('list').replaceChildren(...devices.map((d) => {
     const btn = el('button', { type: 'button', className: 'small danger', textContent: 'Revocar' });
@@ -798,6 +798,31 @@ $('spotify-connect').addEventListener('click', async () => {
   else $('spotify-note').textContent = 'No se pudo iniciar la conexión con Spotify.';
 });
 $('spotify-disconnect').addEventListener('click', async () => { await api('spotify', { method: 'DELETE' }); spotifyBack = ''; loadSpotify(); });
+
+// Google: solo lectura (por ahora, la agenda). El permiso que se pide no deja crear ni cambiar nada.
+const GOOGLE_BACK = { ok: 'Cuenta de Google conectada.', cancelado: 'No se conectó: cancelaste la autorización en Google.', error: 'No se pudo conectar con Google.' };
+const GOOGLE_PARTS = { agenda: 'la agenda' };
+let googleBack = new URLSearchParams(location.search).get('google') || '', googleWhy = new URLSearchParams(location.search).get('motivo') || '';
+if (googleBack) history.replaceState(null, '', location.pathname + location.hash);
+async function loadGoogle() {
+  let st; try { st = await json('google'); } catch { return; }
+  const off = !st.configured && /apagado|modo negocio|modo dueño/.test(st.problem || '');
+  $('google-card').hidden = off; if (off) return;
+  const parts = (st.parts || []).map((p) => GOOGLE_PARTS[p] || p).join(', ');
+  $('google-state').textContent = !st.configured ? `Sin configurar: ${st.problem}.` : st.connected ? `Conectado${st.account ? ` como ${st.account}` : ''} desde ${fecha(st.since)}. Puede leer ${parts || 'nada todavía'}.` : 'Sin conectar: el avatar no puede ver tu agenda.';
+  $('google-state').className = st.connected ? 'ok' : '';
+  $('google-note').textContent = [GOOGLE_BACK[googleBack] ? `${GOOGLE_BACK[googleBack]}${googleBack === 'error' && googleWhy ? ` (${googleWhy})` : ''}` : '', st.error || '', (st.missing || []).length ? `Falta permiso para ${st.missing.map((p) => GOOGLE_PARTS[p] || p).join(', ')}: vuelve a conectar.` : '',
+    st.connected ? `Solo lectura. Consultas de hoy: ${st.usedToday} de ${st.dailyLimit}.` : st.configured ? 'Te lleva a Google para autorizar y vuelve aquí. Solo se pide permiso de LECTURA: el avatar no puede crear, cambiar ni borrar nada.' : `Dirección de retorno para registrar en Google Cloud: ${st.redirect || '(falta PUBLIC_URL)'}`].filter(Boolean).join(' ');
+  $('google-connect').hidden = !st.configured; $('google-connect').textContent = st.connected ? 'Volver a conectar' : 'Conectar Google';
+  $('google-disconnect').hidden = !st.connected;
+}
+$('google-connect').addEventListener('click', async () => {
+  const r = await api('google/connect', { method: 'POST' });
+  const d = await r.json().catch(() => ({}));
+  if (r.ok && typeof d.url === 'string' && d.url.startsWith('https://accounts.google.com/')) location.href = d.url;
+  else $('google-note').textContent = d.message ? `No se pudo iniciar: ${d.message}.` : 'No se pudo iniciar la conexión con Google.';
+});
+$('google-disconnect').addEventListener('click', async () => { await api('google', { method: 'DELETE' }); googleBack = ''; loadGoogle(); });
 
 // Tesla: solo lectura (batería, carga, seguros, clima). El avatar no puede enviarle órdenes al carro.
 const TESLA_BACK = { ok: 'Cuenta de Tesla conectada.', cancelado: 'No se conectó: la autorización se canceló en Tesla.', error: 'No se pudo conectar con Tesla. Inténtalo de nuevo.' };
