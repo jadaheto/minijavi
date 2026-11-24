@@ -20,6 +20,14 @@ let gadget = false, keys = [], keyAt = 0;
 // Tarjetas (Tesla, clima, dólar…): una cifra grande y hasta tres renglones. Varias tarjetas pasan solas; se quitan
 // unos segundos después de que el avatar termina de hablar, o con un toque.
 let tiles = null; // { list, index, next, seconds, until }
+let coverReady = false; // ya llegó una carátula (trama binaria de tipo 2: 150 x 150 en RGB565)
+/** Pinta la carátula tal como la recibe la placa. */
+function drawCover(bytes) {
+  const w = bytes[2] | (bytes[3] << 8), h = bytes[4] | (bytes[5] << 8); if (w !== 150 || h !== 150 || bytes.length < 6 + w * h * 2) return;
+  const ctx = $('tile-cover').getContext('2d'), img = ctx.createImageData(w, h);
+  for (let i = 0; i < w * h; i++) { const v = bytes[6 + i * 2] | (bytes[7 + i * 2] << 8); img.data[i * 4] = ((v >> 11) & 31) * 255 / 31; img.data[i * 4 + 1] = ((v >> 5) & 63) * 255 / 63; img.data[i * 4 + 2] = (v & 31) * 255 / 31; img.data[i * 4 + 3] = 255; }
+  ctx.putImageData(img, 0, 0); coverReady = true;
+}
 const el = (tag, text) => { const e = document.createElement(tag); e.textContent = text; return e; };
 function drawTile() {
   const t = tiles.list[tiles.index];
@@ -29,6 +37,10 @@ function drawTile() {
   const cover = typeof t.image === 'string' && /^https:\/\/([a-z0-9-]+\.)*(scdn\.co|spotifycdn\.com)\//.test(t.image) ? t.image : '';
   if (cover) { const img = new Image(); img.src = cover; img.alt = ''; $('tile-big').replaceChildren(img); $('tile-unit').textContent = t.big; } else $('tile-big').textContent = t.big;
   $('tile').classList.toggle('has-cover', !!cover);
+  // Tarjeta de música con la carátula que mandó el servidor (ya reducida, como le llega a la placa).
+  const music = t.kind === 'music' && !!t.cover && coverReady;
+  $('tile').classList.toggle('music', music); $('music-help').hidden = !music;
+  if (music) $('tile-title').textContent = (t.playing === false ? 'En pausa · ' : '') + t.title;
   $('tile-lines').replaceChildren(...(t.lines || []).map((l) => el('span', l)));
   const ring = $('tile-arc').parentElement; ring.classList.toggle('none', t.ring === undefined);
   $('tile-arc').style.strokeDashoffset = '1395'; // el anillo se llena desde cero cada vez
@@ -80,7 +92,9 @@ function onMessage(msg) {
 
 /** Audio de la placa: 4 bytes de cabecera (tipo 1, 0, número de la respuesta) y PCM de 16 bits. */
 function onBinary(data) {
-  const b = new Uint8Array(data); if (b.length < 6 || b[0] !== 1) return;
+  const b = new Uint8Array(data);
+  if (b.length >= 6 && b[0] === 2) { drawCover(b); return; }
+  if (b.length < 6 || b[0] !== 1) return;
   if ((b[2] | (b[3] << 8)) !== (speechId & 0xffff)) return; // de una respuesta que ya se cortó
   if (mind.state !== 'speaking') { setState('speaking'); mind.raiseBrows(); }
   player.push(b.subarray(4));
@@ -91,7 +105,19 @@ function shutdown(message) {
   if (message) $('status').textContent = message;
 }
 
-async function begin() {
+/** Toque sobre la tarjeta de música: la carátula pausa o sigue, « y » cambian de canción. Devuelve si lo atendió. */
+function musicTouch(ev) {
+  const t = tiles && tiles.list[tiles.index]; if (!t || !$('tile').classList.contains('music') || !ev) return false;
+  const box = $('screen').getBoundingClientRect(), x = ((ev.clientX - box.left) / box.width) * 466, y = ((ev.clientY - box.top) / box.height) * 466;
+  if (y >= 270) return false; // sobre la cara: quita la tarjeta
+  const cmd = x < 150 ? 'anterior' : x > 316 ? 'siguiente' : t.playing === false ? 'continuar' : 'pausar';
+  if (demo || !live) demoMusic(cmd); else if (gadget) socket?.send({ type: 'music', cmd });
+  if (tiles) tiles.until = 0;
+  return true;
+}
+
+async function begin(ev) {
+  if (tiles && musicTouch(ev)) return;
   if (tiles) { hideTiles(); return; } // con una tarjeta en pantalla, el toque la quita
   if (demo) { demo = null; lips.reset(); }
   if (live && gadget && mind.state === 'speaking') { stopSpeech(); socket?.send({ type: 'stop' }); setState(rest()); return; } // como en la placa: un toque lo corta
@@ -115,13 +141,31 @@ const DEMO = [
   { at: 2.2, state: 'thinking' },
   { at: 3.6, say: 'Tu carro tiene ochenta por ciento de batería. Te alcanza para ir y volver.', tiles: [{ title: 'Tesla de ejemplo', big: '80', unit: '%', ring: 80, tone: 'ok', lines: ['412 km de autonomía', 'Con seguro', 'Adentro 27° · afuera 31°'] }, { title: 'Clima de ejemplo', big: '31', unit: '°C', tone: 'info', lines: ['Parcialmente nublado', 'Máx 33° · mín 24°', 'Lluvia 20 %'] }] },
   { at: 9.2, state: 'listening', said: 'Las tarjetas se quedan unos segundos y se van solas (o con un toque)' },
-  { at: 19, react: 'alegria', said: 'Reacción: alegría', hide: true },
-  { at: 22.4, react: 'sorpresa', said: 'Reacción: sorpresa' },
-  { at: 25.6, react: 'pena', said: 'Reacción: pena' },
-  { at: 28.8, react: 'pensativo', said: 'Reacción: pensativo' },
-  { at: 32, state: 'away', said: 'Suspendido' },
-  { at: 36, state: 'idle', said: '' },
+  { at: 15, state: 'listening', said: '«Javi, pon salsa»', hide: true },
+  { at: 17, state: 'thinking' },
+  { at: 18.2, say: 'Listo, suena en tu celular.', music: 0 },
+  { at: 20.5, state: 'listening', said: 'Música: toca la carátula para pausar, « y » para cambiar de canción. Se queda 20 segundos.' },
+  { at: 42, react: 'alegria', said: 'Reacción: alegría', hide: true },
+  { at: 45.4, react: 'sorpresa', said: 'Reacción: sorpresa' },
+  { at: 48.6, react: 'pena', said: 'Reacción: pena' },
+  { at: 51.8, react: 'pensativo', said: 'Reacción: pensativo' },
+  { at: 55, state: 'away', said: 'Suspendido' },
+  { at: 59, state: 'idle', said: '' },
 ];
+// Música de EJEMPLO para la demostración: canciones inventadas y carátulas dibujadas aquí (no son de ningún disco).
+const DEMO_SONGS = [['Tarde en la sabana', 'Los de Ejemplo', '#c2410c', '#fbbf24'], ['Brisa del río', 'Conjunto Demo', '#0e7490', '#a7f3d0'], ['Noche de porro', 'La Banda Prueba', '#6d28d9', '#f9a8d4']];
+let demoSong = 0, demoPlaying = true;
+function demoMusic(cmd) {
+  if (cmd === 'siguiente') demoSong = (demoSong + 1) % DEMO_SONGS.length; else if (cmd === 'anterior') demoSong = (demoSong + DEMO_SONGS.length - 1) % DEMO_SONGS.length;
+  else if (cmd === 'pausar') demoPlaying = false; else if (cmd === 'continuar') demoPlaying = true;
+  const [title, artist, a, b] = DEMO_SONGS[demoSong], c = $('tile-cover').getContext('2d');
+  const g = c.createLinearGradient(0, 0, 150, 150); g.addColorStop(0, a); g.addColorStop(1, b); c.fillStyle = g; c.fillRect(0, 0, 150, 150);
+  c.fillStyle = 'rgba(255,255,255,0.9)'; c.beginPath(); c.arc(75, 70, 34, 0, 7); c.fill(); c.fillStyle = a; c.beginPath(); c.arc(75, 70, 9, 0, 7); c.fill();
+  c.fillStyle = '#fff'; c.font = '600 12px system-ui, sans-serif'; c.textAlign = 'center'; c.fillText('CARÁTULA DE EJEMPLO', 75, 134);
+  coverReady = true;
+  showTiles([{ kind: 'music', cover: true, playing: demoPlaying, title: 'Spotify · Celular', big: demoPlaying ? 'Suena' : 'Pausa', tone: 'ok', lines: [title, artist] }], 20);
+}
+
 function startDemo() {
   if (live) { socket?.close(); shutdown(''); }
   hideTiles(); demo = { t: 0, step: 0, speakAt: -1 }; lips.reset(); $('said').textContent = '';
@@ -133,6 +177,7 @@ function runDemo(dt) {
     if (s.state) setState(s.state);
     if (s.react) mind.react(s.react);
     if (s.tiles) showTiles(s.tiles, 6);
+    if (s.music !== undefined) { demoSong = s.music; demoPlaying = true; demoMusic(''); }
     if (s.hide) hideTiles();
     if (s.said !== undefined) $('said').textContent = s.said;
     if (s.say) { // tiempos estimados: 14 caracteres por segundo, como la voz del navegador

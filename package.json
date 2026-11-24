@@ -32,6 +32,7 @@
     "@nestjs/platform-ws": "^12.5.0",
     "@nestjs/serve-static": "^12.1.1",
     "@nestjs/websockets": "^12.5.0",
+    "jpeg-js": "^0.4.4",
     "opusscript": "^0.1.1",
     "pg": "^8.23.1",
     "qrcode": "^1.5.4",

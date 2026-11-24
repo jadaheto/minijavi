@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "bsp/esp-bsp.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -17,7 +18,13 @@ extern const uint8_t ttf_end[] asm("_binary_Montserrat_Medium_ttf_end");
 #define TILE_STEP_MS 4500   // cada cuanto pasa a la tarjeta siguiente
 
 static lv_obj_t *face_box, *ring, *note, *message, *battery;
-static lv_obj_t *tile_box, *tile_arc, *tile_title, *tile_big, *tile_unit, *tile_lines, *tile_dots;
+static lv_obj_t *tile_box, *tile_arc, *tile_title, *tile_row, *tile_big, *tile_unit, *tile_lines, *tile_dots;
+static lv_obj_t *cover_img, *music_prev, *music_next;
+// Caratula: llega por la conexion a `cover_in` y la tarea de la pantalla la copia a `cover_px`, que es lo que se dibuja.
+static uint8_t *cover_in, *cover_px;
+static lv_image_dsc_t cover_dsc;
+static bool cover_new, cover_ok;
+static volatile bool music_on, music_playing;
 static const lv_font_t *f_text, *f_msg, *f_big, *f_unit;
 static SemaphoreHandle_t lock;
 static char want_message[220], want_note[64];
@@ -48,6 +55,20 @@ static void draw_tile(void)
 {
     const tile_t *t = &tiles[tile_index];
     lv_color_t tone = lv_color_hex(TONES[t->tone >= 0 && t->tone < 4 ? t->tone : 0]);
+    // Musica: la caratula entera arriba (nada encima), « y » a los lados; debajo, donde suena, la cancion y el artista.
+    bool music = t->music && t->cover && cover_ok && cover_img;
+    music_on = music; music_playing = t->playing;
+    lv_obj_t *only_music[] = { cover_img, music_prev, music_next }, *only_data[] = { tile_row, tile_dots };
+    for (int i = 0; i < 3; i++) if (only_music[i]) { if (music) lv_obj_remove_flag(only_music[i], LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(only_music[i], LV_OBJ_FLAG_HIDDEN); }
+    for (int i = 0; i < 2; i++) { if (music) lv_obj_add_flag(only_data[i], LV_OBJ_FLAG_HIDDEN); else lv_obj_remove_flag(only_data[i], LV_OBJ_FLAG_HIDDEN); }
+    lv_obj_align(tile_title, LV_ALIGN_TOP_MID, 0, music ? 200 : 50);
+    lv_obj_align(tile_lines, LV_ALIGN_TOP_MID, 0, music ? 228 : 182);
+    if (music) {
+        char where[96]; snprintf(where, sizeof(where), "%s%s", t->playing ? "" : "En pausa · ", t->title);
+        lv_label_set_text(tile_title, where); lv_label_set_text(tile_lines, t->lines);
+        lv_obj_add_flag(tile_arc, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
     lv_label_set_text(tile_title, t->title);
     lv_label_set_text(tile_big, t->big);
     lv_label_set_text(tile_unit, t->unit);
@@ -65,7 +86,7 @@ static void draw_tile(void)
 
 static void show_tile(bool on)
 {
-    tile_on = on;
+    tile_on = on; if (!on) music_on = false;
     if (on) { lv_obj_remove_flag(tile_box, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(face_box, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(ring, LV_OBJ_FLAG_HIDDEN); }
     else { lv_obj_add_flag(tile_box, LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(ring, LV_OBJ_FLAG_HIDDEN); if (!has_message) lv_obj_remove_flag(face_box, LV_OBJ_FLAG_HIDDEN); }
 }
@@ -89,6 +110,7 @@ static void tick(lv_timer_t *t)
         if (batt >= 0 && (batt <= 20 || batt_charging)) { lv_label_set_text_fmt(battery, "%s %d%%", batt_charging ? LV_SYMBOL_CHARGE : LV_SYMBOL_BATTERY_1, batt); lv_obj_remove_flag(battery, LV_OBJ_FLAG_HIDDEN); }
         else lv_obj_add_flag(battery, LV_OBJ_FLAG_HIDDEN); // solo se muestra cuando importa: poca bateria o cargando
     }
+    if (cover_new && cover_in && cover_px) { cover_new = false; memcpy(cover_px, cover_in, COVER_SIDE * COVER_SIDE * 2); cover_ok = true; if (cover_img) { lv_image_set_src(cover_img, &cover_dsc); lv_obj_invalidate(cover_img); } }
     // Tarjetas: llegan, pasan solas si son varias y se van unos segundos despues de que el avatar termina de hablar.
     if (tiles_off) { tiles_off = false; tiles_new = false; if (tile_on) show_tile(false); }
     if (tiles_new && !has_message) { tiles_new = false; tile_index = 0; tile_next = now + TILE_STEP_MS * 1000LL; tile_until = 0; draw_tile(); show_tile(true); }
@@ -110,7 +132,12 @@ static void on_touch(lv_event_t *e)
     static int64_t pressed_at; static bool fired;
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_PRESSED) { pressed_at = esp_timer_get_time(); fired = false; }
-    else if (code == LV_EVENT_SHORT_CLICKED) app_post(EV_TOUCH);
+    else if (code == LV_EVENT_SHORT_CLICKED) {
+        // Sobre la tarjeta de musica: la caratula pausa o sigue, « y » cambian de cancion; mas abajo (la cara) la quita.
+        lv_point_t p = { 233, 400 }; lv_indev_t *in = lv_indev_active(); if (in) lv_indev_get_point(in, &p);
+        if (tile_on && music_on && p.y < 270) { tile_until = 0; app_post(p.x < 150 ? EV_MUSIC_PREV : p.x > 316 ? EV_MUSIC_NEXT : EV_MUSIC_TOGGLE); }
+        else app_post(EV_TOUCH);
+    }
     else if (code == LV_EVENT_LONG_PRESSED_REPEAT && !fired && esp_timer_get_time() - pressed_at > 3000000) { fired = true; app_post(EV_LONG_TOUCH); } // 3 s con el dedo puesto: ajustes
 }
 
@@ -172,7 +199,7 @@ void ui_start(void)
     lv_obj_set_style_arc_color(tile_arc, lv_color_hex(0x1b2030), LV_PART_MAIN);
     lv_obj_set_style_arc_rounded(tile_arc, true, LV_PART_INDICATOR);
     tile_title = label(tile_box, f_text, 0xaab3c5); lv_obj_align(tile_title, LV_ALIGN_TOP_MID, 0, 50);
-    lv_obj_t *row = box(tile_box, LV_SIZE_CONTENT, LV_SIZE_CONTENT); // cifra y unidad juntas, centradas
+    lv_obj_t *row = tile_row = box(tile_box, LV_SIZE_CONTENT, LV_SIZE_CONTENT); // cifra y unidad juntas, centradas
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW); lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
     lv_obj_set_style_pad_column(row, 6, 0); lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 78);
     tile_big = label(row, f_big, 0xffffff);
@@ -181,6 +208,16 @@ void ui_start(void)
     lv_label_set_long_mode(tile_lines, LV_LABEL_LONG_MODE_DOTS); lv_obj_set_width(tile_lines, 350); lv_obj_set_height(tile_lines, 90);
     lv_obj_set_style_text_line_space(tile_lines, 5, 0); lv_obj_align(tile_lines, LV_ALIGN_TOP_MID, 0, 182);
     tile_dots = label(tile_box, &lv_font_montserrat_20, 0x8a93a6); lv_obj_align(tile_dots, LV_ALIGN_TOP_MID, 0, 262);
+    // Musica: caratula de 150 x 150 que llega del servidor, y los signos para cambiar de cancion.
+    cover_in = heap_caps_malloc(COVER_SIDE * COVER_SIDE * 2, MALLOC_CAP_SPIRAM); cover_px = heap_caps_calloc(1, COVER_SIDE * COVER_SIDE * 2, MALLOC_CAP_SPIRAM);
+    if (cover_in && cover_px) {
+        memset(&cover_dsc, 0, sizeof(cover_dsc));
+        cover_dsc.header.magic = LV_IMAGE_HEADER_MAGIC; cover_dsc.header.cf = LV_COLOR_FORMAT_RGB565; cover_dsc.header.w = COVER_SIDE; cover_dsc.header.h = COVER_SIDE; cover_dsc.header.stride = COVER_SIDE * 2;
+        cover_dsc.data_size = COVER_SIDE * COVER_SIDE * 2; cover_dsc.data = cover_px;
+        cover_img = lv_image_create(tile_box); lv_image_set_src(cover_img, &cover_dsc); lv_obj_align(cover_img, LV_ALIGN_TOP_MID, 0, 44); lv_obj_add_flag(cover_img, LV_OBJ_FLAG_HIDDEN);
+        music_prev = label(tile_box, f_unit, 0xaab3c5); lv_label_set_text(music_prev, "«"); lv_obj_align(music_prev, LV_ALIGN_TOP_MID, -116, 100); lv_obj_add_flag(music_prev, LV_OBJ_FLAG_HIDDEN);
+        music_next = label(tile_box, f_unit, 0xaab3c5); lv_label_set_text(music_next, "»"); lv_obj_align(music_next, LV_ALIGN_TOP_MID, 116, 100); lv_obj_add_flag(music_next, LV_OBJ_FLAG_HIDDEN);
+    }
     int small = face_side(FACE_MINI);
     if (small) { lv_obj_t *mini = box(tile_box, small, small); lv_obj_align(mini, LV_ALIGN_TOP_MID, 0, 280); face_build(FACE_MINI, mini); }
 
@@ -246,6 +283,15 @@ void ui_tiles(const tile_t *list, int count, int seconds)
 }
 
 bool ui_tile_active(void) { return tile_on; }
+bool ui_music_playing(void) { return music_playing; }
+
+void ui_cover(const uint8_t *rgb565, int w, int h)
+{
+    if (!rgb565 || w != COVER_SIDE || h != COVER_SIDE || !cover_in) return;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    memcpy(cover_in, rgb565, COVER_SIDE * COVER_SIDE * 2); cover_new = true;
+    xSemaphoreGive(lock);
+}
 
 void ui_tile_dismiss(void)
 {

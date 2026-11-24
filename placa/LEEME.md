@@ -38,6 +38,7 @@ Para volver a los ajustes: deja el dedo 3 segundos en la pantalla, o enciéndela
 | Anillo azul | Está hablando. **Un toque lo corta.** |
 | Ojos cerrados | Suspendido ("silénciate"). Un toque o decir "Javi" lo despierta. |
 | Tarjeta con una cifra y la cara pequeña | Datos de lo que preguntaste (Tesla, clima, dólar o Bitcoin, trayecto, servicios, resumen). Se va sola a los 12 s de terminar de hablar, o con un toque. |
+| Carátula con « y » | Música en Spotify (suena en tu celular o computador, no en la placa). Toca la carátula para pausar o seguir, « y » para cambiar de canción; tocar la cara quita la tarjeta. |
 
 La conversación se cierra sola por inactividad (lo decide el servidor). En reposo la pantalla baja el brillo a los 45 s
 y se apaga a los 5 min; un toque la enciende.
@@ -70,6 +71,7 @@ este repositorio ni salen en el registro.
 - Que la boca vaya a tiempo con la voz (`OUT_DELAY_MS` en `audio.c`).
 - Que la pantalla alcance a redibujar la boca con fluidez.
 - Las tarjetas: que la letra se lea bien, el anillo, y que la cara pequeña mueva la boca.
+- La tarjeta de música: que la carátula llegue y se vea, y que los toques caigan donde deben (si la pantalla táctil sale volteada, « y » quedarían al revés).
 - El toque largo, el botón BOOT (se asumió el pin 0) y la lectura de la batería.
 - La página de ajustes desde un celular real y la conexión segura al servidor.
 - Cuánto dura la batería.

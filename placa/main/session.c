@@ -1,14 +1,17 @@
 // Conversacion con el servidor de minijavi por WebSocket, con el formato del "Javi de bolsillo":
 //   placa -> servidor: {"type":"hello","gadget":"<pase>","rate":16000}, audio del microfono en binario (PCM16, 16 kHz,
-//                      tramas de 40 ms), {"type":"playback","playing":bool}, {"type":"stop"} (cortar), {"type":"wake"}
+//                      tramas de 40 ms), {"type":"playback","playing":bool}, {"type":"stop"} (cortar), {"type":"wake"},
+//                      {"type":"music","cmd":"pausar|continuar|siguiente|anterior"} (toques en la tarjeta de musica)
 //   servidor -> placa: ready, error, user_final, speech_start, mouth, speech_end, reaction, suspend, interrupt, tile
 //                      (tarjetas de datos) y la voz en
-//                      binario: 4 bytes (1, 0, numero de la respuesta en 16 bits) + PCM16 mono
+//                      binario: 4 bytes (1, 0, numero de la respuesta en 16 bits) + PCM16 mono; y la caratula de lo que
+//                      suena: 6 bytes (2, 0, ancho, alto) + 150 x 150 puntos en RGB565
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_websocket_client.h"
@@ -21,6 +24,8 @@ static esp_websocket_client_handle_t ws;
 static volatile bool live, closing;
 static int speech_id = -1;
 static bool frame_ok;            // la trama binaria en curso es voz de la respuesta actual
+static int bin_kind;             // tipo de la trama binaria en curso: 1 voz, 2 caratula
+static uint8_t *cover; static size_t cover_len; static int cover_w, cover_h; // caratula que va llegando por pedazos
 static int last_op;
 static char *text; static size_t text_len, text_cap;
 static char last_error[24];
@@ -74,6 +79,8 @@ static void on_json(const char *raw)
             o->ring = cJSON_IsNumber(ring) ? (ring->valueint < 0 ? 0 : ring->valueint > 100 ? 100 : ring->valueint) : -1;
             s = cJSON_GetStringValue(cJSON_GetObjectItem(t, "tone"));
             o->tone = !s ? 0 : !strcmp(s, "ok") ? 1 : !strcmp(s, "warn") ? 2 : !strcmp(s, "bad") ? 3 : 0;
+            s = cJSON_GetStringValue(cJSON_GetObjectItem(t, "kind"));
+            o->music = s && !strcmp(s, "music"); o->cover = cJSON_IsTrue(cJSON_GetObjectItem(t, "cover")); o->playing = !cJSON_IsFalse(cJSON_GetObjectItem(t, "playing"));
             cJSON_ArrayForEach(line, cJSON_GetObjectItem(t, "lines")) {
                 const char *l = cJSON_GetStringValue(line);
                 if (!l || lines == 3) continue;
@@ -109,10 +116,21 @@ static void on_event(void *arg, esp_event_base_t base, int32_t event, void *data
             if (last_op == 2) { // voz
                 const uint8_t *p = (const uint8_t *)d->data_ptr; size_t n = (size_t)d->data_len;
                 if (first) {
-                    frame_ok = n >= 4 && p[0] == 1 && (p[2] | (p[3] << 8)) == (speech_id & 0xffff);
-                    if (n >= 4) { p += 4; n -= 4; } else n = 0;
+                    bin_kind = n >= 1 ? p[0] : 0;
+                    if (bin_kind == 2) { // caratula: 6 bytes (2, 0, ancho, alto) y los puntos; llega en varios pedazos
+                        cover_len = 0; cover_w = n >= 6 ? (p[2] | (p[3] << 8)) : 0; cover_h = n >= 6 ? (p[4] | (p[5] << 8)) : 0;
+                        if (cover_w != COVER_SIDE || cover_h != COVER_SIDE || d->payload_len != 6 + COVER_SIDE * COVER_SIDE * 2) bin_kind = 0;
+                        else { if (!cover) cover = heap_caps_malloc(COVER_SIDE * COVER_SIDE * 2, MALLOC_CAP_SPIRAM); if (!cover) bin_kind = 0; p += 6; n -= 6; }
+                    } else {
+                        frame_ok = n >= 4 && p[0] == 1 && (p[2] | (p[3] << 8)) == (speech_id & 0xffff);
+                        if (n >= 4) { p += 4; n -= 4; } else n = 0;
+                    }
                 }
-                if (frame_ok && n) audio_push(p, n);
+                if (bin_kind == 2) {
+                    if (cover && cover_len + n <= COVER_SIDE * COVER_SIDE * 2) { memcpy(cover + cover_len, p, n); cover_len += n; }
+                    if (cover && cover_len == COVER_SIDE * COVER_SIDE * 2 && d->payload_offset + d->data_len >= d->payload_len) { ui_cover(cover, cover_w, cover_h); cover_len = 0; }
+                }
+                else if (bin_kind == 1 && frame_ok && n) audio_push(p, n);
             } else if (last_op == 1) { // mensaje en JSON, que puede llegar en varios pedazos
                 if (first) text_len = 0;
                 size_t need = text_len + (size_t)d->data_len + 1;

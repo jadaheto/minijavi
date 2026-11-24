@@ -108,6 +108,9 @@ void app_main(void)
                     if (session_live()) { session_mic_pause(350); session_send_json("{\"type\":\"playback\",\"playing\":false}"); if (state == ST_SPEAKING || state == ST_THINKING) set_state(ST_LISTENING); }
                     break;
                 case EV_INTERRUPT: if (state == ST_SPEAKING || state == ST_THINKING) set_state(ST_LISTENING); break;
+                case EV_MUSIC_TOGGLE: session_send_json(ui_music_playing() ? "{\"type\":\"music\",\"cmd\":\"pausar\"}" : "{\"type\":\"music\",\"cmd\":\"continuar\"}"); break;
+                case EV_MUSIC_NEXT: session_send_json("{\"type\":\"music\",\"cmd\":\"siguiente\"}"); break;
+                case EV_MUSIC_PREV: session_send_json("{\"type\":\"music\",\"cmd\":\"anterior\"}"); break;
                 case EV_SUSPEND_ON: set_state(ST_AWAY); break;
                 case EV_SUSPEND_OFF: if (state == ST_AWAY) set_state(ST_LISTENING); break;
             }

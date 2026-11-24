@@ -88,6 +88,18 @@ export class MusicService {
     return devices.find((d) => d.active) ?? devices.find((d) => d.type === 'smartphone') ?? devices.find((d) => d.type === 'computer') ?? devices[0];
   }
 
+  /** Orden dada con un toque en la pantalla de la placa: igual que por voz, pero siempre devuelve la tarjeta de lo que quedó. */
+  async remoteTouch(m: MusicState, cmd: 'pausar' | 'continuar' | 'siguiente' | 'anterior'): Promise<RemoteResult> {
+    const out = await this.remote(m, cmd, {});
+    if (out.tile || !this.spotify?.canRemote || /^No se pudo/.test(out.text)) return out;
+    try { // pausar no trae tarjeta: se pregunta qué quedó (en pausa) para dibujarla
+      await new Promise((r) => setTimeout(r, 600));
+      const p = await this.spotify.playback();
+      if (p?.title) return { text: out.text, tile: musicTile({ device: p.device?.name ?? m.device?.name ?? 'Spotify', playing: p.playing, title: p.title, artist: p.artist, image: p.image }) };
+    } catch { /* sin tarjeta: queda el texto */ }
+    return out;
+  }
+
   /** Una orden del control remoto. Nunca lanza: lo que falle vuelve como texto para que el avatar lo diga. */
   async remote(m: MusicState, action: string, args: { query?: string; where?: string; volume?: string }): Promise<RemoteResult> {
     const sp = this.spotify;

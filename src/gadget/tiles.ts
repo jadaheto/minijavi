@@ -75,7 +75,7 @@ function status(d: Data): Tile[] {
 
 /** Tarjeta de lo que suena en Spotify (control remoto). `image`: carátula, para las pantallas que pueden mostrarla. */
 export function musicTile(o: { device: string; playing: boolean; title: string; artist: string; image?: string }): Record<string, unknown> {
-  return { ...tile({ title: `Spotify · ${o.device}`, big: o.playing ? 'Suena' : 'Pausa', tone: o.playing ? 'ok' : 'info', lines: [o.title, o.artist] }), ...(o.image ? { image: o.image } : {}) };
+  return { ...tile({ title: `Spotify · ${o.device}`, big: o.playing ? 'Suena' : 'Pausa', tone: o.playing ? 'ok' : 'info', lines: [o.title, o.artist] }), kind: 'music', playing: o.playing, ...(o.image ? { image: o.image } : {}) };
 }
 
 /** Tarjetas para un mensaje que iba a la página ({type:'tesla'}, {type:'panel', kind}, {type:'weather'}). Vacío = no hay cómo mostrarlo. */

@@ -10,6 +10,7 @@ import { OwnerService } from '../owner/owner.service';
 import { INTERNAL } from '../calls/call-socket';
 import { Downsampler, GADGET_RATES, GADGET_TYPES, MouthTrack, audioFrame } from '../gadget/mouth';
 import { tilesFor } from '../gadget/tiles';
+import { fetchCover } from '../gadget/cover';
 import { ConfigService } from '../config/config.service';
 import { CardsService } from '../cards/cards.service';
 import { DeepSeekService, LlmEvent } from '../llm/deepseek.service';
@@ -105,6 +106,7 @@ interface Session {
   places?: { chargers: any[]; from?: any }; // cargadores mostrados por ultima vez
   marketList?: { items: any[]; title: string }; // mercados de prediccion mostrados por ultima vez (para abrir uno por su numero)
   news?: { index: number; part?: number; section?: string }; // noticia que se esta viendo (0 = la lista) y parte de la lectura completa
+  musicBusy?: boolean; musicAt?: number; // orden de musica por toque en curso (placa de bolsillo)
   gadgetRate?: number;   // frecuencia del audio que pidio la placa (16000 o 24000)
   gadget?: boolean;      // Javi de bolsillo: una placa con pantalla pequeña (audio en binario, bocas ya calculadas, sin paneles)
   car?: boolean;         // modo carro: solo atiende las frases que traen su nombre (o las que siguen a una respuesta)
@@ -489,6 +491,14 @@ export class SessionGateway implements OnGatewayConnection {
       }
       // El navegador avisa cuando la musica cambia sola de cancion o se detiene (fin de la cola, error del reproductor).
       // El reproductor web de Spotify pide su token (solo sesiones del dueño; dura 1 h) y avisa si no pudo reproducir.
+      // Toque en la tarjeta de musica de la placa: pausar, continuar, siguiente o anterior en el Spotify de Javier (sin pasar por el modelo).
+      if (msg?.type === 'music' && s.gadget && s.music?.remote && typeof msg.cmd === 'string') {
+        const cmd = msg.cmd as 'pausar' | 'continuar' | 'siguiente' | 'anterior';
+        if (!['pausar', 'continuar', 'siguiente', 'anterior'].includes(cmd) || s.musicBusy || Date.now() - (s.musicAt ?? 0) < 400) return; // una orden a la vez
+        s.musicBusy = true; s.musicAt = Date.now(); s.lastActivity = Date.now();
+        void this.music.remoteTouch(s.music, cmd).then((out) => (out.tile ? this.sendTile(client, out.tile) : undefined)).catch(() => undefined).finally(() => { s.musicBusy = false; });
+        return;
+      }
       if (msg?.type === 'spotify_token') { if (s.owner && s.music) void this.music.spotifyToken().then((token) => this.send(client, { type: 'spotify_token', token }), (e) => this.send(client, { type: 'spotify_token', error: (e as Error).message })); return; }
       if (msg?.type === 'music' && s.music && typeof msg.failed === 'string') { const m = s.music; void this.music.fallback(m, msg.failed).then((out) => { if (out && s.music === m && client.readyState === client.OPEN) this.send(client, { type: 'music', ...out }); }).catch(() => undefined); return; }
       if (msg?.type === 'music' && s.music) { if (Number.isInteger(msg.index) && msg.index >= 0 && msg.index < s.music.queue.length) s.music.index = msg.index; if (typeof msg.playing === 'boolean') s.music.playing = msg.playing; return; }
@@ -972,7 +982,7 @@ export class SessionGateway implements OnGatewayConnection {
             if (out.reaction && !turn.ctrl.signal.aborted) this.send(client, { type: 'reaction', name: out.reaction });
             if (out.card && !turn.ctrl.signal.aborted) this.send(client, { type: 'card', ...out.card });
             if (out.music) this.send(client, { type: 'music', ...out.music });
-            if (out.tile && s.gadget && !turn.ctrl.signal.aborted) this.send(client, { type: 'tile', tiles: [out.tile], seconds: this.cfg.gadgetTileSeconds });
+            if (out.tile && s.gadget && !turn.ctrl.signal.aborted) void this.sendTile(client, out.tile);
             if (out.weather && s.gadget && !turn.ctrl.signal.aborted) this.send(client, { type: 'weather', ...out.weather }); // solo la placa lo dibuja
             if (out.tesla && !turn.ctrl.signal.aborted) this.send(client, { type: 'tesla', ...out.tesla });
             if (out.news && !turn.ctrl.signal.aborted) this.send(client, { type: 'news', ...out.news });
@@ -1136,6 +1146,18 @@ export class SessionGateway implements OnGatewayConnection {
       client.send(audioFrame(turn.id, part)); turn.paced = (turn.paced ?? 0) + part.length / 2;
     }
     return true;
+  }
+
+  /**
+   * Tarjeta para la placa. Si trae caratula (musica), primero va la imagen ya reducida y en el formato de su pantalla, y
+   * despues la tarjeta con `cover: true`; si la imagen no se pudo preparar, la tarjeta sale igual, sin ella.
+   */
+  private async sendTile(client: WebSocket, tile: Record<string, unknown>) {
+    const { image, ...rest } = tile;
+    const frame = image ? await fetchCover(image) : undefined;
+    if (client.readyState !== client.OPEN) return;
+    if (frame) client.send(frame);
+    this.send(client, { type: 'tile', tiles: [{ ...rest, ...(frame ? { cover: true } : {}) }], seconds: this.cfg.gadgetTileSeconds });
   }
 
   /** Clientes que son una placa de bolsillo (y la frecuencia de su audio): solo reciben los mensajes que saben usar. */

@@ -3008,11 +3008,55 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     calls.length = 0; must(/20 por ciento/.test((await music.remote(m, 'volumen', { volume: '20' })).text) && calls.length === 1, 'volumen con número');
     now = null; must(/no hay nada sonando/.test((await music.remote(m, 'que_suena', {})).text), 'nada sonando');
     devices = []; const fail = await music.remote(m, 'continuar', {}); must(/No se pudo: Spotify respondió 404 \(NO_ACTIVE_DEVICE\)/.test(fail.text) && /abra/.test(fail.text), `error de Spotify: ${fail.text}`);
+    // Carátula: se reduce a 150 x 150 sin recortar, en el formato de la pantalla; solo de los servidores de Spotify.
+    const { coverFrame, fetchCover, COVER_SIDE } = await import('../gadget/cover');
+    const jpegjs = await import('jpeg-js');
+    const mk = (w: number, h: number, rgb: [number, number, number]) => { const d = Buffer.alloc(w * h * 4); for (let i = 0; i < w * h; i++) { d[i * 4] = rgb[0]; d[i * 4 + 1] = rgb[1]; d[i * 4 + 2] = rgb[2]; d[i * 4 + 3] = 255; } return Buffer.from(jpegjs.encode({ data: d, width: w, height: h }, 92).data); };
+    const px = (f: Buffer, x: number, y: number) => { const v = f.readUInt16LE(6 + (y * COVER_SIDE + x) * 2); return [(v >> 11) << 3, ((v >> 5) & 63) << 2, (v & 31) << 3]; };
+    const sq = coverFrame(mk(640, 640, [200, 40, 40]));
+    must(sq.length === 6 + 150 * 150 * 2 && sq[0] === 2 && sq.readUInt16LE(2) === 150 && sq.readUInt16LE(4) === 150 && Math.abs(px(sq, 75, 75)[0] - 200) < 12 && px(sq, 75, 75)[2] < 60 && Math.abs(px(sq, 0, 0)[0] - 200) < 12, `carátula cuadrada: ${px(sq, 75, 75)}`);
+    const wide = coverFrame(mk(600, 300, [30, 160, 60]));
+    must(px(wide, 75, 10).join() === '0,0,0' && Math.abs(px(wide, 75, 75)[1] - 160) < 12 && Math.abs(px(wide, 2, 75)[1] - 160) < 12 && px(wide, 75, 140).join() === '0,0,0', 'una carátula que no es cuadrada debe quedar entera, centrada sobre negro (sin recortar)');
+    must((() => { try { coverFrame(Buffer.from('no es una imagen')); return false; } catch { return true; } })(), 'algo que no es JPEG debe rechazarse');
+    let fetched = 0; const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (u: any) => { fetched++; return new Response(String(u).includes('grande') ? Buffer.alloc(2_000_000, 1) : mk(300, 300, [10, 10, 200]), { status: 200 }); }) as typeof fetch;
+    try {
+      must(!(await fetchCover('https://malo.invalid/x.jpg')) && !(await fetchCover('http://i.scdn.co/image/x')) && !(await fetchCover('javascript:alert(1)')) && fetched === 0, 'solo se bajan carátulas https de los servidores de Spotify');
+      const c1 = await fetchCover('https://i.scdn.co/image/caratula-ok'), c2 = await fetchCover('https://i.scdn.co/image/caratula-ok');
+      must(!!c1 && c1 === c2 && fetched === 1 && px(c1!, 75, 75)[2] > 180 && !(await fetchCover('https://i.scdn.co/image/grande')), 'la carátula se baja una vez (queda guardada) y una imagen enorme se descarta');
+    } finally { globalThis.fetch = realFetch; }
+    // Toques en la tarjeta de música: van directo al control remoto (sin el modelo) y vuelve la tarjeta con su carátula.
+    {
+      const noop = () => undefined, b = noJev, sent: any[] = [], bins: Buffer[] = [], handlers: Record<string, any> = {}, done: string[] = [];
+      const fakeMusic = { enabled: true, remoteAvailable: true, newState: () => ({ queue: [], index: 0 }), remoteTouch: async (_m: any, cmd: string) => { done.push(cmd); return { text: 'ok', tile: { kind: 'music', title: 'Spotify · Celular', big: 'Suena', lines: ['La rebelión', 'Joe Arroyo'], playing: cmd !== 'pausar', image: 'https://i.scdn.co/image/caratula-ok' } }; } };
+      const { OwnerService } = await import('../owner/owner.service');
+      const ocfg: any = Object.assign(Object.create(Object.getPrototypeOf(b.cfg)), b.cfg, { ownerSecret: 'clave-de-prueba-del-bolsillo-123', gadgetDays: 365, gadgetAheadSeconds: 1, gadgetTileSeconds: 12, ttsProvider: 'elevenlabs', greeting: '' });
+      const owner = new OwnerService(ocfg, P.db); await owner.onModuleInit(); const pass = owner.issueGadget('Toques')!;
+      const gw = new (SessionGateway as any)(ocfg, { stream: async function* () { /* sin voz */ } }, { open: () => ({ send: noop, close: noop }) }, { chat: async function* () { /* nada */ }, complete: async () => '{}' }, { definitions: async () => [], run: async () => ({ text: '' }) }, owner, { get: noop, ids: () => [] }, { get: async () => null, valid: () => false, save: async () => undefined },
+        { context: async () => '' }, { enabled: false, onDone: noop, onAudit: noop, onProgress: noop, busy: () => undefined, unseen: () => [], pendingAudits: () => [], defaultModel: { label: '' } }, fakeMusic, usage, { get: async () => undefined, logConversation: noop }, { enabled: false, canGenerate: false, newState: () => ({ title: '', kind: '', items: [], index: 0 }) },
+        alerts, { prompt: () => '' }, { add: async () => undefined, analyze: async () => ({}) }, b.optout, b.guard, b.capable, b.catalog);
+      let sess: any; const start0 = gw.start.bind(gw); gw.start = (c: any, x: any, k: any, f: any) => { sess = x; return start0(c, x, k, f); };
+      const client: any = { readyState: 1, OPEN: 1, send: (raw: any) => { if (typeof raw === 'string') sent.push(JSON.parse(raw)); else bins.push(raw); }, on: (ev: string, fn: any) => { handlers[ev] = fn; }, close: () => { client.readyState = 3; handlers.close?.(); } };
+      gw.handleConnection(client, { headers: {}, socket: { remoteAddress: '10.0.0.30' } }); handlers.message(Buffer.from(JSON.stringify({ type: 'hello', gadget: pass.token, rate: 16000 })), false); await wait(120);
+      must(sess?.music?.remote === true && /este aparato NO reproduce música/.test(String(sess.history[0].content)), 'la sesión de la placa debe traer el control remoto y sus reglas');
+      globalThis.fetch = (async () => new Response(mk(300, 300, [10, 10, 200]), { status: 200 })) as typeof fetch;
+      try {
+        sent.length = 0; bins.length = 0;
+        const tap = (cmd: string) => handlers.message(Buffer.from(JSON.stringify({ type: 'music', cmd })), false);
+        tap('pausar'); tap('siguiente'); tap('borrar_todo'); await wait(150); // la segunda llega con la primera en curso; la tercera no existe
+        const cover = bins.filter((x) => x[0] === 2), tileMsg = sent.find((m) => m.type === 'tile');
+        must(done.join() === 'pausar' && cover.length === 1 && cover[0].length === 6 + 150 * 150 * 2 && tileMsg?.tiles[0].cover === true && tileMsg.tiles[0].playing === false && !('image' in tileMsg.tiles[0]) && sent.indexOf(tileMsg) >= 0, `toque de pausa: órdenes ${done}, carátulas ${cover.length}, ${JSON.stringify(tileMsg)}`);
+        await wait(450); tap('siguiente'); await wait(150); must(done.join() === 'pausar,siguiente', `tras un momento se acepta otra orden: ${done}`);
+      } finally { globalThis.fetch = realFetch; }
+      client.close(); await P.db.query('DELETE FROM devices');
+      // Un visitante (sin pase) no puede mandar órdenes de música.
+      must(/msg\?\.type === 'music' && s\.gadget && s\.music\?\.remote/.test(readFileSync(resolve(__dirname, '../../src/session/session.gateway.ts'), 'utf8')), 'las órdenes por toque son solo para la placa');
+    }
     // La sesión de la placa: recibe el control remoto, no el reproductor; el modelo lo sabe.
     const gwSrc = readFileSync(resolve(__dirname, '../../src/session/session.gateway.ts'), 'utf8');
     must(/s\.gadget && this\.music\.remoteAvailable\) s\.music = \{ \.\.\.this\.music\.newState\(\), remote: true \}/.test(gwSrc) && /s\.music\?\.remote \? REMOTE_MUSIC_RULES/.test(gwSrc) && /out\.tile && s\.gadget/.test(gwSrc), 'la sesión de la placa debe usar el control remoto');
     musicFetch = undefined; await spotify.disconnect(); Object.assign(process.env, { SPOTIFY_CLIENT_ID: '', SPOTIFY_CLIENT_SECRET: '', SPOTIFY_REDIRECT_URI: '' });
-    return 'pide el permiso nuevo y avisa si falta; sin dispositivos lo dice; elige el activo, el celular o el que pida Javier; no manda a un dispositivo que no pidió; pausa, siguiente, volumen y qué suena; tarjeta con canción, artista y carátula solo de Spotify';
+    return 'pide el permiso nuevo y avisa si falta; sin dispositivos lo dice; elige el activo, el celular o el que pida Javier; no manda a un dispositivo que no pidió; pausa, siguiente, volumen y qué suena; tarjeta con canción, artista y carátula solo de Spotify, reducida sin recortar; toques para pausar y cambiar';
   });
 
   await check('Javi de bolsillo: la cara 2D está completa y sus recortes no se pisan', async () => {
@@ -3076,7 +3120,7 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     const { GADGET_TYPES } = await import('../gadget/mouth');
     const heard = [...ses.matchAll(/strcmp\(type, "(\w+)"\)/g)].map((x) => x[1]);
     must(heard.length >= 9 && heard.every((t) => GADGET_TYPES.has(t)) && [...GADGET_TYPES].every((t) => heard.includes(t)), `la placa atiende ${heard.join(' ')} y el servidor envía ${[...GADGET_TYPES].join(' ')}`);
-    for (const t of ['stop', 'wake', 'playback']) must(new RegExp(`type\\\\":\\\\"${t}`).test(main) && new RegExp(`msg\\?\\.type === '${t}'`).test(gwSrc), `el servidor no atiende el mensaje «${t}» de la placa`);
+    for (const t of ['stop', 'wake', 'playback', 'music']) must(new RegExp(`type\\\\":\\\\"${t}`).test(main) && new RegExp(`msg\\?\\.type === '${t}'`).test(gwSrc), `el servidor no atiende el mensaje «${t}» de la placa`);
     must(/"gadget", g_cfg\.pase/.test(ses) && /"rate", AUDIO_RATE/.test(ses) && /#define AUDIO_RATE 16000/.test(readFileSync(resolve(__dirname, '../../placa/main/app.h'), 'utf8')), 'el saludo de la placa');
     // Tarjetas: cada panel se resume a título, cifra, unidad, anillo y hasta tres renglones cortos; lo que no cabe no sale.
     const { tilesFor } = await import('../gadget/tiles');

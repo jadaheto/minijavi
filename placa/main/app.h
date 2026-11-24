@@ -23,6 +23,7 @@ typedef enum {
     EV_WS_READY, EV_WS_CLOSED,
     EV_USER_FINAL, EV_SUSPEND_ON, EV_SUSPEND_OFF, EV_INTERRUPT,
     EV_PLAY_START, EV_PLAY_STOP,
+    EV_MUSIC_TOGGLE, EV_MUSIC_NEXT, EV_MUSIC_PREV,   // toques sobre la tarjeta de musica
 } app_event_t;
 
 void app_post(app_event_t ev);
@@ -67,7 +68,11 @@ void ui_note(const char *text, int seconds); // aviso corto bajo la cara
 void ui_battery(int percent, bool charging);
 // Tarjetas de datos (Tesla, clima, dolar...): las arma el servidor; la placa solo las dibuja.
 #define TILE_MAX 6
-typedef struct { char title[64], big[24], unit[16], lines[260]; int ring; /* 0-100 o -1 */ int tone; /* 0 info, 1 ok, 2 aviso, 3 mal */ } tile_t;
+typedef struct { char title[64], big[24], unit[16], lines[260]; int ring; /* 0-100 o -1 */ int tone; /* 0 info, 1 ok, 2 aviso, 3 mal */
+                 bool music, playing, cover; /* tarjeta de musica: si suena y si llego su caratula */ } tile_t;
+#define COVER_SIDE 150
+void ui_cover(const uint8_t *rgb565, int w, int h);  // caratula de lo que suena (la manda el servidor ya reducida)
+bool ui_music_playing(void);                         // la tarjeta de musica en pantalla dice que esta sonando
 void ui_tiles(const tile_t *list, int count, int seconds);
 bool ui_tile_active(void);
 void ui_tile_dismiss(void);
