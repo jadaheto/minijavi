@@ -39,6 +39,7 @@ Para volver a los ajustes: deja el dedo 3 segundos en la pantalla, o enciéndela
 | Ojos cerrados | Suspendido ("silénciate"). Un toque o decir "Javi" lo despierta. |
 | Tarjeta con una cifra y la cara pequeña | Datos de lo que preguntaste (Tesla, clima, dólar o Bitcoin, trayecto, servicios, resumen). Se va sola a los 12 s de terminar de hablar, o con un toque. |
 | Carátula con « y » | Música en Spotify (suena en tu celular o computador, no en la placa). Toca la carátula para pausar o seguir, « y » para cambiar de canción; tocar la cara quita la tarjeta. |
+| Tarjeta que aparece sola, con un tono | Un aviso (interesado nuevo, algo por aprobar, pago por revisar, taller, servicio caído). Tócala arriba y el avatar te lo cuenta; toca la cara para quitarla. De 9 p. m. a 7 a. m. no llegan: salen en la mañana. |
 
 La conversación se cierra sola por inactividad (lo decide el servidor). En reposo la pantalla baja el brillo a los 45 s
 y se apaga a los 5 min; un toque la enciende.
@@ -56,6 +57,7 @@ Por eso se le corta con un toque y no con la voz.
 | `main/face.c`, `main/mind.c`, `main/ui.c` | La cara (grande y pequeña), sus gestos, la pantalla y las tarjetas de datos. |
 | `main/letra/` | Letra Montserrat (licencia OFL), para que salgan las tildes. |
 | `main/portal.c`, `main/config.c`, `main/net.c` | Página de ajustes, lo guardado y el Wi-Fi. |
+| `main/notices.c` | Avisos que llegan solos: enchufada espera el aviso al instante; con batería pregunta cada 5 minutos. |
 | `main/power.c` | Porcentaje de batería. |
 | `partitions.csv` | Programa (6 MB) y cara (4 MB). |
 
@@ -71,6 +73,7 @@ este repositorio ni salen en el registro.
 - Que la boca vaya a tiempo con la voz (`OUT_DELAY_MS` en `audio.c`).
 - Que la pantalla alcance a redibujar la boca con fluidez.
 - Las tarjetas: que la letra se lea bien, el anillo, y que la cara pequeña mueva la boca.
+- Los avisos: que lleguen enchufada y con batería, el tono, y cuánta batería gasta preguntar cada 5 minutos.
 - La tarjeta de música: que la carátula llegue y se vea, y que los toques caigan donde deben (si la pantalla táctil sale volteada, « y » quedarían al revés).
 - El toque largo, el botón BOOT (se asumió el pin 0) y la lectura de la batería.
 - La página de ajustes desde un celular real y la conexión segura al servidor.

@@ -1,3 +1,4 @@
+import { emitNotice } from '../notices/bus';
 import { designRules } from './design-check';
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { DecisionsService } from '../decisions/decisions.service';
@@ -586,6 +587,7 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     if (run.decision) void this.decisions?.outcome(run.decision, `${run.model.label}: ${stop} en ${run.pass} ${run.pass === 1 ? 'pasada' : 'pasadas'}`);
     this.log.log(`taller: "${project.slug}" cerró en ${seconds} s, ${run.pass} ${run.pass === 1 ? 'pasada' : 'pasadas'}, ${job.steps} pasos: ${stop}${results.length ? ` (${results.map((g) => `${g.id} ${g.ok ? 'pasa' : 'FALLA'}`).join(', ')})` : ''}${review?.verdict ? `; el revisor recomienda ${review.verdict}` : ''}`);
     const done: JobDone = { project, ok: stop === 'verificado' || stop === 'sin_comprobar', summary: project.lastSummary, seconds, site: this.hasSite(project.slug), check: site, stop };
+    emitNotice({ source: 'taller', title: done.ok ? 'El taller terminó' : 'El taller se detuvo', body: project.slug, word: done.ok ? 'Listo' : 'Paró', tone: done.ok ? 'ok' : 'warn', ref: { kind: 'proyecto', id: project.slug } });
     for (const fn of this.listeners) try { fn(done); } catch (e) { this.log.error(`aviso del taller: ${(e as Error).message}`); }
   }
 

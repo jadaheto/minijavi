@@ -1,3 +1,4 @@
+import { emitNotice } from '../notices/bus';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
 import { DbService } from '../db/db.service';
@@ -75,6 +76,8 @@ export class LeadsService {
     const now = String(row[0]);
     const [saved] = await this.db.query<Lead>('INSERT INTO leads (created_at, name, contact, company, interest, detail, source, consent_at, consent_source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *', [...row, now, row[6]]);
     this.log.log(`interesado #${saved.id} registrado (${saved.interest}${saved.source ? ', ' + saved.source : ''})`);
+    // Aviso para los dispositivos de Javier, venga de donde venga (voz, llamada, formulario, WhatsApp). El nombre lo escribió un tercero.
+    emitNotice({ source: 'interesados', title: 'Interesado nuevo', body: `${saved.name}${saved.company ? ` · ${saved.company}` : ''}`, tone: 'ok', untrusted: true, ref: { kind: 'interesado', id: saved.id } });
     return saved;
   }
 

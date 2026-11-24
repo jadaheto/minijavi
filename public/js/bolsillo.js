@@ -57,7 +57,7 @@ function tickTiles(now) {
   if (!tiles) return;
   if (tiles.list.length > 1 && now >= tiles.next) { tiles.index = (tiles.index + 1) % tiles.list.length; tiles.next = now + 4500; drawTile(); }
   if (mind.state === 'speaking') tiles.until = 0; // mientras habla, se queda
-  else { tiles.until ||= now + Math.max(tiles.seconds * 1000, (tiles.list.length - tiles.index) * 4500); if (now >= tiles.until) hideTiles(); }
+  else { tiles.until ||= now + Math.max(tiles.seconds * 1000, (tiles.list.length - tiles.index) * 4500); if (now >= tiles.until) hideTiles(); } // un aviso que nadie tocó NO queda como visto: sigue pendiente en el panel y en Telegram
 }
 
 function setState(s) { mind.setState(s); $('screen').dataset.state = s; $('status').textContent = TEXT[s]; }
@@ -105,6 +105,44 @@ function shutdown(message) {
   if (message) $('status').textContent = message;
 }
 
+// ---------- avisos que llegan solos ----------
+// Con el pase puesto, la página hace lo mismo que la placa enchufada: deja una petición esperando y el aviso llega al
+// instante. Suena un tono corto y sale la tarjeta; tocarla abre la conversación para que el avatar lo cuente.
+let lastNotice = 0, polling = '', pendingNotice = null;
+function chime() {
+  try {
+    audioCtx ??= new (window.AudioContext || window.webkitAudioContext)();
+    const t = audioCtx.currentTime;
+    for (const [f, at] of [[880, 0], [1320, 0.13]]) { const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.frequency.value = f; g.gain.setValueAtTime(0.0001, t + at); g.gain.exponentialRampToValueAtTime(0.18, t + at + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.22); o.connect(g).connect(audioCtx.destination); o.start(t + at); o.stop(t + at + 0.25); }
+  } catch { /* sin audio todavía (el navegador pide un toque antes): el aviso sale igual */ }
+}
+function showNotices(list, seconds) {
+  if (!list.length || live) return; // en plena conversación no se interrumpe: salen al terminar
+  showTiles(list, seconds || 40); tiles.until = performance.now() + (seconds || 40) * 1000; chime();
+}
+async function pollNotices(pase) {
+  if (polling === pase) return; polling = pase;
+  while (polling === pase && $('pase').value.trim() === pase) {
+    try {
+      const r = await fetch(`api/placa/avisos?desde=${lastNotice}&espera=25`, { headers: { Authorization: `Bearer ${pase}` }, cache: 'no-store' });
+      if (r.status === 401 || r.status === 429) { $('said').textContent = r.status === 401 ? 'El pase no sirve para los avisos.' : 'Demasiados intentos: espera unos minutos.'; break; }
+      const d = await r.json();
+      if (d.notices?.length) { lastNotice = Math.max(lastNotice, ...d.notices.map((n) => n.id)); showNotices(d.notices, d.seconds); }
+    } catch { await new Promise((ok) => setTimeout(ok, 5000)); } // sin red: se reintenta
+  }
+  if (polling === pase) polling = '';
+}
+function markSeen(ids) { const pase = $('pase').value.trim(); if (pase && ids.length) fetch('api/placa/avisos/vistos', { method: 'POST', headers: { Authorization: `Bearer ${pase}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) }).catch(() => undefined); }
+/** Toque sobre un aviso: arriba, el avatar lo cuenta; sobre la cara, se quita sin más. Devuelve si lo atendió. */
+function noticeTouch(ev) {
+  const t = tiles && tiles.list[tiles.index]; if (!t || t.kind !== 'notice') return false;
+  const ids = tiles.list.filter((x) => x.kind === 'notice' && x.id).map((x) => x.id);
+  const box = $('screen').getBoundingClientRect(), y = ev ? ((ev.clientY - box.top) / box.height) * 466 : 0;
+  hideTiles();
+  if (y >= 270 || demo) { markSeen(ids); if (demo) $('said').textContent = y >= 270 ? 'Aviso quitado.' : 'Aquí se abriría la conversación y el avatar te lo cuenta.'; return true; }
+  pendingNotice = ids; return false; // sigue a begin(): abre la conversación con esos avisos
+}
+
 /** Toque sobre la tarjeta de música: la carátula pausa o sigue, « y » cambian de canción. Devuelve si lo atendió. */
 function musicTouch(ev) {
   const t = tiles && tiles.list[tiles.index]; if (!t || !$('tile').classList.contains('music') || !ev) return false;
@@ -118,6 +156,7 @@ function musicTouch(ev) {
 
 async function begin(ev) {
   if (tiles && musicTouch(ev)) return;
+  if (tiles && noticeTouch(ev)) return;
   if (tiles) { hideTiles(); return; } // con una tarjeta en pantalla, el toque la quita
   if (demo) { demo = null; lips.reset(); }
   if (live && gadget && mind.state === 'speaking') { stopSpeech(); socket?.send({ type: 'stop' }); setState(rest()); return; } // como en la placa: un toque lo corta
@@ -132,7 +171,8 @@ async function begin(ev) {
   let visitor = ''; try { visitor = localStorage.getItem('bolsillo-visitor') || crypto.randomUUID(); localStorage.setItem('bolsillo-visitor', visitor); } catch { /* sin almacenamiento: sin memoria de visitante */ }
   socket?.close();
   const pase = $('pase').value.trim();
-  socket = connect('', visitor, { onMessage, onBinary, onClose: ({ wasReady }) => shutdown(closeReason || (wasReady ? '' : 'No pude conectar. Intenta de nuevo.')) }, pase ? { gadget: pase } : {});
+  socket = connect('', visitor, { onMessage, onBinary, onClose: ({ wasReady }) => shutdown(closeReason || (wasReady ? '' : 'No pude conectar. Intenta de nuevo.')) }, pase ? { gadget: pase, ...(pendingNotice ? { notice: pendingNotice } : {}) } : {});
+  pendingNotice = null;
 }
 
 // Demostración sin micrófono ni servidor: recorre los estados y "dice" una frase moviendo la boca con el mismo lip sync.
@@ -145,12 +185,13 @@ const DEMO = [
   { at: 17, state: 'thinking' },
   { at: 18.2, say: 'Listo, suena en tu celular.', music: 0 },
   { at: 20.5, state: 'listening', said: 'Música: toca la carátula para pausar, « y » para cambiar de canción. Se queda 20 segundos.' },
-  { at: 42, react: 'alegria', said: 'Reacción: alegría', hide: true },
-  { at: 45.4, react: 'sorpresa', said: 'Reacción: sorpresa' },
-  { at: 48.6, react: 'pena', said: 'Reacción: pena' },
-  { at: 51.8, react: 'pensativo', said: 'Reacción: pensativo' },
-  { at: 55, state: 'away', said: 'Suspendido' },
-  { at: 59, state: 'idle', said: '' },
+  { at: 42, state: 'idle', said: 'Aviso que llega solo: suena un tono y sale la tarjeta. Tocarla abre la conversación.', hide: true, notice: [{ kind: 'notice', id: 0, title: 'Interesado nuevo', big: 'Nuevo', tone: 'ok', lines: ['Marta de Ejemplo · Panadería', 'Toca para que te lo cuente'] }, { kind: 'notice', id: 0, title: 'Por aprobar', big: 'Aprobar', tone: 'warn', lines: ['Plantilla de bienvenida', 'Toca para que te lo cuente'] }] },
+  { at: 54, react: 'alegria', said: 'Reacción: alegría', hide: true },
+  { at: 57.4, react: 'sorpresa', said: 'Reacción: sorpresa' },
+  { at: 60.6, react: 'pena', said: 'Reacción: pena' },
+  { at: 63.8, react: 'pensativo', said: 'Reacción: pensativo' },
+  { at: 67, state: 'away', said: 'Suspendido' },
+  { at: 71, state: 'idle', said: '' },
 ];
 // Música de EJEMPLO para la demostración: canciones inventadas y carátulas dibujadas aquí (no son de ningún disco).
 const DEMO_SONGS = [['Tarde en la sabana', 'Los de Ejemplo', '#c2410c', '#fbbf24'], ['Brisa del río', 'Conjunto Demo', '#0e7490', '#a7f3d0'], ['Noche de porro', 'La Banda Prueba', '#6d28d9', '#f9a8d4']];
@@ -177,6 +218,7 @@ function runDemo(dt) {
     if (s.state) setState(s.state);
     if (s.react) mind.react(s.react);
     if (s.tiles) showTiles(s.tiles, 6);
+    if (s.notice) { showTiles(s.notice, 12); chime(); }
     if (s.music !== undefined) { demoSong = s.music; demoPlaying = true; demoMusic(''); }
     if (s.hide) hideTiles();
     if (s.said !== undefined) $('said').textContent = s.said;
@@ -193,6 +235,8 @@ function runDemo(dt) {
 
 $('device').addEventListener('click', begin);
 $('demo').addEventListener('click', startDemo);
+// Al pegar el pase empiezan a llegar los avisos, como en la placa.
+$('pase').addEventListener('change', () => { const p = $('pase').value.trim(); if (p.startsWith('mjb.')) pollNotices(p); else polling = ''; });
 $('real').addEventListener('click', () => { const on = $('device').classList.toggle('real'); $('real').setAttribute('aria-pressed', String(on)); });
 
 let last = performance.now(), shown = null;

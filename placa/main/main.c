@@ -64,6 +64,7 @@ void app_main(void)
     if (want_setup || !cfg_complete()) { set_state(ST_SETUP); portal_run(); }
 
     if (!audio_start()) ui_note("Sin audio", 0);
+    notices_start();
     set_state(ST_NOWIFI);
     ui_note("Buscando Wi-Fi...", 0);
 
@@ -108,6 +109,14 @@ void app_main(void)
                     if (session_live()) { session_mic_pause(350); session_send_json("{\"type\":\"playback\",\"playing\":false}"); if (state == ST_SPEAKING || state == ST_THINKING) set_state(ST_LISTENING); }
                     break;
                 case EV_INTERRUPT: if (state == ST_SPEAKING || state == ST_THINKING) set_state(ST_LISTENING); break;
+                case EV_NOTICE: light(100); idle_since = esp_timer_get_time(); break; // llego un aviso: se enciende la pantalla
+                case EV_NOTICE_TALK: { // toque sobre el aviso: se abre la conversacion y el avatar lo cuenta
+                    int ids[TILE_MAX], n = notices_shown(ids, TILE_MAX);
+                    light(100); idle_since = esp_timer_get_time(); ui_tile_dismiss();
+                    if (state == ST_IDLE && n) { session_tell(ids, n); notices_seen(); want_open = true; }
+                    break;
+                }
+                case EV_NOTICE_DISMISS: light(100); idle_since = esp_timer_get_time(); ui_tile_dismiss(); notices_seen(); break;
                 case EV_MUSIC_TOGGLE: session_send_json(ui_music_playing() ? "{\"type\":\"music\",\"cmd\":\"pausar\"}" : "{\"type\":\"music\",\"cmd\":\"continuar\"}"); break;
                 case EV_MUSIC_NEXT: session_send_json("{\"type\":\"music\",\"cmd\":\"siguiente\"}"); break;
                 case EV_MUSIC_PREV: session_send_json("{\"type\":\"music\",\"cmd\":\"anterior\"}"); break;

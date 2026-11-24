@@ -1,3 +1,5 @@
+import { NoticesService } from './notices/notices.service';
+import { NoticesController } from './notices/notices.controller';
 import { Module } from '@nestjs/common';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'node:path';
@@ -75,7 +77,7 @@ import { VisitsService } from './visits/visits.service';
       exclude: ['/health', '/owner/{*path}', '/webhooks/{*path}', '/knowledge/{*path}', '/n8n/{*path}', '/p/{*path}', '/imagenes/{*path}', '/formulario', '/api/{*path}', '/mapas/{*path}', '/demo/{*path}', '/negocio/{*path}'],
     }),
   ],
-  controllers: [ConnectionsController, AvatarRequestsController, AvatarOwnerController, DemoDocsController, DemoPageController, BusinessController, BusinessPanelController, HealthController, OwnerController, CallsController, KnowledgeController, N8nController, SitesController, WorkshopBackupController, SpotifyController, TeslaController, MapsController],
-  providers: [ConfigService, DbService, AlertsService, OpsService, UsageService, ImagesService, PortfolioService, WorkshopService, WorkshopBackupService, SpotifyService, TeslaService, NewsService, ColombiaNewsService, PolymarketService, PanelsService, MapsService, BriefService, DemoDocsService, DemoSendService, AvatarRequestsService, AvatarGeneratorService, AvatarCareService, ConnectionsService, BusinessService, BusinessDeskService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, PolicyService, ActionsService, ApprovalsService, CatalogService, TelegramService, OptOutService, InjectionGuard],
+  controllers: [NoticesController, ConnectionsController, AvatarRequestsController, AvatarOwnerController, DemoDocsController, DemoPageController, BusinessController, BusinessPanelController, HealthController, OwnerController, CallsController, KnowledgeController, N8nController, SitesController, WorkshopBackupController, SpotifyController, TeslaController, MapsController],
+  providers: [NoticesService, ConfigService, DbService, AlertsService, OpsService, UsageService, ImagesService, PortfolioService, WorkshopService, WorkshopBackupService, SpotifyService, TeslaService, NewsService, ColombiaNewsService, PolymarketService, PanelsService, MapsService, BriefService, DemoDocsService, DemoSendService, AvatarRequestsService, AvatarGeneratorService, AvatarCareService, ConnectionsService, BusinessService, BusinessDeskService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, PolicyService, ActionsService, ApprovalsService, CatalogService, TelegramService, OptOutService, InjectionGuard],
 })
 export class AppModule {}

@@ -57,6 +57,9 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS optouts (id {{ID}}, business TEXT NOT NULL, contact TEXT NOT NULL, at {{TS}} NOT NULL, source TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '',
      marked_by TEXT NOT NULL DEFAULT 'avatar', decision_id INTEGER, lifted_at TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS optouts_contact ON optouts (business, contact)`,
+  // Avisos para los dispositivos del dueño (Javi de bolsillo). `untrusted`: el detalle lo escribió alguien de fuera.
+  `CREATE TABLE IF NOT EXISTS notices (id {{ID}}, business TEXT NOT NULL, at {{TS}} NOT NULL, source TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', word TEXT NOT NULL DEFAULT '',
+    tone TEXT NOT NULL DEFAULT 'info', untrusted INTEGER NOT NULL DEFAULT 0, ref_kind TEXT NOT NULL DEFAULT '', ref_id TEXT NOT NULL DEFAULT '', seen_at {{TS}})`,
   // Bitacora de acciones por iniciativa propia (etapa 2). SOLO se agregan filas: ningun codigo las cambia ni las borra, y
   // cada una guarda la huella de la anterior (prev_hash -> hash), asi que una fila alterada o quitada rompe la cadena.
   `CREATE TABLE IF NOT EXISTS actions (

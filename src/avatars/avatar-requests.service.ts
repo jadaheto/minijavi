@@ -1,3 +1,4 @@
+import { emitNotice } from '../notices/bus';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -209,6 +210,7 @@ export class AvatarRequestsService {
     const msg = await this.telegram.sendMedia(file, kind.mime, name, this.describe(row), [{ text: '✅ Aprobar pago', data: `avp:${row.id}:${nonce}` }, { text: '✖️ Rechazar pago', data: `avr:${row.id}:${nonce}` }]);
     if (msg) await this.db.query('UPDATE avatar_requests SET tg_message = $1 WHERE id = $2', [msg, row.id]);
     else this.log.warn(`avatar #${row.id}: el comprobante no llegó a Telegram; queda pendiente en el panel`);
+    emitNotice({ source: 'avatares', title: 'Pago de avatar por revisar', body: String((row as any).name ?? ''), tone: 'warn', untrusted: true, ref: { kind: 'avatar', id: row.id } });
     this.usage?.add('avatar_comprobantes');
     return { ok: true, message: MESSAGES.PENDIENTE_VALIDACION };
   }

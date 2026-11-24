@@ -34,6 +34,11 @@ export class ConfigService {
   readonly gadgetAheadSeconds: number;
   /** Segundos que una tarjeta se queda en la pantalla de la placa despues de que el avatar termina de hablar. */
   readonly gadgetTileSeconds: number;
+  /** Centro de avisos para los dispositivos del dueño, y su horario silencioso [desde, hasta) en horas del negocio. */
+  readonly noticesEnabled: boolean;
+  readonly noticesQuiet: [number, number];
+  /** Segundos que un aviso se queda en la pantalla de la placa si nadie lo toca. */
+  readonly gadgetNoticeSeconds: number;
   readonly ownerPrompt: string;
   /** Habla costeña: reglas y diccionario que se agregan al prompt ('' = apagada). HABLA_COSTENA=1 y HABLA_COSTENA_NIVEL. */
   readonly costenoPrompt: string;
@@ -315,6 +320,9 @@ export class ConfigService {
     this.gadgetDays = int('BOLSILLO_DIAS', 365, 0);
     this.gadgetAheadSeconds = Math.min(30, int('BOLSILLO_ADELANTO_S', 4, 1));
     this.gadgetTileSeconds = Math.min(120, int('BOLSILLO_TARJETA_S', 12, 2));
+    this.noticesEnabled = str('AVISOS', '1') !== '0';
+    this.gadgetNoticeSeconds = Math.min(600, int('AVISOS_PANTALLA_S', 40, 5));
+    { const m = /^(\d{1,2})-(\d{1,2})$/.exec(str('AVISOS_SILENCIO', '21-7').trim()); const a = m ? Number(m[1]) : 21, b = m ? Number(m[2]) : 7; this.noticesQuiet = a <= 23 && b <= 23 ? [a, b] : [21, 7]; }
     this.dataDir = str('DATA_DIR', 'data');
     this.planeMcpUrl = str('PLANE_MCP_URL');
     this.planeApiKey = str('PLANE_API_KEY');

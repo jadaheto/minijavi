@@ -24,7 +24,7 @@ static lv_obj_t *cover_img, *music_prev, *music_next;
 static uint8_t *cover_in, *cover_px;
 static lv_image_dsc_t cover_dsc;
 static bool cover_new, cover_ok;
-static volatile bool music_on, music_playing;
+static volatile bool music_on, music_playing, notice_on;
 static const lv_font_t *f_text, *f_msg, *f_big, *f_unit;
 static SemaphoreHandle_t lock;
 static char want_message[220], want_note[64];
@@ -57,7 +57,7 @@ static void draw_tile(void)
     lv_color_t tone = lv_color_hex(TONES[t->tone >= 0 && t->tone < 4 ? t->tone : 0]);
     // Musica: la caratula entera arriba (nada encima), « y » a los lados; debajo, donde suena, la cancion y el artista.
     bool music = t->music && t->cover && cover_ok && cover_img;
-    music_on = music; music_playing = t->playing;
+    music_on = music; music_playing = t->playing; notice_on = t->notice > 0;
     lv_obj_t *only_music[] = { cover_img, music_prev, music_next }, *only_data[] = { tile_row, tile_dots };
     for (int i = 0; i < 3; i++) if (only_music[i]) { if (music) lv_obj_remove_flag(only_music[i], LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(only_music[i], LV_OBJ_FLAG_HIDDEN); }
     for (int i = 0; i < 2; i++) { if (music) lv_obj_add_flag(only_data[i], LV_OBJ_FLAG_HIDDEN); else lv_obj_remove_flag(only_data[i], LV_OBJ_FLAG_HIDDEN); }
@@ -86,7 +86,7 @@ static void draw_tile(void)
 
 static void show_tile(bool on)
 {
-    tile_on = on; if (!on) music_on = false;
+    tile_on = on; if (!on) { music_on = false; notice_on = false; }
     if (on) { lv_obj_remove_flag(tile_box, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(face_box, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(ring, LV_OBJ_FLAG_HIDDEN); }
     else { lv_obj_add_flag(tile_box, LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(ring, LV_OBJ_FLAG_HIDDEN); if (!has_message) lv_obj_remove_flag(face_box, LV_OBJ_FLAG_HIDDEN); }
 }
@@ -120,7 +120,8 @@ static void tick(lv_timer_t *t)
         else {
             int64_t left = (int64_t)(tile_count - tile_index) * TILE_STEP_MS * 1000LL, hold = (int64_t)tile_seconds * 1000000LL;
             if (!tile_until) tile_until = now + (hold > left ? hold : left);
-            if (now >= tile_until || !(st == ST_LISTENING || st == ST_THINKING || st == ST_AWAY)) show_tile(false);
+            // Las tarjetas de datos son de la conversacion; un aviso que llego solo se queda aunque no haya conversacion.
+            if (now >= tile_until || !(st == ST_LISTENING || st == ST_THINKING || st == ST_AWAY || (notice_on && st == ST_IDLE))) show_tile(false);
         }
     }
     xSemaphoreGive(lock);
@@ -136,6 +137,7 @@ static void on_touch(lv_event_t *e)
         // Sobre la tarjeta de musica: la caratula pausa o sigue, « y » cambian de cancion; mas abajo (la cara) la quita.
         lv_point_t p = { 233, 400 }; lv_indev_t *in = lv_indev_active(); if (in) lv_indev_get_point(in, &p);
         if (tile_on && music_on && p.y < 270) { tile_until = 0; app_post(p.x < 150 ? EV_MUSIC_PREV : p.x > 316 ? EV_MUSIC_NEXT : EV_MUSIC_TOGGLE); }
+        else if (tile_on && notice_on) app_post(p.y < 270 ? EV_NOTICE_TALK : EV_NOTICE_DISMISS); // arriba: que lo cuente; sobre la cara: quitarlo
         else app_post(EV_TOUCH);
     }
     else if (code == LV_EVENT_LONG_PRESSED_REPEAT && !fired && esp_timer_get_time() - pressed_at > 3000000) { fired = true; app_post(EV_LONG_TOUCH); } // 3 s con el dedo puesto: ajustes

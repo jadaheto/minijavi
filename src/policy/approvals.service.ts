@@ -1,3 +1,4 @@
+import { emitNotice } from '../notices/bus';
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { ConfigService } from '../config/config.service';
@@ -60,6 +61,7 @@ export class ApprovalsService implements OnModuleInit, OnModuleDestroy {
       [this.cfg.businessId, new Date().toISOString(), req.kind, contact, req.leadId ?? null, clip(req.trigger, 120), clip(req.content, 2000), clip(why, 300), Number(req.costUsd ?? 0), req.consent ? 1 : 0, JSON.stringify(payload ?? {}), nonce]);
     const msg = await this.telegram.send(this.describe(row), [{ text: '✅ Aprobar', data: `ap:${row.id}:${nonce}` }, { text: '✖️ Rechazar', data: `re:${row.id}:${nonce}` }]);
     if (msg) await this.db.query('UPDATE approvals SET tg_message = $1 WHERE id = $2', [msg, row.id]);
+    emitNotice({ source: 'aprobaciones', title: 'Por aprobar', body: (ACTION_KINDS as Record<string, { label: string }>)[req.kind]?.label ?? req.kind, tone: 'warn', ref: { kind: 'aprobacion', id: row.id } });
     this.log.log(`aprobación #${row.id} pendiente (${req.kind})`);
   }
 

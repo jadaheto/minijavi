@@ -30,6 +30,7 @@ static int last_op;
 static char *text; static size_t text_len, text_cap;
 static char last_error[24];
 static volatile int64_t mic_resume_at;
+static int tell_ids[TILE_MAX], tell_count; // avisos que Javier toco: van en el saludo para que el avatar los cuente
 static SemaphoreHandle_t ws_lock; // el microfono envia desde otra tarea: la conexion no se puede destruir a mitad de un envio
 
 bool session_live(void) { return live; }
@@ -105,6 +106,7 @@ static void on_event(void *arg, esp_event_base_t base, int32_t event, void *data
         case WEBSOCKET_EVENT_CONNECTED: {
             cJSON *h = cJSON_CreateObject();
             cJSON_AddStringToObject(h, "type", "hello"); cJSON_AddStringToObject(h, "gadget", g_cfg.pase); cJSON_AddNumberToObject(h, "rate", AUDIO_RATE);
+            if (tell_count) { cJSON_AddItemToObject(h, "notice", cJSON_CreateIntArray(tell_ids, tell_count)); tell_count = 0; }
             char *s = cJSON_PrintUnformatted(h);
             if (s) { esp_websocket_client_send_text(ws, s, (int)strlen(s), pdMS_TO_TICKS(2000)); memset(s, 0, strlen(s)); free(s); } // el pase no se queda en memoria suelta
             cJSON_Delete(h);
@@ -151,6 +153,8 @@ static void on_event(void *arg, esp_event_base_t base, int32_t event, void *data
         default: break;
     }
 }
+
+void session_tell(const int *notice_ids, int count) { tell_count = count > TILE_MAX ? TILE_MAX : count < 0 ? 0 : count; memcpy(tell_ids, notice_ids, sizeof(int) * (size_t)tell_count); }
 
 void session_open(void)
 {

@@ -24,6 +24,7 @@ typedef enum {
     EV_USER_FINAL, EV_SUSPEND_ON, EV_SUSPEND_OFF, EV_INTERRUPT,
     EV_PLAY_START, EV_PLAY_STOP,
     EV_MUSIC_TOGGLE, EV_MUSIC_NEXT, EV_MUSIC_PREV,   // toques sobre la tarjeta de musica
+    EV_NOTICE, EV_NOTICE_TALK, EV_NOTICE_DISMISS,    // llego un aviso; toque arriba (que lo cuente) o sobre la cara (quitarlo)
 } app_event_t;
 
 void app_post(app_event_t ev);
@@ -69,7 +70,8 @@ void ui_battery(int percent, bool charging);
 // Tarjetas de datos (Tesla, clima, dolar...): las arma el servidor; la placa solo las dibuja.
 #define TILE_MAX 6
 typedef struct { char title[64], big[24], unit[16], lines[260]; int ring; /* 0-100 o -1 */ int tone; /* 0 info, 1 ok, 2 aviso, 3 mal */
-                 bool music, playing, cover; /* tarjeta de musica: si suena y si llego su caratula */ } tile_t;
+                 bool music, playing, cover; /* tarjeta de musica: si suena y si llego su caratula */
+                 int notice; /* aviso que llego solo: su numero (0 = no es un aviso) */ } tile_t;
 #define COVER_SIDE 150
 void ui_cover(const uint8_t *rgb565, int w, int h);  // caratula de lo que suena (la manda el servidor ya reducida)
 bool ui_music_playing(void);                         // la tarjeta de musica en pantalla dice que esta sonando
@@ -100,11 +102,17 @@ void audio_on_mic(audio_mic_cb_t cb);                // tramas de 40 ms del micr
 
 // ---------- conversacion (session.c) ----------
 void session_open(void);
+void session_tell(const int *notice_ids, int count); // la proxima conversacion se abre contando estos avisos
 void session_close(void);
 bool session_live(void);
 void session_send_json(const char *json);
 const char *session_last_error(void);
 void session_mic_pause(int ms);
+
+// ---------- avisos que llegan solos (notices.c) ----------
+void notices_start(void);
+int notices_shown(int *ids, int max);   // los avisos que estan en pantalla
+void notices_seen(void);                // ya se vieron: se le avisa al servidor
 
 // ---------- bateria (power.c) ----------
 int power_battery_percent(bool *charging);           // -1 si no se pudo leer

@@ -1,3 +1,4 @@
+import { emitNotice } from '../notices/bus';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
 
@@ -24,14 +25,14 @@ export class AlertsService {
   set(service: string, ok: boolean, detail = '', after = 3) {
     const prev = this.states.get(service), now = new Date().toISOString();
     if (ok) {
-      if (prev && !prev.ok && prev.alerted) void this.send(`✅ ${service} volvió a funcionar.`);
+      if (prev && !prev.ok && prev.alerted) { void this.send(`✅ ${service} volvió a funcionar.`); emitNotice({ source: 'servicios', title: 'Volvió a funcionar', body: service, word: 'OK', tone: 'ok' }); }
       this.states.set(service, { ok: true, detail, since: prev?.ok ? prev.since : now, fails: 0, alerted: false });
       return;
     }
     const fails = (prev?.fails ?? 0) + 1;
     const alert = fails === after;
     this.states.set(service, { ok: false, detail, since: prev && !prev.ok ? prev.since : now, fails, alerted: !!prev?.alerted || alert });
-    if (alert) void this.send(`⚠️ ${service} no está funcionando: ${detail || 'sin detalle'}`);
+    if (alert) { void this.send(`⚠️ ${service} no está funcionando: ${detail || 'sin detalle'}`); emitNotice({ source: 'servicios', title: 'No está funcionando', body: service, tone: 'bad' }); }
   }
 
   /** Fallo real en una conversacion (la voz no salio, el modelo no respondio...). */

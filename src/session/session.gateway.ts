@@ -11,6 +11,7 @@ import { INTERNAL } from '../calls/call-socket';
 import { Downsampler, GADGET_RATES, GADGET_TYPES, MouthTrack, audioFrame } from '../gadget/mouth';
 import { tilesFor } from '../gadget/tiles';
 import { fetchCover } from '../gadget/cover';
+import { NoticesService } from '../notices/notices.service';
 import { ConfigService } from '../config/config.service';
 import { CardsService } from '../cards/cards.service';
 import { DeepSeekService, LlmEvent } from '../llm/deepseek.service';
@@ -106,6 +107,7 @@ interface Session {
   places?: { chargers: any[]; from?: any }; // cargadores mostrados por ultima vez
   marketList?: { items: any[]; title: string }; // mercados de prediccion mostrados por ultima vez (para abrir uno por su numero)
   news?: { index: number; part?: number; section?: string }; // noticia que se esta viendo (0 = la lista) y parte de la lectura completa
+  noticeIds?: number[];  // avisos que Javier toco en la placa: la conversacion se abre para contarselos
   musicBusy?: boolean; musicAt?: number; // orden de musica por toque en curso (placa de bolsillo)
   gadgetRate?: number;   // frecuencia del audio que pidio la placa (16000 o 24000)
   gadget?: boolean;      // Javi de bolsillo: una placa con pantalla pequeña (audio en binario, bocas ya calculadas, sin paneles)
@@ -353,6 +355,7 @@ export class SessionGateway implements OnGatewayConnection {
     @Optional() private readonly biz?: BusinessService,
     @Optional() private readonly desk?: BusinessDeskService,
     @Optional() private readonly connections?: ConnectionsService,
+    @Optional() private readonly notices?: NoticesService,
   ) {
     // Cuando Claude Code termina un encargo, se le cuenta a Javier en las sesiones de dueño abiertas.
     this.workshop.onDone((d) => { for (const [s, client] of this.owners) void this.workshopNote(client, s, d.project.slug); });
@@ -464,6 +467,7 @@ export class SessionGateway implements OnGatewayConnection {
           s.owner = true; s.gadget = true; s.browserTts = false;
           s.gadgetRate = GADGET_RATES.includes(msg.rate) ? msg.rate : TTS_SAMPLE_RATE; // la placa dice a que frecuencia trabaja su parlante
           this.gadgets.set(client, s.gadgetRate!);
+          if (Array.isArray(msg.notice)) s.noticeIds = msg.notice.map((x: unknown) => Number(x)).filter((x: number) => Number.isInteger(x) && x > 0).slice(0, 5);
         }
         if (!s.owner && !internal && !this.codeOk(String(msg.code ?? ''))) { this.send(client, { type: 'error', reason: 'codigo' }); client.close(4401, 'codigo'); return; }
         if (this.active >= this.cfg.maxSessions) { this.send(client, { type: 'error', reason: 'ocupado' }); client.close(4429, 'ocupado'); return; }
@@ -579,12 +583,25 @@ export class SessionGateway implements OnGatewayConnection {
     }, 5000));
     this.send(client, { type: 'ready', owner: s.owner, ...(s.page ? { page: { business: s.page.business, color: s.page.config.color, questions: s.page.config.preguntas, minutes: this.cfg.demoPageMinutes, contact: this.cfg.contactUrl || '' } } : {}), gate: this.cfg.micGateRms, wake: this.cfg.wakeWords[0], tts: s.browserTts ? 'browser' : 'server', voice: this.cfg.browserVoice, rate: this.cfg.browserVoiceRate, car: !!s.car, ...(s.gadget ? { gadget: true } : {}) });
     // En modo carro no saluda: la sesion se abre sola con cualquier ruido y solo debe hablar cuando lo llaman.
-    const greeting = s.page ? s.page.config.saludo : s.car ? '' : s.owner ? this.ownerGreeting(firstToday) : known?.name ? `¡Hola de nuevo, ${known.name}! ¿En qué te ayudo hoy?` : this.cfg.greeting;
+    const greeting = s.page ? s.page.config.saludo : s.car || s.noticeIds?.length ? '' : s.owner ? this.ownerGreeting(firstToday) : known?.name ? `¡Hola de nuevo, ${known.name}! ¿En qué te ayudo hoy?` : this.cfg.greeting;
     if (greeting) {
       const turn = this.newTurn(s);
       this.send(client, { type: 'speech_start', id: turn.id, sampleRate: TTS_SAMPLE_RATE });
       this.say(client, s, turn, greeting);
       void this.finish(client, s, turn, 'saludo');
+    }
+    // Javier toco un aviso en la placa: en vez de saludar, el avatar se lo cuenta. El detalle que escribio un tercero va
+    // marcado como dato (no es una orden) y los avisos quedan como vistos.
+    if (s.gadget && s.noticeIds?.length && this.notices) {
+      const ids = s.noticeIds;
+      void Promise.all(ids.map((id) => this.notices!.get(id))).then((list) => {
+        const found = list.filter((n): n is NonNullable<typeof n> => !!n);
+        if (!found.length || client.readyState !== client.OPEN) return;
+        const lines = found.map((n) => `- ${n.title}${n.body ? `: ${n.untrusted ? asData(`el aviso de ${n.source}`, n.body) : n.body}` : ''}${n.ref?.kind === 'aprobacion' ? ' (se aprueba o rechaza en el panel o en Telegram)' : n.ref?.kind === 'avatar' ? ' (hay que revisar el comprobante contra la cuenta, en el panel)' : ''}`);
+        s.notes.push({ text: `(Aviso del centro de avisos: Javier acaba de tocar ${found.length === 1 ? 'este aviso' : 'estos avisos'} en su dispositivo. Cuéntaselo en una o dos frases, sin saludar antes y sin inventar detalles.)\n${lines.join('\n')}` });
+        void this.notices!.seen(found.map((n) => n.id));
+        this.pumpNotes(client, s);
+      }).catch(() => undefined);
     }
     if (s.owner) {
       this.owners.set(s, client);

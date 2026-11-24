@@ -4,7 +4,7 @@ import { DbService } from '../db/db.service';
 
 /** Lo que se mide. La unidad va en el nombre: _s segundos, _in/_out/_cache tokens, _chars caracteres, _usd dolares. */
 export const USAGE_KEYS = [
-  'sesiones', 'sesiones_dueno', 'sesiones_bolsillo', 'demos',
+  'sesiones', 'sesiones_dueno', 'sesiones_bolsillo', 'avisos', 'demos',
   'deepgram_s', 'deepgram_susp_s', 'deepgram_pre_s',
   'deepseek_calls', 'deepseek_in', 'deepseek_cache', 'deepseek_out', 'deepseek_sin_dato',
   'eleven_calls', 'eleven_chars',
