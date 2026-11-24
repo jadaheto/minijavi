@@ -21,6 +21,10 @@ import { UsageService } from '../usage/usage.service';
  *  - Cambiar el codigo y renovar: `POST https://oauth2.googleapis.com/token` (formulario). `invalid_grant` = el permiso
  *    vencio o fue revocado: hay que volver a conectar.
  *  - Revocar: `POST https://oauth2.googleapis.com/revoke?token=`.
+ *  - Correo (referencia de Gmail v1, leida el mismo dia): `GET .../users/me/messages` (q con la sintaxis del buscador de
+ *    Gmail, labelIds, maxResults) devuelve solo ids; `GET .../messages/{id}` con format=metadata + metadataHeaders (lista)
+ *    o format=full (leer): cabeceras en `payload.headers`, texto en `payload.body.data` o en `payload.parts[]`, en
+ *    base64url. `snippet` es un trozo corto del texto y `labelIds` trae UNREAD si no se ha leido.
  *  - Agenda: `GET https://www.googleapis.com/calendar/v3/calendars/primary/events` con timeMin, timeMax (RFC 3339),
  *    singleEvents=true y orderBy=startTime (solo vale con singleEvents), maxResults, timeZone.
  *
@@ -31,8 +35,9 @@ import { UsageService } from '../usage/usage.service';
 const META_KEY = 'google_auth';
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth', TOKEN_URL = 'https://oauth2.googleapis.com/token', REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 const CALENDAR = 'https://www.googleapis.com/calendar/v3';
+const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 /** Permisos por parte. Cada parte nueva (correo, Drive) suma el suyo y pide volver a conectar: nunca se pide de mas. */
-export const GOOGLE_SCOPES = { agenda: 'https://www.googleapis.com/auth/calendar.readonly' } as const;
+export const GOOGLE_SCOPES = { agenda: 'https://www.googleapis.com/auth/calendar.readonly', correo: 'https://www.googleapis.com/auth/gmail.readonly' } as const;
 export type GooglePart = keyof typeof GOOGLE_SCOPES;
 /** Lo unico que esta clase acepta tener: si Google devolviera un permiso que no es de lectura, no se guarda. */
 const READ_ONLY = /^(openid|email|profile|https:\/\/www\.googleapis\.com\/auth\/(userinfo\.(email|profile)|[a-z.]+\.readonly))$/;
@@ -41,6 +46,8 @@ interface Stored { refresh: string; scope: string; since: string; account: strin
 export interface AgendaEvent { title: string; start: string; end: string; allDay: boolean; time: string; where: string; tentative: boolean; others: number }
 export interface AgendaDay { date: string; label: string; events: AgendaEvent[] }
 export interface Agenda { title: string; from: string; to: string; days: AgendaDay[]; total: number; truncated: boolean }
+export interface MailItem { id: string; from: string; subject: string; date: string; when: string; snippet: string; unread: boolean }
+export interface MailFull extends MailItem { to: string; text: string; truncated: boolean; attachments: number }
 export class GoogleError extends Error { constructor(message: string, readonly status = 0) { super(message); } }
 
 const clean = (s: unknown, max: number) => String(s ?? '').replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -54,6 +61,7 @@ export class GoogleService implements OnModuleInit {
   private refreshing?: Promise<string>;
   private readonly states = new Map<string, { until: number; redirect: string }>();
   private readonly cache = new Map<string, { at: number; value: Agenda }>();
+  private readonly mailCache = new Map<string, { at: number; value: MailItem[] }>();
   private used = { day: '', n: 0 };
   private lastError = '';
   private warned = false;
@@ -96,7 +104,7 @@ export class GoogleService implements OnModuleInit {
   }
 
   private async save(s: Stored | undefined) {
-    this.stored = s; this.access = undefined; this.cache.clear();
+    this.stored = s; this.access = undefined; this.cache.clear(); this.mailCache.clear();
     if (!s) { await this.db.query('DELETE FROM meta WHERE key = $1', [META_KEY]); return; }
     const sealed = this.vault.seal(JSON.stringify(s));
     await this.db.query('DELETE FROM meta WHERE key = $1', [META_KEY]);
@@ -167,11 +175,11 @@ export class GoogleService implements OnModuleInit {
   private day(at = this.now()) { return new Intl.DateTimeFormat('en-CA', { timeZone: this.cfg.timezone }).format(at); }
 
   /** Unica forma de hablar con Google: GET. Cuenta para el tope diario propio. */
-  private async get(url: string, params: Record<string, string> = {}): Promise<any> {
+  private async get(url: string, params: Record<string, string> | URLSearchParams = {}): Promise<any> {
     const today = this.day(); if (this.used.day !== today) this.used = { day: today, n: 0 };
     if (this.used.n >= this.cfg.googleDailyCalls) throw new GoogleError('se llegó al tope de consultas a Google de hoy');
     this.used.n++; this.usage?.add('google_calls');
-    const token = await this.accessToken(), q = new URLSearchParams(params).toString();
+    const token = await this.accessToken(), q = (params instanceof URLSearchParams ? params : new URLSearchParams(params)).toString();
     const res = await fetch(q ? `${url}?${q}` : url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
     if (res.status === 401) this.access = undefined;
     if (!res.ok) {
@@ -226,6 +234,69 @@ export class GoogleService implements OnModuleInit {
     this.cache.set(`${first}/${span}`, { at: Date.now(), value: out });
     return out;
   }
+
+  // ---------- correo ----------
+  private header(m: any, name: string): string { const h = (Array.isArray(m?.payload?.headers) ? m.payload.headers : []).find((x: any) => String(x?.name).toLowerCase() === name); return clean(h?.value, 200); }
+  private mailItem(m: any): MailItem {
+    // El remitente llega como «Nombre <direccion>»: se muestra el nombre; la direccion solo si no hay nombre.
+    const rawFrom = String((Array.isArray(m?.payload?.headers) ? m.payload.headers : []).find((x: any) => String(x?.name).toLowerCase() === 'from')?.value ?? '');
+    const named = /^\s*"?([^"<]*?)"?\s*<([^>]*)>\s*$/.exec(rawFrom), from = clean(named ? named[1] || named[2] : rawFrom, 60);
+    const at = new Date(Number(m?.internalDate) || NaN);
+    const when = Number.isNaN(at.getTime()) ? '' : new Intl.DateTimeFormat('es-CO', { timeZone: this.cfg.timezone, day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true }).format(at).replace(/\u00a0/g, ' ');
+    return { id: String(m?.id ?? ''), from: from || '(sin remitente)', subject: clean(this.header(m, 'subject'), 120) || '(sin asunto)', date: Number.isNaN(at.getTime()) ? '' : at.toISOString(), when,
+      snippet: clean(htmlToText(String(m?.snippet ?? '')), 160), unread: Array.isArray(m?.labelIds) && m.labelIds.includes('UNREAD') };
+  }
+
+  /**
+   * Busca correos. `query` usa la sintaxis del buscador de Gmail (from:, subject:, is:unread, newer_than:2d...); vacia =
+   * los mas recientes de la bandeja de entrada. Devuelve remitente, asunto, fecha y un trozo corto: no el cuerpo.
+   * Todo es texto de terceros.
+   */
+  async mail(query = '', max = 6): Promise<MailItem[]> {
+    if (!this.has('correo')) throw new GoogleError(this.connected ? 'el permiso guardado no incluye el correo: vuelve a conectar Google en el panel' : 'Google no está conectado: se conecta en el panel, en Dispositivos');
+    const q = clean(query, 200), n = Math.max(1, Math.min(10, Math.floor(max) || 6)), key = `${q}/${n}`;
+    const hit = this.mailCache.get(key); if (hit && Date.now() - hit.at < 45_000) return hit.value;
+    const list = await this.get(`${GMAIL}/messages`, { maxResults: String(n), ...(q ? { q } : { labelIds: 'INBOX' }) });
+    const ids: string[] = (Array.isArray(list?.messages) ? list.messages : []).map((m: any) => String(m?.id ?? '')).filter((id: string) => /^[A-Za-z0-9_-]{6,40}$/.test(id)).slice(0, n);
+    const out: MailItem[] = [];
+    for (const id of ids) { // uno por uno: son pocos, y asi no se dispara el limite por segundo de Gmail
+      const m = await this.get(`${GMAIL}/messages/${id}`, new URLSearchParams([['format', 'metadata'], ['metadataHeaders', 'From'], ['metadataHeaders', 'Subject'], ['metadataHeaders', 'Date']])).catch(() => null);
+      if (m) out.push(this.mailItem(m));
+    }
+    this.mailCache.set(key, { at: Date.now(), value: out }); if (this.mailCache.size > 30) this.mailCache.delete(this.mailCache.keys().next().value!);
+    return out;
+  }
+
+  /** Un correo completo (texto llano, hasta 6.000 caracteres). No marca nada como leido: el permiso es de solo lectura. */
+  async mailRead(id: string): Promise<MailFull> {
+    if (!this.has('correo')) throw new GoogleError('el permiso guardado no incluye el correo: vuelve a conectar Google en el panel');
+    if (!/^[A-Za-z0-9_-]{6,40}$/.test(String(id))) throw new GoogleError('ese correo no existe');
+    const m = await this.get(`${GMAIL}/messages/${id}`, { format: 'full' });
+    const body = mailBody(m?.payload), MAX = 6000;
+    return { ...this.mailItem(m), to: clean(this.header(m, 'to'), 120), text: body.text.slice(0, MAX), truncated: body.text.length > MAX, attachments: body.attachments };
+  }
+}
+
+/** Texto de una parte de un correo (base64url). */
+const decode = (data: unknown) => { try { return Buffer.from(String(data ?? ''), 'base64url').toString('utf8'); } catch { return ''; } };
+/** HTML de un correo a texto llano: sin etiquetas, estilos ni guiones, con los saltos de parrafo. */
+export function htmlToText(html: string): string {
+  return html.replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, ' ').replace(/<br\s*\/?>|<\/(p|div|tr|li|h[1-6])>/gi, '\n').replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#(\d+);/g, (_m, n) => { const c = Number(n); return c > 31 && c < 0x10ffff ? String.fromCodePoint(c) : ' '; });
+}
+/** El cuerpo legible de un mensaje: prefiere el texto llano; si solo hay HTML, lo convierte. Cuenta los adjuntos. */
+export function mailBody(payload: any): { text: string; attachments: number } {
+  let plain = '', html = '', attachments = 0;
+  const walk = (p: any, depth: number) => {
+    if (!p || typeof p !== 'object' || depth > 8) return;
+    if (p.filename) { attachments++; return; }
+    if (p.mimeType === 'text/plain' && p.body?.data && !plain) plain = decode(p.body.data);
+    else if (p.mimeType === 'text/html' && p.body?.data && !html) html = decode(p.body.data);
+    for (const c of Array.isArray(p.parts) ? p.parts.slice(0, 30) : []) walk(c, depth + 1);
+  };
+  walk(payload, 0);
+  const text = (plain || htmlToText(html)).replace(/\r/g, '').replace(/[\u0000-\u0008\u000b-\u001f]/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n[ \t]+/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return { text, attachments };
 }
 
 /** La agenda en texto, para el modelo (va envuelta como dato por quien la use). */

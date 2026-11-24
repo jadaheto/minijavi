@@ -364,6 +364,12 @@ body.panel .cover-art, body.showing .pnl { display: none; }
 .pnl-events time { font-variant-numeric: tabular-nums; font-weight: 700; color: #7fb4ff; font-size: 0.92rem; white-space: nowrap; }
 .pnl-ev strong { display: block; font-weight: 600; overflow-wrap: anywhere; } .pnl-ev small { color: #9fb0d0; }
 .pnl-empty { margin: 0; color: #9fb0d0; }
+/* Correo: la lista usa las filas de la agenda (el número va donde iba la hora); lo no leído lleva una marca. */
+.pnl-mail .pnl-events li { grid-template-columns: 1.6em minmax(0, 1fr); }
+.pnl-mail .pnl-events li.unread { border-left: 3px solid #7fb4ff; } .pnl-mail .pnl-events li.unread strong { font-weight: 700; }
+.pnl-mail .pnl-ev small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.pnl-mail-head { display: grid; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid rgb(255 255 255 / 0.1); } .pnl-mail-head strong { font-size: 1.05rem; overflow-wrap: anywhere; } .pnl-mail-head small { color: #9fb0d0; }
+.pnl-mail-text { margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: min(52vh, 440px); overflow: auto; line-height: 1.5; }
 @keyframes pnl-rise { from { opacity: 0; transform: translateY(8px); } }
 @media (prefers-reduced-motion: reduce) { .pnl-events li { animation: none; } }
 .pnl-card, .pnl-metric { display: grid; gap: 8px; padding: 13px 14px 10px; border-radius: 16px; background: rgba(255, 255, 255, .045); opacity: 0; animation: tsl-row .5s ease forwards; }

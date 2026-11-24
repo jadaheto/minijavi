@@ -219,7 +219,26 @@ function agenda(msg) {
   return wrap;
 }
 
-const KINDS = { finance, status, usage, board, route, chargers, brief, agenda };
+/** Correo de Gmail: la lista numerada (remitente, asunto, hora y un trozo) o un correo abierto. Todo lo escribieron terceros. */
+function mail(msg) {
+  const wrap = el('div', 'pnl-mail');
+  if (msg.open) {
+    const o = msg.open, head = el('div', 'pnl-mail-head');
+    head.append(el('strong', '', String(o.subject || '')), el('small', '', [o.from, o.when, o.attachments ? `${o.attachments} adjunto${o.attachments === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')));
+    wrap.append(head, el('p', 'pnl-mail-text', String(o.text || '') + (o.more ? ' …' : '')));
+    return wrap;
+  }
+  const list = el('ul', 'pnl-events');
+  for (const m of (msg.items || []).slice(0, 8)) {
+    const li = el('li', m.unread ? 'unread' : '');
+    const text = el('div', 'pnl-ev'); text.append(el('strong', '', `${m.from || ''} · ${m.subject || ''}`), el('small', '', [m.when, m.snippet].filter(Boolean).join(' · ')));
+    li.append(el('time', '', String(m.n || '')), text); list.append(li);
+  }
+  if (!list.children.length) wrap.append(el('p', 'pnl-empty', 'No hay correos.')); else wrap.append(list);
+  return wrap;
+}
+
+const KINDS = { finance, status, usage, board, route, chargers, brief, agenda, mail };
 export function createDataPanel(box) {
   let timer = 0;
   const hide = () => { clearTimeout(timer); box.hidden = true; box.replaceChildren(); document.body.classList.remove('panel'); };
@@ -233,7 +252,7 @@ export function createDataPanel(box) {
       box.append(head, render(msg));
       box.hidden = false; document.body.classList.add('panel');
       box.classList.remove('in'); void box.offsetWidth; box.classList.add('in');
-      timer = setTimeout(hide, ['board', 'route', 'chargers', 'brief', 'agenda'].includes(msg.kind) ? 120000 : 45000); // son consultas puntuales: se van solas (el tablero dura mas)
+      timer = setTimeout(hide, ['board', 'route', 'chargers', 'brief', 'agenda', 'mail'].includes(msg.kind) ? 120000 : 45000); // son consultas puntuales: se van solas (el tablero dura mas)
     },
     hide,
     get active() { return !box.hidden; },

@@ -370,6 +370,9 @@ export class ConnectionsService {
   /** La conexion a la que pertenece una herramienta de voz ('' si no se conoce). No consulta nada. */
   voiceSlug(fn: string): string { return this.voice?.map.get(fn)?.slug ?? ''; }
 
+  /** La misma revision de lo leido, para otras fuentes de texto de terceros (el correo de Google). */
+  screenRead(text: string, source: string): Promise<boolean> { return this.suspicious(text, source); }
+
   /** ¿Lo leido trae instrucciones para una IA? Si nadie responde a tiempo, no (el contenido igual va envuelto como dato). */
   private async suspicious(text: string, conn: string): Promise<boolean> {
     if (!this.decisions || text.trim().length < 20) return false;
