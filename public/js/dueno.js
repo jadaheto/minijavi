@@ -493,11 +493,11 @@ async function loadConnections() {
   $('conn-count').textContent = `(${items.length})`;
   $('conn-form').hidden = !!d.problem;
   $('conn-note').textContent = d.problem ? `Las conexiones están apagadas: ${d.problem}.`
-    : 'Solo existen en modo dueño y solo LEEN. Cada herramienta de un conector empieza bloqueada: mira qué hace y confírmala como lectura para poder usarla. Lo que escribe, publica o borra no se ejecuta nunca, lo pida quien lo pida. ' + (d.voice ? 'En modo dueño el avatar usa por voz las que confirmaste como lectura ("busca en mis notas…"); lo que lee se revisa antes de entregárselo al modelo, y si una consulta tarda te avisa cuando llega.' : 'El avatar NO las usa por voz (CONEXION_VOZ=0): solo se prueban aquí.');
+    : (d.oauthRedirect ? `Para conectar con tu cuenta, si la aplicación te pide una dirección de retorno, es: ${d.oauthRedirect}. ` : 'Para conectar con tu cuenta hace falta PUBLIC_URL en el servidor. ') + 'Solo existen en modo dueño y solo LEEN. Cada herramienta de un conector empieza bloqueada: mira qué hace y confírmala como lectura para poder usarla. Lo que escribe, publica o borra no se ejecuta nunca, lo pida quien lo pida. ' + (d.voice ? 'En modo dueño el avatar usa por voz las que confirmaste como lectura ("busca en mis notas…"); lo que lee se revisa antes de entregárselo al modelo, y si una consulta tarda te avisa cuando llega.' : 'El avatar NO las usa por voz (CONEXION_VOZ=0): solo se prueban aquí.');
   $('conn-list').replaceChildren(...items.map((c) => {
     const msg = el('small', { className: 'danger-text' });
     const pending = c.tools.filter((t) => !t.confirmed && !t.gone).length, reads = c.tools.filter((t) => t.confirmed && t.klass === 'lectura' && !t.gone).length;
-    const head = [el('strong', { textContent: c.name }), el('small', { className: 'muted', textContent: [c.enabled ? 'Activa' : 'Desactivada', new URL(c.url).host, c.auth_kind === 'ninguna' ? 'sin clave' : 'clave guardada', `${reads} de lectura`, pending ? `${pending} sin confirmar` : '', c.last_used_at ? `último uso ${fecha(c.last_used_at)}` : 'sin usar'].filter(Boolean).join(' · ') })];
+    const head = [el('strong', { textContent: c.name }), el('small', { className: 'muted', textContent: [c.enabled ? 'Activa' : 'Desactivada', new URL(c.url).host, c.auth_kind === 'oauth' ? ({ conectada: 'con tu cuenta', sin_autorizar: 'SIN AUTORIZAR', reconectar: 'HAY QUE VOLVER A CONECTAR' })[c.oauth] : c.auth_kind === 'ninguna' ? 'sin clave' : 'clave guardada', `${reads} de lectura`, pending ? `${pending} sin confirmar` : '', c.last_used_at ? `último uso ${fecha(c.last_used_at)}` : 'sin usar'].filter(Boolean).join(' · ') })];
     if (c.last_error) head.push(el('small', { className: 'danger-text', textContent: `Último error: ${c.last_error}` }));
     const btn = (text, fn, cls = 'small') => { const b = el('button', { type: 'button', className: cls, textContent: text }); b.addEventListener('click', fn); return b; };
     const tools = el('ul', { className: 'list' }, ...c.tools.map((t) => {
@@ -524,16 +524,43 @@ async function loadConnections() {
       return el('li', {}, ...kids);
     }));
     const del = btn('Desconectar', async () => { if (del.dataset.sure) { await post(`/${c.id}`, {}, 'DELETE'); loadConnections(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Borra la clave guardada'; } }, 'small danger');
-    const actions = el('div', { className: 'row' },
+    const again = c.auth_kind === 'oauth' ? [btn(c.oauth === 'conectada' ? 'Volver a conectar' : 'Conectar', async () => { const r = await post('/oauth', { id: c.id }); if (!r.ok) { msg.textContent = r.data.message || 'No se pudo.'; return; } askToGo(c.name, r.data); }, c.oauth === 'conectada' ? 'small' : 'small primary')] : [];
+    const actions = el('div', { className: 'row' }, ...again,
       btn('Volver a leer herramientas', async () => { const r = await post(`/${c.id}/descubrir`); if (!r.ok) { msg.textContent = r.data.message || 'No se pudo.'; return; } loadConnections(); }),
-      btn(c.enabled ? 'Desactivar' : 'Activar', async () => { await post(`/${c.id}`, { enabled: !c.enabled }, 'PATCH'); loadConnections(); }), del);
+      ...(c.auth_kind === 'oauth' && c.oauth === 'sin_autorizar' ? [] : [btn(c.enabled ? 'Desactivar' : 'Activar', async () => { await post(`/${c.id}`, { enabled: !c.enabled }, 'PATCH'); loadConnections(); })]), del);
     return el('li', { className: 'demo-row' }, ...head, actions, msg, tools);
   }));
   $('conn-log').replaceChildren(...(d.log || []).map((l) => el('li', {}, el('small', { className: l.status === 'ok' ? 'muted' : 'danger-text', textContent: `${fecha(l.at)} · ${l.connection} · ${l.tool} (${l.klass}) · ${l.status}${l.ms ? ` · ${l.ms} ms` : ''} · ${l.detail}` }))));
 }
-$('conn-auth')?.addEventListener('change', () => { $('conn-header').hidden = $('conn-auth').value !== 'cabecera'; $('conn-secret').hidden = $('conn-auth').value === 'ninguna'; });
+/**
+ * Antes de salir hacia la aplicación: qué permisos se van a pedir y a qué dirección vas. El panel no abre nada solo.
+ * `r`: lo que devolvió el servidor ({ done, authorizeUrl, scopes, how }).
+ */
+function askToGo(name, r) {
+  if (r.done) { $('conn-go').hidden = true; $('conn-msg').textContent = ''; loadConnections(); return; }
+  let host = ''; try { host = new URL(r.authorizeUrl).host; } catch { /* sin dirección: no se muestra el botón */ }
+  $('conn-go-title').textContent = `Autorizar «${name}»`;
+  $('conn-go-text').textContent = `Vas a salir a ${host || 'la aplicación'} para dar el permiso (${r.how}). Aunque la aplicación permita escribir, aquí toda herramienta queda bloqueada hasta que la confirmes como lectura. Tienes 10 minutos. ${r.scopes.length ? 'Se van a pedir estos permisos:' : 'La aplicación no dijo qué permisos pide: revísalos en su pantalla antes de aceptar.'}`;
+  $('conn-go-scopes').replaceChildren(...r.scopes.map((s) => el('li', {}, el('small', { textContent: s }))));
+  $('conn-go-link').href = host ? r.authorizeUrl : '#'; $('conn-go-link').hidden = !host;
+  $('conn-go').hidden = false; $('conn-go').scrollIntoView({ block: 'nearest' });
+}
+$('conn-go-cancel')?.addEventListener('click', () => { $('conn-go').hidden = true; loadConnections(); });
+const connFields = () => { const k = $('conn-auth').value; $('conn-header').hidden = k !== 'cabecera'; $('conn-secret').hidden = k === 'ninguna' || k === 'oauth'; for (const id of ['conn-client-id', 'conn-client-secret', 'conn-scope']) $(id).hidden = k !== 'oauth'; };
+$('conn-auth')?.addEventListener('change', connFields); if ($('conn-auth')) connFields();
+// Al volver de la aplicación: el resultado llega en la dirección (sin datos sensibles) y se quita de ahí.
+{ const q = new URLSearchParams(location.search), r = q.get('conexion'); if (r && $('conn-msg')) { $('conn-msg').textContent = r === 'ok' ? 'Cuenta conectada. Sus herramientas entraron bloqueadas: confirma cuáles son de lectura.' : `No se conectó: ${q.get('motivo') || 'no se pudo completar'}.`; history.replaceState(null, '', location.pathname + location.hash); } }
 $('conn-form')?.addEventListener('submit', async (e) => {
   e.preventDefault(); $('conn-msg').textContent = 'Conectando…';
+  if ($('conn-auth').value === 'oauth') {
+    const name = $('conn-name').value;
+    const r = await api('connections/oauth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, url: $('conn-url').value, clientId: $('conn-client-id').value, clientSecret: $('conn-client-secret').value, scope: $('conn-scope').value }) });
+    const j = await r.json().catch(() => ({}));
+    $('conn-client-secret').value = ''; // el secreto no se queda en la página
+    if (!r.ok) { $('conn-msg').textContent = j.message || 'No se pudo empezar.'; loadConnections(); return; }
+    $('conn-msg').textContent = ''; $('conn-name').value = $('conn-url').value = $('conn-client-id').value = $('conn-scope').value = '';
+    await loadConnections(); askToGo(name, j); return;
+  }
   const r = await api('connections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: $('conn-name').value, url: $('conn-url').value, authKind: $('conn-auth').value, authHeader: $('conn-header').value, secret: $('conn-secret').value }) });
   const j = await r.json().catch(() => ({}));
   $('conn-secret').value = ''; // la clave no se queda en la página

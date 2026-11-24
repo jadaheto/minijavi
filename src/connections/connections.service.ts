@@ -10,6 +10,7 @@ import { asData } from '../tools/data';
 import { UsageService } from '../usage/usage.service';
 import { McpTarget, McpToolInfo, callTool, explain, listTools } from './mcp-client';
 import { Vault } from './vault';
+import { NeedsLogin, OAUTH_STATE_MS, OAuthBlob, StoredProvider, newState, oauthStatus, runAuth, safeAuthorizeUrl, sameState, scopesOf } from './oauth';
 
 /**
  * Conexiones con otras aplicaciones (fase pedida por Javier el 2026-11-19; etapa A aprobada el 2026-11-22). Esta es la
@@ -32,7 +33,7 @@ import { Vault } from './vault';
  */
 export const KLASSES = ['lectura', 'borrador', 'escritura'] as const;
 export type Klass = (typeof KLASSES)[number];
-export const AUTH_KINDS = ['ninguna', 'bearer', 'cabecera'] as const;
+export const AUTH_KINDS = ['ninguna', 'bearer', 'cabecera', 'oauth'] as const;
 export type AuthKind = (typeof AUTH_KINDS)[number];
 export interface Connection { id: number; slug: string; name: string; url: string; auth_kind: AuthKind; auth_header: string; enabled: number; created_at: string; last_used_at: string; last_error: string; tools_at: string }
 export interface ConnectionTool { connection_id: number; name: string; description: string; schema: string; klass: Klass; confirmed: number; suggested: Klass; hint: string; fingerprint: string; seen_at: string; gone: number }
@@ -123,6 +124,7 @@ export class ConnectionsService {
     const name = String(input.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 60), slug = slugify(name);
     if (slug.length < 2) throw new Refused('Ponle un nombre a la conexión.');
     const url = ConnectionsService.checkUrl(input.url);
+    if (input.authKind === 'oauth') throw new Refused('Las conexiones con tu cuenta se crean con «Conectar con tu cuenta».');
     const kind = (AUTH_KINDS as readonly string[]).includes(String(input.authKind)) ? (input.authKind as AuthKind) : 'ninguna';
     const header = kind === 'cabecera' ? String(input.authHeader ?? '').trim() : '';
     if (kind === 'cabecera' && (!/^[A-Za-z][A-Za-z0-9-]{1,63}$/.test(header) || /^(host|content-length|content-type|accept|connection|cookie|mcp-.*)$/i.test(header))) throw new Refused('El nombre de la cabecera no es válido.');
@@ -152,10 +154,109 @@ export class ConnectionsService {
     return true;
   }
 
-  private async target(id: number): Promise<{ row: Connection; target: McpTarget }> {
+  // ---------- conexiones con la cuenta de Javier (OAuth, etapa A2b) ----------
+  /** A donde vuelve la aplicacion tras autorizar. Sale de PUBLIC_URL: debe coincidir con lo registrado en cada aplicacion. */
+  get oauthRedirect(): string { return this.cfg.publicUrl ? `${this.cfg.publicUrl}/api/conexiones/callback` : ''; }
+  private blobOf(row: { secret: string }): OAuthBlob { return row.secret ? (JSON.parse(this.vault.open(row.secret)) as OAuthBlob) : {}; }
+  private provider(id: number, blob: OAuthBlob, interactive: boolean) {
+    const save = async (b: OAuthBlob) => { await this.db.query('UPDATE connections SET secret = $1 WHERE id = $2 AND business = $3', [this.vault.seal(JSON.stringify(b)), id, this.biz()]); };
+    return { blob, save, provider: new StoredProvider(blob, save, { redirect: this.oauthRedirect, publicUrl: this.cfg.publicUrl, interactive }) };
+  }
+  /** En que va cada conexion por OAuth (conectada, sin autorizar, hay que reconectar). No devuelve nada de sus permisos. */
+  async oauthStates(): Promise<Record<number, string>> {
+    const rows = await this.db.query<{ id: number; secret: string }>(`SELECT id, secret FROM connections WHERE business = $1 AND auth_kind = 'oauth'`, [this.biz()]), out: Record<number, string> = {};
+    for (const r of rows) { try { out[Number(r.id)] = oauthStatus(this.blobOf(r)); } catch { out[Number(r.id)] = 'reconectar'; } }
+    return out;
+  }
+
+  /**
+   * Empieza (o repite) la autorizacion. Con `id` reconecta una conexion que ya existe; sin el, la crea DESACTIVADA: solo
+   * se activa cuando la aplicacion devuelve los permisos. Devuelve la direccion a la que debe ir Javier y los permisos
+   * que se van a pedir, para que los vea antes de salir. No abre nada por su cuenta.
+   */
+  async oauthStart(input: { id?: number; name?: string; url?: string; clientId?: string; clientSecret?: string; scope?: string }): Promise<{ id: number; done: boolean; authorizeUrl?: string; scopes: string[]; how: string }> {
+    this.need();
+    if (!this.oauthRedirect) throw new Refused('Falta PUBLIC_URL: sin la dirección pública del avatar la aplicación no sabe a dónde volver.');
+    let id = Number(input.id) || 0, url: string, blob: OAuthBlob;
+    if (id) {
+      const [row] = await this.db.query<Connection & { secret: string }>(`SELECT * FROM connections WHERE id = $1 AND business = $2 AND auth_kind = 'oauth'`, [id, this.biz()]);
+      if (!row) throw new Refused('Esa conexión no existe o no es de las que se conectan con tu cuenta.');
+      url = row.url; try { blob = this.blobOf(row); } catch { blob = {}; }
+      blob.tokens = undefined; blob.verifier = undefined; blob.discovery = undefined; // reconectar: se pide todo de nuevo
+    } else {
+      const name = String(input.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 60), slug = slugify(name);
+      if (slug.length < 2) throw new Refused('Ponle un nombre a la conexión.');
+      url = ConnectionsService.checkUrl(String(input.url ?? ''));
+      const cid = String(input.clientId ?? '').trim(), csecret = String(input.clientSecret ?? '').trim(), scope = String(input.scope ?? '').replace(/\s+/g, ' ').trim();
+      if (cid.length > 300 || csecret.length > 4000 || /[\r\n]/.test(cid + csecret)) throw new Refused('El identificador o el secreto del cliente no son válidos.');
+      if (csecret && !cid) throw new Refused('Si pones el secreto del cliente, falta su identificador.');
+      if (scope.length > 600 || !/^[\x21\x23-\x5b\x5d-\x7e ]*$/.test(scope)) throw new Refused('Los permisos van separados por espacios, sin comillas.');
+      const all = await this.list();
+      if (all.length >= MAX_CONNECTIONS) throw new Refused(`Hay un máximo de ${MAX_CONNECTIONS} conexiones.`);
+      if (all.some((c) => c.slug === slug)) throw new Refused('Ya hay una conexión con ese nombre.');
+      blob = { ...(cid ? { pre: { id: cid, ...(csecret ? { secret: csecret } : {}) } } : {}), ...(scope ? { scope } : {}) };
+      const [row] = await this.db.query<{ id: number }>('INSERT INTO connections (business, slug, name, url, auth_kind, auth_header, secret, enabled, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
+        [this.biz(), slug, name, url, 'oauth', '', this.vault.seal(JSON.stringify(blob)), 0, new Date().toISOString()]);
+      id = Number(row.id); this.log.log(`conexión nueva (con cuenta): ${slug}`); this.voice = undefined;
+    }
+    blob.state = newState(); blob.stateAt = Date.now(); blob.warned = false;
+    const { provider, save } = this.provider(id, blob, true); await save(blob);
+    let result: 'AUTHORIZED' | 'REDIRECT';
+    try { result = await runAuth(provider, { serverUrl: url, ...(blob.scope ? { scope: blob.scope } : {}) }); }
+    catch (e) { const why = explain(e); await this.db.query('UPDATE connections SET last_error = $1 WHERE id = $2', [why, id]).catch(() => undefined); throw new Refused(`No se pudo empezar la autorización: ${why}. La conexión quedó creada sin autorizar: corrige y pulsa «Conectar» en ella, o desconéctala.`); }
+    const how = blob.pre ? 'con el cliente que pegaste' : blob.client ? 'con un cliente registrado automáticamente' : provider.clientMetadataUrl ? 'con el documento público de minijavi' : 'sin cliente';
+    if (result === 'AUTHORIZED') { await this.db.query('UPDATE connections SET enabled = $1, last_error = $2 WHERE id = $3', [1, '', id]); this.voice = undefined; return { id, done: true, scopes: [], how }; }
+    const go = safeAuthorizeUrl(provider.authorizeUrl);
+    if (!go) throw new Refused('La aplicación devolvió una dirección de autorización que no es segura (debe ser https).');
+    return { id, done: false, authorizeUrl: go, scopes: scopesOf(provider.authorizeUrl!), how };
+  }
+
+  /**
+   * La vuelta de la aplicacion. No hay cookie del dueño (es SameSite=Strict): la protege `state`, que es al azar, de un
+   * solo uso, vale 10 minutos y solo se le entrego a un dispositivo registrado. Se gasta ANTES de cambiar el codigo.
+   */
+  async oauthFinish(q: { code?: string; state?: string; iss?: string; error?: string }): Promise<{ ok: boolean; name?: string; why?: string }> {
+    if (this.problem) return { ok: false, why: 'las conexiones están apagadas' };
+    const state = String(q.state ?? '');
+    if (!/^[a-f0-9]{48}$/.test(state)) return { ok: false, why: 'la vuelta no trae un identificador válido' };
+    const rows = await this.db.query<Connection & { secret: string }>(`SELECT * FROM connections WHERE business = $1 AND auth_kind = 'oauth'`, [this.biz()]);
+    let hit: (Connection & { secret: string }) | undefined, blob: OAuthBlob = {};
+    for (const r of rows) { try { const b = this.blobOf(r); if (sameState(b.state, state)) { hit = r; blob = b; break; } } catch { /* otra clave de boveda: no es esta */ } }
+    if (!hit) return { ok: false, why: 'esa autorización no existe o ya se usó' };
+    const fresh = Date.now() - (blob.stateAt ?? 0) <= OAUTH_STATE_MS;
+    blob.state = undefined; blob.stateAt = undefined;
+    const { provider, save } = this.provider(Number(hit.id), blob, true); await save(blob); // de un solo uso, pase lo que pase despues
+    if (!fresh) return { ok: false, name: hit.name, why: 'la autorización venció (tenías 10 minutos); empieza de nuevo' };
+    if (q.error || !q.code) { const why = q.error === 'access_denied' ? 'cancelaste la autorización' : 'la aplicación no dio la autorización'; await this.db.query('UPDATE connections SET last_error = $1 WHERE id = $2', [why, hit.id]).catch(() => undefined); return { ok: false, name: hit.name, why }; }
+    try {
+      const r = await runAuth(provider, { serverUrl: hit.url, authorizationCode: String(q.code).slice(0, 4000), ...(q.iss ? { iss: String(q.iss).slice(0, 500) } : {}) });
+      if (r !== 'AUTHORIZED') throw new Error('la aplicación no entregó los permisos');
+    } catch (e) { const why = explain(e); await this.db.query('UPDATE connections SET last_error = $1 WHERE id = $2', [why, hit.id]).catch(() => undefined); return { ok: false, name: hit.name, why }; }
+    await this.db.query('UPDATE connections SET enabled = $1, last_error = $2 WHERE id = $3', [1, '', hit.id]); this.voice = undefined;
+    this.log.log(`conexión autorizada: ${hit.slug}`);
+    await this.discover(Number(hit.id)).catch(() => undefined); // las herramientas entran SIN confirmar, como siempre
+    return { ok: true, name: hit.name };
+  }
+
+  /** Tras usar una conexion por OAuth: si pidio volver a entrar, queda anotado y se avisa una sola vez. */
+  private async afterOAuth(id: number, name: string, used: { provider: StoredProvider; blob: OAuthBlob; save: (b: OAuthBlob) => Promise<void> } | undefined) {
+    if (!used?.provider.needsLogin || used.blob.warned) return;
+    used.blob.warned = true; await used.save(used.blob).catch(() => undefined);
+    void this.alerts?.send(`🔌 La conexión «${name}» dejó de tener permiso (venció o se revocó). Vuelve a conectarla en el panel → Conexiones.`);
+    void id;
+  }
+
+  private async target(id: number): Promise<{ row: Connection; target: McpTarget; oauth?: { provider: StoredProvider; blob: OAuthBlob; save: (b: OAuthBlob) => Promise<void> } }> {
     const [row] = await this.db.query<Connection & { secret: string }>('SELECT * FROM connections WHERE id = $1 AND business = $2', [id, this.biz()]);
     if (!row) throw new Refused('Esa conexión no existe.');
     const headers: Record<string, string> = {};
+    if (row.auth_kind === 'oauth') {
+      const blob = this.blobOf(row);
+      if (oauthStatus(blob) === 'sin_autorizar') throw new Refused('Esa conexión aún no está autorizada: pulsa «Conectar» en el panel.');
+      const oauth = this.provider(id, blob, false);
+      const { secret: _s, ...clean } = row;
+      return { row: clean as Connection, target: { url: row.url, headers, authProvider: oauth.provider }, oauth };
+    }
     if (row.auth_kind !== 'ninguna') { const key = this.vault.open(row.secret); if (row.auth_kind === 'bearer') headers.Authorization = `Bearer ${key}`; else headers[row.auth_header] = key; }
     const { secret: _omit, ...clean } = row;
     return { row: clean as Connection, target: { url: row.url, headers } };
@@ -164,10 +265,10 @@ export class ConnectionsService {
   /** Pregunta al servidor que herramientas ofrece. Las nuevas entran SIN confirmar; las que cambiaron pierden su confirmacion. */
   async discover(id: number): Promise<{ total: number; added: string[]; changed: string[]; gone: string[] }> {
     this.need();
-    const { row, target } = await this.target(id), now = new Date().toISOString();
+    const { row, target, oauth } = await this.target(id), now = new Date().toISOString();
     let found: McpToolInfo[];
     try { found = (await listTools(target)).filter((t) => /^[A-Za-z0-9_.\-/]{1,96}$/.test(t.name)); }
-    catch (e) { const why = explain(e); await this.db.query('UPDATE connections SET last_error = $1 WHERE id = $2', [why, id]); throw new Refused(`No se pudieron leer las herramientas: ${why}.`); }
+    catch (e) { const why = explain(oauth?.provider.needsLogin ? new NeedsLogin() : e); await this.afterOAuth(id, row.name, oauth); await this.db.query('UPDATE connections SET last_error = $1 WHERE id = $2', [why, id]); throw new Refused(`No se pudieron leer las herramientas: ${why}.`); }
     const known = new Map((await this.tools(id)).map((t) => [t.name, t])), added: string[] = [], changed: string[] = [];
     for (const t of found) {
       const fp = fingerprint(t), old = known.get(t.name), sug = suggestKlass(t.name), desc = (t.description ?? '').replace(/\s+/g, ' ').slice(0, 600), schema = JSON.stringify(t.inputSchema ?? { type: 'object', properties: {} }).slice(0, 12_000);
@@ -206,8 +307,8 @@ export class ConnectionsService {
     if (!ctx?.owner) return { ok: false, status: 'bloqueada', text: 'Las conexiones solo existen en el modo dueño.' };
     if (this.problem) return { ok: false, status: 'bloqueada', text: `Las conexiones están apagadas: ${this.problem}.` };
     const t0 = Date.now();
-    let row: Connection, target: McpTarget;
-    try { ({ row, target } = await this.target(id)); } catch (e) { return { ok: false, status: 'fallo', text: e instanceof Refused ? e.message : 'No se pudo abrir la clave de esa conexión (¿cambió VAULT_KEY?). Vuelve a escribirla en el panel.' }; }
+    let row: Connection, target: McpTarget, oauth: Awaited<ReturnType<ConnectionsService['target']>>['oauth'];
+    try { ({ row, target, oauth } = await this.target(id)); } catch (e) { return { ok: false, status: 'fallo', text: e instanceof Refused ? e.message : 'No se pudo abrir la clave de esa conexión (¿cambió VAULT_KEY?). Vuelve a escribirla en el panel.' }; }
     const [t] = await this.db.query<ConnectionTool>('SELECT * FROM connection_tools WHERE connection_id = $1 AND name = $2', [id, String(tool)]);
     const klass = t?.klass ?? 'escritura';
     const why = !row.enabled ? 'la conexión está desactivada' : !t || t.gone ? 'esa herramienta no está en el registro (hay que volver a leer las herramientas de la conexión)'
@@ -232,7 +333,8 @@ export class ConnectionsService {
       const text = r.text.length > MAX_RESULT ? `${r.text.slice(0, MAX_RESULT)}\n[... resultado recortado]` : r.text;
       return { ok: !r.isError, status: r.isError ? 'fallo' : 'ok', text: text || '(sin contenido)', foreign: true, name: row.name };
     } catch (e) {
-      const whyNot = explain(e);
+      const whyNot = explain(oauth?.provider.needsLogin ? new NeedsLogin() : e);
+      await this.afterOAuth(id, row.name, oauth);
       await this.db.query('UPDATE connections SET last_error = $1 WHERE id = $2', [whyNot, id]).catch(() => undefined);
       await this.note(row.slug, t.name, klass, 'fallo', Date.now() - t0, whyNot);
       return { ok: false, status: 'fallo', text: `La consulta a ${row.name} no funcionó: ${whyNot}.` };

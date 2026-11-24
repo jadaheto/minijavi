@@ -235,12 +235,21 @@
           <form id="conn-form" class="row" autocomplete="off">
             <input id="conn-name" placeholder="Nombre (ej. Notion)" maxlength="60" required>
             <input id="conn-url" placeholder="https://… (dirección del conector MCP)" required>
-            <select id="conn-auth"><option value="bearer">Clave tipo Bearer</option><option value="cabecera">Clave en otra cabecera</option><option value="ninguna">Sin clave</option></select>
+            <select id="conn-auth" aria-label="Cómo se entra"><option value="oauth">Con tu cuenta (te lleva a la aplicación)</option><option value="bearer">Clave tipo Bearer</option><option value="cabecera">Clave en otra cabecera</option><option value="ninguna">Sin clave</option></select>
             <input id="conn-header" placeholder="Nombre de la cabecera" hidden>
-            <input id="conn-secret" type="password" placeholder="Clave (no se vuelve a mostrar)" autocomplete="new-password">
+            <input id="conn-secret" type="password" placeholder="Clave (no se vuelve a mostrar)" autocomplete="new-password" hidden>
+            <input id="conn-client-id" placeholder="Identificador del cliente (opcional)" maxlength="300" autocomplete="off">
+            <input id="conn-client-secret" type="password" placeholder="Secreto del cliente (opcional)" autocomplete="new-password">
+            <input id="conn-scope" placeholder="Permisos a pedir (opcional, separados por espacios)" maxlength="600" autocomplete="off">
             <button type="submit" class="small">Conectar</button>
           </form>
           <small class="danger-text" id="conn-msg"></small>
+          <div class="card" id="conn-go" hidden>
+            <strong id="conn-go-title"></strong>
+            <p class="muted" id="conn-go-text"></p>
+            <ul class="list" id="conn-go-scopes"></ul>
+            <div class="row"><a class="button small primary" id="conn-go-link" href="#" rel="noreferrer">Ir a autorizar</a><button type="button" class="small" id="conn-go-cancel">Ahora no</button></div>
+          </div>
           <ul class="list" id="conn-list"></ul>
           <h3>Últimas llamadas y bloqueos</h3>
           <ul class="list" id="conn-log"></ul>

@@ -2600,6 +2600,131 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     return 'bóveda AES-GCM que no abre valores alterados ni con otra clave; el SDK oficial negocia con un conector real; todo nace bloqueado; solo corre la lectura confirmada; visitante, escritura, borrador, desconocida y desactivada no corren; segunda confirmación para nombres de escritura; herramienta que cambia pierde la confirmación; registro, bitácora y una alerta; apagado sin VAULT_KEY, sin modo dueño o en modo negocio; el panel no devuelve claves';
   });
 
+  await check('Conexiones con tu cuenta (OAuth): autorización con PKCE y retorno de un solo uso, permisos cifrados que se renuevan solos, aviso si se revocan, y el bloqueo de escritura sigue igual', async () => {
+    const { ConnectionsService, Refused } = await import('../connections/connections.service');
+    const { ConnectionsController, ConnectionsPublicController } = await import('../connections/connections.controller');
+    const { safeAuthorizeUrl, sameState } = await import('../connections/oauth');
+    const http = await import('node:http'), { createHash } = await import('node:crypto');
+    // Una aplicacion de mentira en esta maquina: conector MCP protegido + su servidor de autorizacion (con registro automatico).
+    const good = new Set<string>(), codes = new Map<string, { challenge: string; redirect: string; client: string }>(), hits: string[] = [], bearer: string[] = [];
+    let refreshOk = true, issued = 0, base = '';
+    const tools = [{ name: 'list_notes', description: 'Lista las notas', inputSchema: { type: 'object', properties: { query: { type: 'string' } } } }, { name: 'send_note', description: 'Envía una nota', inputSchema: { type: 'object', properties: {} } }];
+    const srv = http.createServer((req, res) => {
+      const u = new URL(req.url ?? '/', base), json = (code: number, body: unknown, headers: Record<string, string> = {}) => { res.writeHead(code, { 'content-type': 'application/json', ...headers }); res.end(JSON.stringify(body)); };
+      let body = ''; req.on('data', (d) => (body += d)); req.on('end', () => {
+        hits.push(`${req.method} ${u.pathname}`);
+        if (req.method === 'GET' && u.pathname.startsWith('/.well-known/oauth-protected-resource')) return json(200, { resource: `${base}/mcp`, authorization_servers: [base], scopes_supported: ['notes.read', 'notes.write'] });
+        if (req.method === 'GET' && u.pathname === '/.well-known/oauth-authorization-server') return json(200, { issuer: base, authorization_endpoint: `${base}/authorize`, token_endpoint: `${base}/token`, registration_endpoint: `${base}/register`, response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'], code_challenge_methods_supported: ['S256'], token_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'], authorization_response_iss_parameter_supported: true });
+        if (req.method === 'POST' && u.pathname === '/register') { const m = JSON.parse(body || '{}'); return json(201, { ...m, client_id: 'cliente-automatico-1', client_id_issued_at: 1 }); }
+        if (req.method === 'POST' && u.pathname === '/token') {
+          const f = new URLSearchParams(body), basic = /^Basic (.+)$/.exec(String(req.headers.authorization ?? ''));
+          const client = f.get('client_id') ?? (basic ? decodeURIComponent(Buffer.from(basic[1], 'base64').toString().split(':')[0]) : '');
+          const give = () => { const at = `acceso-${++issued}`; good.add(at); return json(200, { access_token: at, token_type: 'Bearer', expires_in: 3600, refresh_token: `renovar-${issued}`, scope: 'notes.read' }); };
+          if (f.get('grant_type') === 'authorization_code') {
+            const c = codes.get(f.get('code') ?? ''); codes.delete(f.get('code') ?? '');
+            const ok = c && c.client === client && c.redirect === f.get('redirect_uri') && createHash('sha256').update(f.get('code_verifier') ?? '').digest('base64url') === c.challenge;
+            return ok ? give() : json(400, { error: 'invalid_grant' });
+          }
+          if (f.get('grant_type') === 'refresh_token') return refreshOk && /^renovar-\d+$/.test(f.get('refresh_token') ?? '') ? give() : json(400, { error: 'invalid_grant' });
+          return json(400, { error: 'unsupported_grant_type' });
+        }
+        if (u.pathname === '/mcp' && req.method === 'POST') {
+          const tok = /^Bearer (.+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? '';
+          if (!good.has(tok)) { res.writeHead(401, { 'www-authenticate': `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"` }); return res.end(); }
+          const m = JSON.parse(body || '{}'); bearer.push(`${m.method}:${tok}`);
+          const reply = (result: unknown) => json(200, { jsonrpc: '2.0', id: m.id, result });
+          if (m.id === undefined) { res.writeHead(202); return res.end(); }
+          if (m.method === 'initialize') return reply({ protocolVersion: m.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'falso', version: '1' } });
+          if (m.method === 'tools/list') return reply({ tools });
+          if (m.method === 'tools/call') return reply({ content: [{ type: 'text', text: m.params.name === 'list_notes' ? 'Nota: comprar pan' : 'ESCRITURA HECHA' }] });
+          return json(200, { jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'Method not found' } });
+        }
+        res.writeHead(404); res.end();
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+    base = `http://127.0.0.1:${(srv.address() as any).port}`;
+    const url = `${base}/mcp`, REDIRECT = 'https://avatar.invalid/api/conexiones/callback';
+    const ccfg = new ConfigService(); Object.assign(ccfg as any, { vaultKey: 'v'.repeat(40), ownerSecret: 'dueño-secreto-de-prueba-1234', business: undefined, businessId: 'prueba-oauth', publicUrl: 'https://avatar.invalid' });
+    const alertsSent: string[] = [], alertsStub = { send: async (t: string) => { alertsSent.push(t); return ''; } } as any;
+    await P.db.query('DELETE FROM connections'); await P.db.query('DELETE FROM connection_tools'); await P.db.query('DELETE FROM connection_log');
+    const simFetch = globalThis.fetch; globalThis.fetch = ((u: any, init?: any) => (String(u?.url ?? u).startsWith('http://127.0.0.1:') ? realFetch(u, init) : simFetch(u, init))) as any;
+    const realNow = Date.now;
+    try {
+      const svc = new ConnectionsService(ccfg, P.db, A, alertsStub, usage), OWNER = { owner: true, via: 'prueba' };
+      const refused = async (fn: () => Promise<unknown>) => { try { await fn(); return ''; } catch (e) { return e instanceof Refused ? e.message : `otro error: ${(e as Error).message}`; } };
+      // La persona en la pagina de la aplicacion: se comprueba lo que llego en la direccion y se "acepta" (o no).
+      const consent = (go: string, client: string) => { const a = new URL(go), code = `codigo-${codes.size}-${Math.random().toString(36).slice(2)}`;
+        must(a.origin === base && a.pathname === '/authorize' && a.searchParams.get('response_type') === 'code' && a.searchParams.get('code_challenge_method') === 'S256' && (a.searchParams.get('code_challenge') ?? '').length >= 43 && a.searchParams.get('redirect_uri') === REDIRECT && a.searchParams.get('client_id') === client && a.searchParams.get('resource') === url && /^[a-f0-9]{48}$/.test(a.searchParams.get('state') ?? ''), `dirección de autorización: ${go}`);
+        codes.set(code, { challenge: a.searchParams.get('code_challenge')!, redirect: REDIRECT, client }); return { code, state: a.searchParams.get('state')!, iss: base }; };
+      // Sin direccion publica no hay a donde volver; y el formulario de claves no crea conexiones de este tipo.
+      const noUrl = Object.assign(Object.create(Object.getPrototypeOf(ccfg)), ccfg, { publicUrl: '' });
+      must(/PUBLIC_URL/.test(await refused(() => new ConnectionsService(noUrl, P.db, A, alertsStub, usage).oauthStart({ name: 'Notas', url }))) && /Conectar con tu cuenta/.test(await refused(() => svc.add({ name: 'Notas', url, authKind: 'oauth', secret: 'x'.repeat(12) }))), 'sin PUBLIC_URL no se empieza, y add() no acepta oauth');
+      must(/https/.test(await refused(() => svc.oauthStart({ name: 'Notas', url: 'http://ejemplo.com/mcp' }))) && /permisos/i.test(await refused(() => svc.oauthStart({ name: 'Notas', url, scope: 'a "b"' }))) && /identificador/.test(await refused(() => svc.oauthStart({ name: 'Notas', url, clientSecret: 'secreto' }))), 'datos inválidos al empezar');
+      // Empezar: la conexion nace DESACTIVADA, con registro automatico, y devuelve a donde ir y que se va a pedir.
+      const s1 = await svc.oauthStart({ name: 'Notas con cuenta', url, scope: 'notes.read' });
+      const [r1] = await P.db.query<any>('SELECT * FROM connections WHERE id = $1', [s1.id]);
+      must(!s1.done && s1.scopes.join() === 'notes.read' && /automáticamente/.test(s1.how) && hits.includes('POST /register') && Number(r1.enabled) === 0 && r1.auth_kind === 'oauth' && r1.secret.startsWith('v1.') && !/cliente-automatico|notes\.read/.test(r1.secret), `empezar: ${JSON.stringify(s1)}`);
+      must((await svc.oauthStates())[s1.id] === 'sin_autorizar' && /aún no está autorizada/.test((await svc.call(OWNER, s1.id, 'list_notes', {})).text) && !bearer.length, 'sin autorizar no se usa');
+      // La vuelta: identificador falso, cancelada, y de un solo uso.
+      const c1 = consent(s1.authorizeUrl!, 'cliente-automatico-1');
+      must(!(await svc.oauthFinish({ code: c1.code, state: 'f'.repeat(48), iss: base })).ok && !(await svc.oauthFinish({ code: c1.code, state: 'no-es-hex' })).ok, 'una vuelta con otro identificador no hace nada');
+      const denied = await svc.oauthFinish({ state: c1.state, error: 'access_denied' });
+      must(!denied.ok && /cancelaste/.test(denied.why ?? '') && !(await svc.oauthFinish(c1)).ok && !hits.includes('POST /token') && Number((await P.db.query<any>('SELECT enabled FROM connections WHERE id = $1', [s1.id]))[0].enabled) === 0, `cancelar gasta el identificador y no conecta: ${JSON.stringify(denied)}`);
+      // Vencida: mas de 10 minutos entre empezar y volver.
+      const s2 = await svc.oauthStart({ id: s1.id }), c2 = consent(s2.authorizeUrl!, 'cliente-automatico-1');
+      Date.now = () => realNow() + 11 * 60_000; const late = await svc.oauthFinish(c2); Date.now = realNow;
+      must(!late.ok && /venció/.test(late.why ?? '') && !hits.includes('POST /token'), `vencida: ${JSON.stringify(late)}`);
+      // Emisor que no coincide (otra aplicacion intentando colar su codigo): el SDK lo rechaza antes de cambiarlo.
+      const s3 = await svc.oauthStart({ id: s1.id }), c3 = consent(s3.authorizeUrl!, 'cliente-automatico-1');
+      const mix = await svc.oauthFinish({ ...c3, iss: 'https://otro-emisor.invalid' });
+      must(!mix.ok && !hits.includes('POST /token'), `emisor distinto: ${JSON.stringify(mix)}`);
+      // Bien: se cambia el codigo con PKCE, se activa y sus herramientas entran SIN confirmar.
+      const s4 = await svc.oauthStart({ id: s1.id }), c4 = consent(s4.authorizeUrl!, 'cliente-automatico-1'), fin = await svc.oauthFinish(c4);
+      const t4 = await svc.tools(s1.id), [r4] = await P.db.query<any>('SELECT * FROM connections WHERE id = $1', [s1.id]);
+      must(fin.ok && fin.name === 'Notas con cuenta' && Number(r4.enabled) === 1 && (await svc.oauthStates())[s1.id] === 'conectada' && t4.length === 2 && t4.every((t) => !t.confirmed && t.klass === 'escritura') && !/acceso-1|renovar-1/.test(r4.secret) && hits.filter((h) => h === 'POST /register').length === 1, `autorizada: ${JSON.stringify(fin)} · ${t4.length} herramientas`);
+      must(!(await svc.oauthFinish(c4)).ok, 'el mismo retorno no sirve dos veces');
+      // El bloqueo no cambia por venir de OAuth: sin confirmar no corre; la escritura nunca.
+      must((await svc.call(OWNER, s1.id, 'list_notes', {})).status === 'bloqueada' && !bearer.some((b) => b.startsWith('tools/call')), 'recién autorizada, todo sigue bloqueado');
+      await svc.classify(s1.id, 'list_notes', 'lectura'); await svc.classify(s1.id, 'send_note', 'escritura');
+      const ok1 = await svc.call(OWNER, s1.id, 'list_notes', { query: 'hoy' }), w1 = await svc.call(OWNER, s1.id, 'send_note', {});
+      must(ok1.ok && /comprar pan/.test(ok1.text) && bearer.includes('tools/call:acceso-1') && w1.status === 'bloqueada' && !bearer.some((b) => b.startsWith('tools/call') && bearer.indexOf(b) > bearer.indexOf('tools/call:acceso-1')), `lectura confirmada corre con el permiso; la escritura no: ${ok1.text} / ${w1.text}`);
+      // El permiso vencio: se renueva solo y la consulta sale.
+      good.clear(); const ok2 = await svc.call(OWNER, s1.id, 'list_notes', {});
+      must(ok2.ok && bearer.includes('tools/call:acceso-2') && !alertsSent.some((a) => /dejó de tener permiso/.test(a)), `renovación automática: ${ok2.text}`);
+      // Revocado: no hay forma de renovar. Fallo claro, UN aviso, y el panel dice que hay que reconectar.
+      good.clear(); refreshOk = false;
+      const ko1 = await svc.call(OWNER, s1.id, 'list_notes', {}), ko2 = await svc.call(OWNER, s1.id, 'list_notes', {});
+      must(!ko1.ok && /volver a conectar/.test(ko1.text) && !ko1.text.includes('127.0.0.1') && !ko2.ok && alertsSent.filter((a) => /dejó de tener permiso/.test(a)).length === 1 && (await svc.oauthStates())[s1.id] === 'reconectar', `revocada: ${ko1.text} · avisos ${alertsSent.length}`);
+      // Reconectar deja todo como estaba (las clases confirmadas se conservan).
+      refreshOk = true; const s5 = await svc.oauthStart({ id: s1.id }), fin5 = await svc.oauthFinish(consent(s5.authorizeUrl!, 'cliente-automatico-1'));
+      must(fin5.ok && (await svc.oauthStates())[s1.id] === 'conectada' && (await svc.call(OWNER, s1.id, 'list_notes', {})).ok && (await svc.tools(s1.id)).find((t) => t.name === 'list_notes')!.confirmed === 1, 'reconectar');
+      // Cliente creado a mano (lo que pedira Google): no se registra nada y se usa ese identificador.
+      const reg = hits.filter((h) => h === 'POST /register').length;
+      const s6 = await svc.oauthStart({ name: 'Con cliente propio', url, clientId: 'cliente-a-mano', clientSecret: 'secreto-del-cliente-123' });
+      const [r6] = await P.db.query<any>('SELECT secret FROM connections WHERE id = $1', [s6.id]);
+      must(/pegaste/.test(s6.how) && new URL(s6.authorizeUrl!).searchParams.get('client_id') === 'cliente-a-mano' && hits.filter((h) => h === 'POST /register').length === reg && !r6.secret.includes('secreto-del-cliente'), `cliente a mano: ${s6.how}`);
+      must((await svc.oauthFinish(consent(s6.authorizeUrl!, 'cliente-a-mano'))).ok, 'el cliente a mano completa la autorización');
+      // Nada sensible sale al panel; las rutas del panel exigen dispositivo; las publicas no devuelven datos.
+      const ctl = new ConnectionsController(svc, { verify: (ck?: string) => (ck === 'buena' ? {} : null) } as any), rq = (cookie?: string) => ({ headers: { cookie } }) as any;
+      const listed: any = await ctl.list(rq('buena')), txt = JSON.stringify(listed);
+      must(listed.oauthRedirect === REDIRECT && listed.items.find((x: any) => x.id === s1.id).oauth === 'conectada' && !/acceso-\d|renovar-\d|secreto-del-cliente|cliente-a-mano|"secret"/.test(txt), `el panel no recibe permisos ni secretos: ${txt.slice(0, 200)}`);
+      must((await Promise.resolve().then(() => ctl.oauth(rq(), { name: 'X', url })).then(() => 200, (e: any) => e.getStatus?.() ?? 500)) === 401, 'empezar sin dispositivo registrado: 401');
+      const pub = new ConnectionsPublicController(svc, ccfg), doc: any = pub.client();
+      must(doc.client_id === 'https://avatar.invalid/api/conexiones/cliente.json' && doc.redirect_uris[0] === REDIRECT && doc.token_endpoint_auth_method === 'none' && !('client_secret' in doc), `documento público del cliente: ${JSON.stringify(doc)}`);
+      must((() => { try { new ConnectionsPublicController(svc, noUrl).client(); return false; } catch { return true; } })(), 'sin https no hay documento público');
+      let went = ''; await pub.callback('x', 'f'.repeat(48), undefined, undefined, { redirect: (_c: number, to: string) => { went = to; } } as any);
+      must(/^\/dueno\.html\?conexion=error&motivo=.*#conexiones$/.test(went) && !/acceso|codigo/.test(went), `la vuelta solo redirige al panel: ${went}`);
+      must(safeAuthorizeUrl(new URL('http://malo.example/authorize')) === undefined && safeAuthorizeUrl(new URL('javascript:alert(1)')) === undefined && !!safeAuthorizeUrl(new URL('https://app.example/authorize')) && !sameState('a', 'b') && !sameState(undefined, undefined) && sameState('abc', 'abc'), 'direcciones de autorización y comparación del identificador');
+      // Desconectar borra tambien los permisos.
+      must(await svc.remove(s1.id) && !(await P.db.query('SELECT id FROM connections WHERE id = $1', [s1.id])).length, 'desconectar');
+    } finally {
+      Date.now = realNow; globalThis.fetch = simFetch; srv.close(); await P.db.query('DELETE FROM connections'); await P.db.query('DELETE FROM connection_tools'); await P.db.query('DELETE FROM connection_log');
+    }
+    return 'nace desactivada y sin permisos; PKCE, recurso y retorno comprobados; identificador de un solo uso que vence a los 10 min; emisor distinto rechazado; permisos y secretos cifrados que no llegan al panel; se renuevan solos; revocados → un aviso y «reconectar»; registro automático o cliente a mano; todo sigue bloqueado hasta confirmarlo como lectura';
+  });
+
+
   await check('Conexiones por voz: solo el dueño las ve, lo leído va como dato y revisado, lo lento sigue en segundo plano y nada de lo leído sale hacia el taller ni hacia otra aplicación', async () => {
     const { ConnectionsService, CX_PREFIX, slimSchema } = await import('../connections/connections.service');
     const { carries, remember } = await import('../connections/leak');

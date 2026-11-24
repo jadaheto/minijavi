@@ -81,6 +81,9 @@ button:disabled, button.small:disabled { background: var(--raised); border-color
 button.small { padding: 6px 12px; min-height: 34px; font-size: .9rem; background: var(--raised); border-color: var(--line); color: var(--ink); white-space: nowrap; }
 button.small:hover { border-color: var(--ink-3); } button.small:active { background: var(--line); }
 button.small[type="submit"], button.small.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+/* Un enlace que sale del panel con aspecto de botón (ir a autorizar una conexión). */
+a.button { display: inline-flex; align-items: center; min-height: 34px; padding: 6px 12px; border-radius: var(--radius-sm); font: 600 .9rem/1.4 var(--font-body); text-decoration: none; background: var(--accent); border: 1px solid var(--accent); color: var(--accent-ink); white-space: nowrap; }
+a.button:hover { border-color: var(--ink); } a.button[hidden] { display: none; }
 button.small.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 button.danger, button.small.danger { background: var(--bad-soft); border-color: var(--bad-soft); color: var(--bad-ink); }
 button.danger:hover, button.small.danger:hover { border-color: var(--bad); }
