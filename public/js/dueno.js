@@ -493,7 +493,7 @@ async function loadConnections() {
   $('conn-count').textContent = `(${items.length})`;
   $('conn-form').hidden = !!d.problem;
   $('conn-note').textContent = d.problem ? `Las conexiones están apagadas: ${d.problem}.`
-    : 'Solo existen en modo dueño y solo LEEN. Cada herramienta de un conector empieza bloqueada: mira qué hace y confírmala como lectura para poder usarla. Lo que escribe, publica o borra no se ejecuta nunca, lo pida quien lo pida. Lo que se lea pasa por el modelo para resumirlo.';
+    : 'Solo existen en modo dueño y solo LEEN. Cada herramienta de un conector empieza bloqueada: mira qué hace y confírmala como lectura para poder usarla. Lo que escribe, publica o borra no se ejecuta nunca, lo pida quien lo pida. ' + (d.voice ? 'En modo dueño el avatar usa por voz las que confirmaste como lectura ("busca en mis notas…"); lo que lee se revisa antes de entregárselo al modelo, y si una consulta tarda te avisa cuando llega.' : 'El avatar NO las usa por voz (CONEXION_VOZ=0): solo se prueban aquí.');
   $('conn-list').replaceChildren(...items.map((c) => {
     const msg = el('small', { className: 'danger-text' });
     const pending = c.tools.filter((t) => !t.confirmed && !t.gone).length, reads = c.tools.filter((t) => t.confirmed && t.klass === 'lectura' && !t.gone).length;

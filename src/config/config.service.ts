@@ -195,6 +195,10 @@ export class ConfigService {
   readonly tallerNoProgress: number;
   /** Clave maestra de la boveda de conexiones (VAULT_KEY, minimo 32 caracteres). Vacia = conexiones apagadas. */
   readonly vaultKey: string;
+  /** Conexiones por voz (A2a): si el avatar las usa en modo dueño, cuanto espera una consulta antes de seguir en segundo plano, y cuantas herramientas se le ofrecen al modelo. */
+  readonly connectionVoice: boolean;
+  readonly connectionWaitMs: number;
+  readonly connectionVoiceMax: number;
   readonly tallerGateSeconds: number;
   /** Reglas de diseño en cada encargo y comprobacion «diseño» al cerrar (TALLER_DISENO=0 lo apaga). */
   readonly tallerDesign: boolean;
@@ -388,6 +392,9 @@ export class ConfigService {
     this.tallerMaxPasses = Math.min(10, int('TALLER_MAX_PASSES', 4, 1));
     this.tallerNoProgress = int('TALLER_NO_PROGRESS', 2, 2);
     this.vaultKey = str('VAULT_KEY').length >= 32 ? str('VAULT_KEY') : '';
+    this.connectionVoice = process.env.CONEXION_VOZ !== '0';
+    this.connectionWaitMs = Math.min(20, int('CONEXION_ESPERA_S', 5, 1)) * 1000;
+    this.connectionVoiceMax = Math.min(60, int('CONEXION_VOZ_MAX', 24, 1));
     this.tallerGateSeconds = int('TALLER_GATE_SECONDS', 300, 5);
     this.tallerDesign = process.env.TALLER_DISENO !== '0';
     this.npmBin = str('NPM_BIN', this.tallerUser ? '/usr/local/bin/npm' : 'npm');

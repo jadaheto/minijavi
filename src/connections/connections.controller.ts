@@ -19,7 +19,7 @@ export class ConnectionsController {
     this.require(req);
     if (this.conns.problem) return { problem: this.conns.problem, items: [], log: [] };
     const items = await this.conns.list();
-    return { problem: '', items: await Promise.all(items.map(async (c) => ({ ...c, tools: (await this.conns.tools(c.id)).map(({ schema, fingerprint, ...t }) => ({ ...t, params: paramNames(schema) })) }))), log: await this.conns.recent(60) };
+    return { problem: '', voice: this.conns.voiceOn, items: await Promise.all(items.map(async (c) => ({ ...c, tools: (await this.conns.tools(c.id)).map(({ schema, fingerprint, ...t }) => ({ ...t, params: paramNames(schema) })) }))), log: await this.conns.recent(60) };
   }
 
   @Post()

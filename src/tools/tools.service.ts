@@ -33,10 +33,12 @@ export interface ToolResult { text: string; scene?: string; reaction?: string; c
   /** Empezo o termino una demostracion: el navegador muestra u oculta el letrero. */
   demo?: boolean;
   /** El texto trae contenido escrito por terceros (formulario, llamadas, Plane, informes): en ese turno no se ejecutan acciones. */
-  untrusted?: boolean; }
+  untrusted?: boolean;
+  /** El resultado es contenido leido de esta conexion (su identificador). */ cx?: string; }
 
 export { asData } from './data';
 import { asData } from './data';
+import { CX_PREFIX, ConnectionsService } from '../connections/connections.service';
 import { BriefService } from '../brief/brief.service';
 import { DemoDocsService } from '../demo/demo-docs.service';
 import { weatherNow } from './weather';
@@ -94,6 +96,8 @@ export interface ToolContext { /** Interesados registrados en esta conversacion 
   demo?: DemoState;
   /** Para trabajos que terminan despues del turno (una imagen generada): deja un aviso que el avatar cuenta cuando pueda. */
   notify?: (note: { text: string; image?: GalleryItem; images?: GalleryItem[] }) => void;
+  /** Se llama con lo que se leyo de una conexion (tambien cuando llega tarde), para que la sesion sepa que no debe salir hacia otros lados. */
+  cxRead?: (slug: string, raw: string) => void;
   /** La sesion es del dueño (para herramientas publicas que le muestran mas a Javier, como los casos ocultos). */
   owner?: boolean; /** De donde viene la conversacion: 'voz' (sitio) o 'llamada'. */ source?: string; }
 interface Tool {
@@ -117,7 +121,7 @@ export class ToolsService {
   private readonly tools: Record<string, Tool>;
   /** Herramientas locales que solo existen en sesiones del dueño. */
   private readonly ownerTools: Record<string, Tool>;
-  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService, news?: NewsService, markets?: PolymarketService, panels?: PanelsService, maps?: MapsService, newsCo?: ColombiaNewsService, brief?: BriefService, demos?: DemoDocsService) {
+  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService, news?: NewsService, markets?: PolymarketService, panels?: PanelsService, maps?: MapsService, newsCo?: ColombiaNewsService, brief?: BriefService, demos?: DemoDocsService, private readonly connections?: ConnectionsService) {
     this.tools = {
       hora_actual: {
         description: 'Devuelve la fecha y la hora actuales. Usala cuando pregunten que hora es o que dia es hoy.',
@@ -831,10 +835,18 @@ export class ToolsService {
     const pub = Object.entries(this.tools).map(([name, t]) => ({ type: 'function', function: { name, description: t.description, parameters: t.parameters } }));
     if (!owner) return pub;
     const priv = Object.entries(this.ownerTools).map(([name, t]) => ({ type: 'function', function: { name, description: t.description, parameters: t.parameters } }));
-    return [...pub, ...priv, ...(await this.plane.definitions())];
+    return [...pub, ...priv, ...(await this.plane.definitions()), ...((await this.connections?.voiceDefinitions()) ?? [])];
   }
   async run(name: string, rawArgs: string, owner: boolean, ctx: ToolContext = { origin: '' }): Promise<ToolResult> {
     if (name.startsWith(PLANE_PREFIX)) return owner ? { text: asData('Plane', await this.plane.call(name, rawArgs)), untrusted: true } : { text: 'Error: esa herramienta no existe.' }; // doble control
+    if (name.startsWith(CX_PREFIX)) {
+      // Conexiones: solo en sesiones del dueño (doble control; `ask` y `call` lo vuelven a exigir). Lo leido es de terceros.
+      if (!owner || !this.connections) return { text: 'Error: esa herramienta no existe.' };
+      const late = ctx.notify && ((o: { text: string; slug: string; read: boolean; raw?: string }) => { if (o.raw) ctx.cxRead?.(o.slug, o.raw); ctx.notify!({ text: `(Aviso del sistema: llegó la consulta que Javier pidió y que estaba tardando.)\n${o.text}` }); });
+      const out = await this.connections.ask({ owner, via: ctx.source === 'llamada' ? 'llamada' : 'voz' }, name, rawArgs, late || undefined);
+      if (out.raw) ctx.cxRead?.(out.slug, out.raw);
+      return { text: out.text, untrusted: out.read, cx: out.read ? out.slug : undefined };
+    }
     const tool = this.tools[name] ?? (owner ? this.ownerTools[name] : undefined);
     ctx = { ...ctx, owner }; // lo decide el servidor, no quien llama
     if (!tool) return { text: `Error: la herramienta ${name} no existe.` };
