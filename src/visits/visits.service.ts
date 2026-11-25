@@ -13,6 +13,8 @@ export interface Visit {
 export interface NewVisit {
   kind: 'sitio' | 'llamada' | 'whatsapp'; seconds: number; turns: number; interested: boolean; demoOffered: boolean; demoDone: boolean;
   leads: number[];   // numeros de los interesados que se registraron en la conversacion
+  /** Numero desde el que escribieron o llamaron: sirve para unir la visita con un interesado que ya existia. NO se guarda. */
+  phone?: string;
   cases: boolean;    // se le conto algun caso del portafolio con la herramienta
   interest?: string; summary?: string; asked?: unknown; objections?: unknown;
 }
@@ -56,8 +58,12 @@ export class VisitsService {
     try {
       const interest = INTERESTS.includes(v.interest as any) ? v.interest! : '';
       const asked = list(v.asked, 4), objections = list(v.objections, 3), summary = clip(v.summary, 600);
-      await this.db.query('INSERT INTO visits (at, kind, seconds, turns, interested, demo_offered, demo_done, lead, cases, interest, summary, asked, objections) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)',
-        [new Date().toISOString(), v.kind, Math.round(v.seconds), v.turns, v.interested ? 1 : 0, v.demoOffered ? 1 : 0, v.demoDone ? 1 : 0, v.leads.length ? 1 : 0, v.cases ? 1 : 0, interest, summary, asked.join(' | '), objections.join(' | ')]);
+      // A que interesados pertenece (para la calificacion): los que se registraron aqui y, si se sabe el numero, los que ya
+      // lo habian dejado antes. Se guardan solo sus numeros de interesado; el contacto no queda en la visita.
+      const known = v.phone ? await this.leads.idsForContact(v.phone).catch(() => [] as number[]) : [];
+      const linked = [...new Set([...v.leads, ...known].map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, 10);
+      await this.db.query('INSERT INTO visits (at, kind, seconds, turns, interested, demo_offered, demo_done, lead, cases, interest, summary, asked, objections, lead_ids) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)',
+        [new Date().toISOString(), v.kind, Math.round(v.seconds), v.turns, v.interested ? 1 : 0, v.demoOffered ? 1 : 0, v.demoDone ? 1 : 0, v.leads.length ? 1 : 0, v.cases ? 1 : 0, interest, summary, asked.join(' | '), objections.join(' | '), linked.join(',')]);
       if (!v.interested || !this.cfg.visitReports) return;
       const err = await this.leads.telegram(this.report({ ...v, interest, summary, asked, objections }));
       if (err && err !== 'Telegram no está configurado') this.log.warn(`informe de visita: ${err}`);

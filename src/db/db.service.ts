@@ -86,6 +86,8 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS wa_messages_phone ON wa_messages (phone, id)`,
   `CREATE TABLE IF NOT EXISTS wa_chats (phone TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', last_at TEXT NOT NULL DEFAULT '', open_at TEXT NOT NULL DEFAULT '',
      turns INTEGER NOT NULL DEFAULT 0, leads TEXT NOT NULL DEFAULT '', cases INTEGER NOT NULL DEFAULT 0)`,
+  // Entrega y lectura de lo que se le envia a cada numero por WhatsApp (avisos `statuses` de Meta): lo ultimo de cada tipo.
+  `CREATE TABLE IF NOT EXISTS wa_delivery (phone TEXT PRIMARY KEY, sent_at TEXT NOT NULL DEFAULT '', delivered_at TEXT NOT NULL DEFAULT '', read_at TEXT NOT NULL DEFAULT '', failed_at TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS leads_created ON leads (created_at)`,
   `CREATE INDEX IF NOT EXISTS conversations_at ON conversations (at)`,
   `CREATE INDEX IF NOT EXISTS jobs_at ON jobs (at)`,
@@ -177,6 +179,9 @@ export class DbService implements OnModuleDestroy {
     else if (!(await this.raw<{ name: string }>('SELECT name FROM pragma_table_info($1)', ['leads'])).some((c) => c.name === 'consent_at')) {
       await this.raw(`ALTER TABLE leads ADD COLUMN consent_at TEXT NOT NULL DEFAULT ''`); await this.raw(`ALTER TABLE leads ADD COLUMN consent_source TEXT NOT NULL DEFAULT ''`);
     }
+    // Calificacion (etapa 3a): a que interesados pertenece cada visita. Solo sus numeros, nunca su contacto.
+    if (pg) await this.raw(`ALTER TABLE visits ADD COLUMN IF NOT EXISTS lead_ids TEXT NOT NULL DEFAULT ''`);
+    else if (!(await this.raw<{ name: string }>('SELECT name FROM pragma_table_info($1)', ['visits'])).some((c) => c.name === 'lead_ids')) await this.raw(`ALTER TABLE visits ADD COLUMN lead_ids TEXT NOT NULL DEFAULT ''`);
     // Cuando pidio precio (etapa 2c). '' = no lo ha pedido.
     if (!pg && !(await this.raw<{ name: string }>('SELECT name FROM pragma_table_info($1)', ['leads'])).some((c) => c.name === 'quote_at')) await this.raw(`ALTER TABLE leads ADD COLUMN quote_at TEXT NOT NULL DEFAULT ''`);
     if (!pg) { // SQLite de antes: la tabla leads ya existia sin la columna `source`

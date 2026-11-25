@@ -5,6 +5,7 @@ import { DbService } from '../db/db.service';
 import { ApprovalsService } from '../policy/approvals.service';
 import { PolicyService } from '../policy/policy.service';
 import { WhatsAppService, toPhone } from '../whatsapp/whatsapp.service';
+import { contactKey } from '../security/optout.service';
 
 export const INTERESTS = ['chatbots', 'agentes_de_voz', 'bots_de_whatsapp', 'automatizacion', 'dashboards', 'despliegue_y_servidores', 'desarrollo_de_software', 'otro'] as const;
 export const STATUSES = ['nuevo', 'contactado', 'en_conversacion', 'cliente', 'descartado'] as const;
@@ -82,6 +83,13 @@ export class LeadsService {
   }
 
   async get(id: number): Promise<Lead | undefined> { return (await this.db.query<Lead>('SELECT * FROM leads WHERE id = $1', [id]))[0]; }
+  /** Los interesados que dejaron ese mismo contacto (para unir una conversacion posterior con su interesado). */
+  async idsForContact(contact: string): Promise<number[]> {
+    const k = contactKey(contact, this.cfg.whatsappDefaultCountry); if (!k) return [];
+    const rows = await this.db.query<{ id: number; contact: string }>('SELECT id, contact FROM leads');
+    return rows.filter((r) => contactKey(r.contact, this.cfg.whatsappDefaultCountry) === k).map((r) => Number(r.id));
+  }
+
   list(limit = 200): Promise<Lead[]> { return this.db.query<Lead>('SELECT * FROM leads ORDER BY id DESC LIMIT $1', [limit]); }
   async update(id: number, patch: { status?: string; notes?: string }): Promise<boolean> {
     const cur = await this.get(id); if (!cur) return false;

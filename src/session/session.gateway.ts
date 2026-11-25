@@ -1125,7 +1125,7 @@ export class SessionGateway implements OnGatewayConnection {
     const clean = (m: any) => String(m.content).replace(TAG_ANY, '').replace(/\n\n\(Nota del sistema:[\s\S]*$/, '').trim();
     // "Se le ofrecio la demostracion": el avatar la nombro en algun momento (o llego a hacerla).
     const demoOffered = s.demos > 0 || said.some((m) => m.role === 'assistant' && /demostraci[oó]n|te muestre|\bdemo\b/i.test(String(m.content)));
-    const base = { kind: s.callerPhone ? 'llamada' as const : 'sitio' as const, seconds, turns: s.userTurns, demoOffered, demoDone: s.demos > 0, leads: s.leadIds, cases: s.cases > 0 };
+    const base = { kind: s.callerPhone ? 'llamada' as const : 'sitio' as const, seconds, turns: s.userTurns, demoOffered, demoDone: s.demos > 0, leads: s.leadIds, cases: s.cases > 0, ...(s.callerPhone ? { phone: s.callerPhone } : {}) };
     // Si dejo sus datos y luego pidio que no la contacten, esos contactos quedan marcados (las llamadas lo revisan en calls.controller).
     if (s.leadIds.length && !s.callerPhone) void this.checkOptOut(s, said.filter((m) => m.role === 'user').map(clean).join('\n'));
     const sure = s.leadIds.length > 0 || s.demos > 0; // dejo datos o hizo la demostracion: hubo interes aunque el analisis falle

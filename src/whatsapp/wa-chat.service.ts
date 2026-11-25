@@ -88,10 +88,31 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy() { clearInterval(this.sweeper); for (const p of this.pending.values()) clearTimeout(p.timer); }
 
   /** Un cambio `messages` del webhook de Meta (ya con la firma comprobada). Vuelve enseguida; la respuesta sale despues. */
+  /**
+   * Avisos de entrega de Meta (`statuses`, documentacion de webhooks leida el 2026-11-24): por cada mensaje que salio llegan
+   * `sent`, `delivered`, `read` o `failed`, con `timestamp` (segundos) y `recipient_id` (el numero). Se guarda lo ultimo de
+   * cada tipo por numero, para la calificacion de interesados (lo leyo y no respondio; el numero no existe en WhatsApp).
+   * No se guarda el texto de nada. Nunca lanza.
+   */
+  async onStatuses(statuses: any[]): Promise<void> {
+    const COL: Record<string, string> = { sent: 'sent_at', delivered: 'delivered_at', read: 'read_at', failed: 'failed_at' };
+    for (const st of statuses.slice(0, 50)) {
+      try {
+        const phone = String(st?.recipient_id ?? '').replace(/\D/g, ''), col = COL[String(st?.status)], t = Number(st?.timestamp) * 1000;
+        if (!col || phone.length < 8 || phone.length > 15 || !Number.isFinite(t) || t <= 0) continue;
+        const at = new Date(t).toISOString(), error = col === 'failed_at' ? String(st?.errors?.[0]?.title ?? st?.errors?.[0]?.code ?? '').replace(/\s+/g, ' ').slice(0, 120) : '';
+        const cur = (await this.db.query<Record<string, string>>('SELECT * FROM wa_delivery WHERE phone = $1', [phone]))[0];
+        if (!cur) await this.db.query(`INSERT INTO wa_delivery (phone, ${col}, error) VALUES ($1, $2, $3)`, [phone, at, error]);
+        else if (at > String(cur[col] ?? '')) await this.db.query(`UPDATE wa_delivery SET ${col} = $1, error = $2 WHERE phone = $3`, [at, error || cur.error || '', phone]);
+      } catch (e) { this.log.warn(`aviso de entrega de WhatsApp: ${(e as Error).message}`); }
+    }
+  }
+
   onWebhook(value: any) {
     if (!this.enabled) return;
     // El webhook es de la app: pueden llegar avisos de otros numeros de la misma app. Solo se atiende el propio.
     if (value?.metadata?.phone_number_id !== this.cfg.whatsappPhoneNumberId) return;
+    if (Array.isArray(value.statuses) && !this.biz?.on) void this.onStatuses(value.statuses);
     const name = String(value.contacts?.[0]?.profile?.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 60);
     for (const m of value.messages ?? []) {
       const phone = String(m?.from ?? value.contacts?.[0]?.wa_id ?? '').replace(/\D/g, '');
@@ -254,7 +275,7 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
     // Cierre: se revisa toda la conversacion (sin Jev es la unica revision de los mensajes sin palabras de rechazo).
     void this.optout.check(rows.filter((r) => r.role !== 'assistant').map((r) => r.text).join('\n'), chat.phone, 'chat de WhatsApp', true);
     const leadIds = chat.leads ? chat.leads.split(',').map(Number).filter(Boolean) : [];
-    const base = { kind: 'whatsapp' as const, seconds, turns: Number(chat.turns), demoOffered: false, demoDone: false, leads: leadIds, cases: Number(chat.cases) > 0 };
+    const base = { kind: 'whatsapp' as const, seconds, turns: Number(chat.turns), demoOffered: false, demoDone: false, leads: leadIds, cases: Number(chat.cases) > 0, phone: chat.phone };
     if (!this.cfg.visitReports) return this.visits.add({ ...base, interested: leadIds.length > 0 });
     try {
       const d = await this.visits.analyze(rows.map((r) => `${r.role === 'assistant' ? 'Avatar' : 'Persona'}: ${r.text}`).join('\n'));

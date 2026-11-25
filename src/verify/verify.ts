@@ -2979,7 +2979,7 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     const src = (f: string) => readFileSync(resolve(__dirname, `../../${f}`), 'utf8');
     const NOW = Date.parse('2026-11-24T15:00:00-05:00'), ago = (days: number) => new Date(NOW - days * 86_400_000).toISOString();
     // Datos de mentira: la calificación solo LEE, así que se le entrega una base que responde por tabla.
-    const data: Record<string, any[]> = { actions: [], wa_messages: [], demos: [], demo_usage: [], avatar_requests: [] };
+    const data: Record<string, any[]> = { actions: [], wa_messages: [], demos: [], demo_usage: [], avatar_requests: [], visits: [], wa_delivery: [] };
     const asked: string[] = [], fakeDb: any = { query: async (sql: string) => { asked.push(sql); const t = /FROM (\w+)/.exec(sql)?.[1] ?? ''; if (!/^\s*SELECT/i.test(sql)) throw new Error('la calificación intentó escribir'); return data[t] ?? []; } };
     const scfg: any = Object.assign(Object.create(Object.getPrototypeOf(P.cfg)), P.cfg, { whatsappDefaultCountry: '57' });
     const sc = new ScoringService(scfg, fakeDb, P.settings); sc.now = () => new Date(NOW);
@@ -2989,7 +2989,7 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     // La tabla de fábrica es la aprobada por Javier.
     const t0 = sc.table(), pts = Object.fromEntries(t0.signals.map((s: any) => [s.id, s.points]));
     must(t0.base === 40 && t0.hot === 80 && t0.warm === 50 && pts.voz === 15 && pts.necesidad === 10 && pts.cotizacion === 15 && pts.documento === 15 && pts.demo_abierta === 10 && pts.respondio === 10 && pts.pago_avatar === 20 && pts.telefono === -25 && pts.sin_respuesta === -15 && pts.demo_sin_abrir === -20 && pts.pago_pendiente === -30 && pts.sin_avance === -30 && pts.inactivo === -20
-      && t0.days.dias_whatsapp === 3 && t0.days.dias_demo === 3 && t0.days.dias_pago === 7 && t0.days.dias_avance === 10 && t0.days.dias_inactivo === 14 && SIGNALS.length === 14 && SCORE_DAYS.length === 5, `tabla de fábrica: ${JSON.stringify(t0).slice(0, 300)}`);
+      && t0.days.dias_whatsapp === 3 && t0.days.dias_demo === 3 && t0.days.dias_pago === 7 && t0.days.dias_avance === 10 && t0.days.dias_inactivo === 14 && pts.demo_hecha === 15 && pts.volvio === 10 && pts.leyo === -10 && pts.no_interesado === -50 && pts.sin_documento === -10 && SIGNALS.length === 19 && SCORE_DAYS.length === 5, `tabla de fábrica: ${JSON.stringify(t0).slice(0, 300)}`);
     // Recién llegado por formulario, sin nada más: la base, tibio... no: 40 es frío (menos de 50).
     const a = await one(lead(1)); must(a.score === 40 && a.level === 'frio' && a.items.length === 0, `recién llegado: ${JSON.stringify(a)}`);
     // Por voz, con empresa y necesidad, y pidió precio: 40 + 15 + 10 + 15 = 80 → caliente, con su desglose y fechas.
@@ -3023,6 +3023,57 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     const old = await one(lead(11, { created_at: ago(40) })); must(ids(old) === 'inactivo,inactivo_largo,sin_avance' && old.score === 0 && old.level === 'frio', `viejo e inactivo: ${JSON.stringify(old)}`);
     data.wa_messages = [{ phone: '573005550012', at: ago(2) }]; data.actions = [{ lead_id: 12, contact: '573005550012', kind: 'plantilla_bienvenida', status: 'enviada', at: ago(39) }];
     const back = await one(lead(12, { created_at: ago(40), status: 'contactado' })); must(ids(back) === 'respondio' && back.lastActivity.slice(0, 10) === ago(2).slice(0, 10), `actividad reciente quita lo de inactivo: ${JSON.stringify(back)}`);
+    // ---- Entrega 2: señales que salen de unir cada conversación con su interesado y de los avisos de entrega de Meta ----
+    data.actions = []; data.wa_messages = []; data.demos = []; data.demo_usage = []; data.avatar_requests = [];
+    const visit = (leadIds: string, daysAgo: number, o: any = {}) => ({ at: ago(daysAgo), lead_ids: leadIds, interested: 1, demo_done: 0, objections: '', ...o });
+    // Hizo la demostración (+15) y no subió documento (−10); si subió, suma el documento y no resta.
+    data.visits = [visit('20', 1, { demo_done: 1 }), visit('999', 1, { demo_done: 1 })];
+    const dm = await one(lead(20)); must(ids(dm) === 'demo_hecha,sin_documento' && dm.score === 45, `demostración sin documento: ${JSON.stringify(dm)}`);
+    data.demos = [{ id: 'demo-20', lead_id: 20, status: 'lista', created_at: ago(1) }]; must(ids(await one(lead(20))) === 'demo_hecha,documento', 'demostración con documento');
+    data.demos = [];
+    // Volvió otro día: dos conversaciones en días distintos, o una conversación y un mensaje de WhatsApp otro día.
+    data.visits = [visit('21,22', 4), visit('21', 1)];
+    must(ids(await one(lead(21, { created_at: ago(4), status: 'contactado' }))) === 'volvio' && ids(await one(lead(22, { created_at: ago(4), status: 'contactado' }))) === '', 'volvió otro día (y el que solo vino una vez, no)');
+    data.wa_messages = [{ phone: '573005550022', at: ago(2) }]; must(ids(await one(lead(22, { created_at: ago(4), status: 'contactado' }))) === 'volvio', 'un mensaje otro día también cuenta como volver');
+    data.wa_messages = [];
+    // No le interesa: la conversación MÁS RECIENTE terminó sin interés y con una objeción. Sin objeción, o si después volvió con interés, no.
+    data.visits = [visit('23', 5), visit('23', 1, { interested: 0, objections: 'le pareció caro' })];
+    const ni = await one(lead(23, { created_at: ago(5), status: 'contactado' })); must(ids(ni) === 'no_interesado,volvio' && ni.score === 0, `no le interesa: ${JSON.stringify(ni)}`);
+    data.visits[1].objections = ''; must(ids(await one(lead(23, { created_at: ago(5), status: 'contactado' }))) === 'volvio', 'sin objeción no se marca como no interesado');
+    data.visits = [visit('23', 5, { interested: 0, objections: 'caro' }), visit('23', 1)]; must(ids(await one(lead(23, { created_at: ago(6), status: 'contactado' }))) === 'volvio', 'si la última conversación fue con interés, no cuenta');
+    data.visits = [visit('23', 0, { interested: 0, objections: 'caro' })]; must(ids(await one(lead(23, { created_at: ago(0.01) }))) === '', 'la misma conversación en que se registró no lo marca');
+    data.visits = [];
+    // Lo leyó y no respondió (−10, además del −15): solo con el aviso de lectura posterior a la plantilla; si respondió, nada.
+    data.actions = [{ lead_id: 24, contact: '573005550024', kind: 'plantilla_bienvenida', status: 'enviada', at: ago(4) }];
+    data.wa_delivery = [{ phone: '573005550024', delivered_at: ago(4), read_at: ago(3.9), failed_at: '' }];
+    const rd = await one(lead(24, { created_at: ago(4) })); must(ids(rd) === 'leyo,sin_respuesta' && rd.score === 15, `lo leyó y no respondió: ${JSON.stringify(rd)}`);
+    data.wa_delivery[0].read_at = ago(9); must(ids(await one(lead(24, { created_at: ago(4) }))) === 'sin_respuesta', 'una lectura anterior a la plantilla no cuenta');
+    data.wa_delivery[0].read_at = ago(3.9); data.wa_messages = [{ phone: '573005550024', at: ago(3) }]; must(ids(await one(lead(24, { created_at: ago(4) }))) === 'respondio', 'si respondió no resta por leerlo');
+    data.wa_messages = []; data.actions = [];
+    // WhatsApp no pudo entregar: contacto no válido. Si después sí entregó, no.
+    data.wa_delivery = [{ phone: '573005550025', delivered_at: '', read_at: '', failed_at: ago(1) }]; must(ids(await one(lead(25))) === 'telefono', 'WhatsApp no pudo entregar');
+    data.wa_delivery[0].delivered_at = ago(0.5); must(ids(await one(lead(25))) === '', 'si después entregó, el número sirve');
+    data.wa_delivery = [];
+    // En la base de verdad: la visita guarda a qué interesados pertenece (los que se registraron y los de ese número), sin el número.
+    const { VisitsService } = await import('../visits/visits.service'); const { WaChatService } = await import('../whatsapp/wa-chat.service');
+    await P.db.query('DELETE FROM visits'); await P.db.query('DELETE FROM wa_delivery');
+    const quiet = { warn: () => undefined, log: () => undefined };
+    await (VisitsService.prototype.add as any).call({ db: P.db, cfg: { visitReports: false }, leads: { idsForContact: async (c: string) => (c === '573005550030' ? [31, 30] : []) }, log: quiet }, { kind: 'whatsapp', seconds: 60, turns: 3, interested: true, demoOffered: false, demoDone: false, leads: [30], cases: false, phone: '573005550030' });
+    await (VisitsService.prototype.add as any).call({ db: P.db, cfg: { visitReports: false }, leads: { idsForContact: async () => { throw new Error('caída'); } }, log: quiet }, { kind: 'sitio', seconds: 60, turns: 3, interested: false, demoOffered: false, demoDone: false, leads: [], cases: false });
+    const vrows = await P.db.query<any>('SELECT * FROM visits ORDER BY id');
+    must(vrows.length === 2 && vrows[0].lead_ids === '30,31' && Number(vrows[0].lead) === 1 && vrows[1].lead_ids === '' && !JSON.stringify(vrows).includes('573005550030'), `visitas unidas a su interesado: ${JSON.stringify(vrows.map((v: any) => v.lead_ids))}`);
+    // Avisos de entrega de Meta: se guarda lo último de cada tipo por número; uno viejo no pisa uno nuevo; lo raro se ignora.
+    const onSt = (list: any[]) => (WaChatService.prototype.onStatuses as any).call({ db: P.db, log: quiet }, list);
+    const ts = (daysAgo: number) => String(Math.floor((Date.now() - daysAgo * 86_400_000) / 1000));
+    await onSt([{ id: 'wamid.1', status: 'sent', timestamp: ts(2), recipient_id: '573005550040' }, { id: 'wamid.1', status: 'delivered', timestamp: ts(2), recipient_id: '573005550040' }, { id: 'wamid.1', status: 'read', timestamp: ts(1), recipient_id: '573005550040' }]);
+    await onSt([{ id: 'wamid.0', status: 'read', timestamp: ts(5), recipient_id: '573005550040' }, { id: 'x', status: 'inventado', timestamp: ts(1), recipient_id: '573005550040' }, { id: 'y', status: 'read', timestamp: 'nada', recipient_id: '573005550040' }, { id: 'z', status: 'read', timestamp: ts(1), recipient_id: 'abc' }]);
+    await onSt([{ id: 'wamid.2', status: 'failed', timestamp: ts(1), recipient_id: '573005550041', errors: [{ code: 131026, title: 'Message undeliverable' }] }]);
+    const dl = await P.db.query<any>('SELECT * FROM wa_delivery ORDER BY phone');
+    must(dl.length === 2 && dl[0].phone === '573005550040' && dl[0].sent_at && dl[0].delivered_at && Date.now() - Date.parse(dl[0].read_at) < 1.2 * 86_400_000 && dl[1].failed_at && dl[1].error === 'Message undeliverable', `avisos de entrega: ${JSON.stringify(dl)}`);
+    const wsrc = src('src/whatsapp/wa-chat.service.ts');
+    must(/Array\.isArray\(value\.statuses\)/.test(wsrc) && /phone: chat\.phone/.test(wsrc) && /phone: s\.callerPhone/.test(src('src/session/session.gateway.ts')) && !/\.text\b|\.body\b/.test(wsrc.slice(wsrc.indexOf('async onStatuses'), wsrc.indexOf('onWebhook(value'))), 'el webhook debe registrar los avisos de entrega sin guardar textos');
+    await P.db.query('DELETE FROM visits'); await P.db.query('DELETE FROM wa_delivery');
+
     // Quien no se califica: no contactar, cliente, descartado.
     const nc = await one(lead(13, { source: 'voz' }), true), cl = await one(lead(14, { status: 'cliente' })), ds = await one(lead(15, { status: 'descartado' }));
     must(nc.score === null && nc.level === 'no_contactar' && nc.items.length === 0 && cl.score === null && cl.level === 'cliente' && ds.level === 'descartado', 'no contactar, cliente y descartado quedan fuera del puntaje');
@@ -3033,7 +3084,7 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     await P.settings.set('puntos.voz', 15); await P.settings.set('puntos.caliente', 80);
     // Muchos a la vez: unas pocas consultas en total, no una por interesado; y solo lee.
     asked.length = 0; const many = await sc.forLeads(Array.from({ length: 60 }, (_, k) => lead(100 + k)));
-    must(many.size === 60 && asked.length === 5 && asked.every((q) => /^\s*SELECT/i.test(q)), `60 interesados con ${asked.length} consultas`);
+    must(many.size === 60 && asked.length === 7 && asked.every((q) => /^\s*SELECT/i.test(q)), `60 interesados con ${asked.length} consultas`);
     // Una fuente caída no tumba la calificación.
     const flaky: any = { query: async (sql: string) => { if (/FROM demos/.test(sql)) throw new Error('caída'); return []; } };
     const sc2 = new ScoringService(scfg, flaky, P.settings); sc2.now = () => new Date(NOW);
@@ -3041,7 +3092,7 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     // No actúa: el servicio no envía, no cambia estados ni toca la puerta de acciones; el panel lo recibe con cada interesado.
     const code = src('src/scoring/scoring.service.ts'), oc = src('src/owner/owner.controller.ts');
     must(!/INSERT|UPDATE|DELETE FROM|ActionsService|ApprovalsService|WhatsAppService|emitNotice|fetch\(/.test(code) && /rating: scores\.get\(l\.id\)/.test(oc) && /scoring: this\.scoring\?\.table\(\)/.test(oc), 'la calificación solo lee y se entrega al panel');
-    return 'tabla aprobada (base 40, caliente 80, tibio 50); suma voz, necesidad, cotización, documento, demo abierta, respuesta y pago; resta contacto inválido, sin respuesta, demo sin abrir, pago sin terminar, sin avance e inactividad, cada una con su plazo; lo anterior a la plantilla no es respuesta; no contactar, cliente y descartado fuera; puntos ajustables al instante; 5 consultas para cualquier cantidad; solo lee';
+    return 'tabla aprobada (base 40, caliente 80, tibio 50); suma voz, necesidad, cotización, documento, demo abierta, respuesta y pago; con las conversaciones unidas a su interesado: demostración, volver otro día, no le interesa (solo la última conversación y con objeción) y sin documento; con los avisos de Meta: lo leyó y no respondió, y número al que no se pudo entregar; resta contacto inválido, sin respuesta, demo sin abrir, pago sin terminar, sin avance e inactividad, cada una con su plazo; lo anterior a la plantilla no es respuesta; no contactar, cliente y descartado fuera; puntos ajustables al instante; 5 consultas para cualquier cantidad; solo lee';
   });
 
 
