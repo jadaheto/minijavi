@@ -955,6 +955,41 @@ export class ToolsService {
         return `La presentación «${title}» se está armando en segundo plano${pics ? ` con ${pics === 1 ? '1 imagen' : `${pics} imágenes`}` : ''}; tarda uno o dos minutos. Dile que le avisas cuando esté en su Drive.${!canDraw && Number(args.imagenes) !== 0 ? ' Aquí no se pueden generar imágenes: irá solo con texto.' : ''}`;
       },
     };
+    // Agregar a un archivo que el avatar creo: texto al final de un documento, filas al final de una hoja o una diapositiva
+    // al final de una presentacion. Solo AGREGA (no borra ni reemplaza) y solo en archivos creados por el avatar.
+    if (google?.configured) this.ownerTools.agregar_a_archivo = {
+      description:
+        'Agrega contenido AL FINAL de un archivo que tú mismo creaste antes en el Drive de Javier: una sección a un documento, filas a una hoja de cálculo o una diapositiva a una presentación. No puede borrar, reemplazar ni corregir lo que ya está, ni tocar archivos que no creaste. ' +
+        'Siempre en dos pasos: la primera llamada no cambia nada; dile a qué archivo le vas a agregar qué y, cuando diga que sí, vuelve a llamarla igual.',
+      parameters: { type: 'object', properties: {
+        archivo: { type: 'string', description: 'Parte del título del archivo. Vacío = el último que creaste.' },
+        tipo: { type: 'string', enum: ['documento', 'hoja', 'presentacion'], description: 'Qué tipo de archivo es, si Javier lo dijo.' },
+        contenido: { type: 'string', description: 'Para un documento: el texto a agregar ("# " títulos, "## " subtítulos, "- " viñetas).' },
+        filas: { type: 'array', items: { type: 'array', items: { type: 'string' } }, description: 'Para una hoja: las filas nuevas, con un valor por columna. Solo con datos que dijo Javier.' },
+        diapositiva: { type: 'object', description: 'Para una presentación: la diapositiva nueva.', properties: { titulo: { type: 'string' }, puntos: { type: 'array', items: { type: 'string' } }, imagen: { type: 'string', description: 'Opcional: qué se ve en la ilustración (se genera y se cobra). Vacío = sin imagen.' } } },
+      } },
+      run: async (args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult | string> => {
+        if (!google.has('crear')) return `NO se cambió nada: ${google.connected ? 'el permiso de Google guardado no incluye crear ni cambiar archivos; Javier debe pulsar «Volver a conectar» en el panel' : 'Google no está conectado'}. Díselo así.`;
+        const content = String(args.contenido ?? '').trim(), rows = (Array.isArray(args.filas) ? args.filas : []).filter((r) => Array.isArray(r)) as unknown[][], sl = (args.diapositiva && typeof args.diapositiva === 'object' ? args.diapositiva : {}) as Record<string, unknown>;
+        const kind = content.length >= 5 ? 'documento' : rows.length ? 'hoja' : String(sl.titulo ?? '').trim() ? 'presentacion' : '';
+        if (!kind) return 'NO se cambió nada: falta qué agregar (contenido para un documento, filas para una hoja o una diapositiva para una presentación). Pregúntaselo.';
+        if (args.tipo && args.tipo !== kind) return `NO se cambió nada: lo que quieres agregar es para ${kind === 'hoja' ? 'una hoja' : kind === 'documento' ? 'un documento' : 'una presentación'}, no para ${String(args.tipo)}. Aclara con Javier.`;
+        const found = await google.ownFiles(String(args.archivo ?? ''), kind);
+        if (!found.length) return `NO se cambió nada: no encuentro ${kind === 'hoja' ? 'una hoja' : kind === 'documento' ? 'un documento' : 'una presentación'} creado por ti${String(args.archivo ?? '').trim() ? ' con ese nombre' : ''}. Solo puedes agregar a los archivos que creaste. Pregúntale cuál es.`;
+        if (found.length > 1) return `NO se cambió nada: hay ${found.length} archivos que coinciden. Pregúntale cuál: ${asData('los títulos de los archivos creados', found.map((f) => f.title).join(' | '))}`;
+        const f = found[0], picture = kind === 'presentacion' ? String(sl.imagen ?? '').trim() : '', canDraw = images.canGenerate && cfg.publicUrl.startsWith('https://');
+        const what = kind === 'documento' ? 'una sección' : kind === 'hoja' ? `${rows.length} fila${rows.length === 1 ? '' : 's'}` : `una diapositiva («${String(sl.titulo).trim().slice(0, 60)}»)${picture && canDraw ? ' con una imagen generada (se cobra)' : ''}`;
+        const wait = needsYes(ctx, 'agregar', `${f.id}:${kind}:${content.length}:${rows.length}:${String(sl.titulo ?? '')}`, `que le vas a agregar ${what} al final de «${f.title}»`).replace('con el mismo título', 'con los mismos datos'); if (wait) return wait;
+        try {
+          if (kind === 'documento') { const r = await google.appendDoc(f.id, content); return `Listo: se agregó el texto al final del documento «${r.title}» (${r.chars} caracteres)${r.styled ? '' : ', en texto llano'}. Díselo en una frase.`; }
+          if (kind === 'hoja') { const r = await google.appendRows(f.id, rows); return `Listo: se agregaron ${r.rows} fila${r.rows === 1 ? '' : 's'} al final de la hoja «${r.title}». Díselo en una frase.`; }
+          let image = '';
+          if (picture && canDraw) image = await images.generate(`Ilustración limpia y moderna para una diapositiva, sin ningún texto ni letras, sin logos: ${picture.slice(0, 300)}`, 'horizontal').then((r) => `${cfg.publicUrl}/imagenes/${r.name}`).catch(() => '');
+          const r = await google.appendSlide(f.id, { title: String(sl.titulo), points: (Array.isArray(sl.puntos) ? sl.puntos : []).map((x) => String(x)), image });
+          return `Listo: se agregó la diapositiva al final de la presentación «${r.title}»${picture ? (r.image ? ', con su imagen' : ', pero sin imagen (no se pudo generar o poner)') : ''}. Díselo en una frase.`;
+        } catch (e) { return `NO se cambió: ${(e as Error).message}. Díselo tal cual.`; }
+      },
+    };
     // Tesla de Javier: solo lectura. El servicio no pide el permiso de comandos, asi que aqui no hay como abrir ni mover nada.
     if (tesla?.configured) this.ownerTools.tesla = {
       description:

@@ -980,7 +980,7 @@ export class SessionGateway implements OnGatewayConnection {
             this.log.warn(`sesion #${s.n}: ${c.name} bloqueada (${auto ? 'aviso automatico' : 'el turno ya leyo texto de otra fuente'})`);
             result = 'NO se ejecutó. Por seguridad, una consulta a una conexión no corre en un aviso automático ni en la misma respuesta en que leíste datos de otra fuente. Dile a Javier qué ibas a consultar y pídele que te lo confirme; si dice que sí, vuelve a llamarla.';
           }
-          else if (s.cxSeen && [...s.cxSeen].some(([slug, seen]) => slug !== (c.name.startsWith(CX_PREFIX) ? this.connections?.voiceSlug(c.name) : '') && !['crear_documento', 'crear_presentacion'].includes(c.name) && (GOOGLE_READS[c.name] !== slug || /"accion"\s*:\s*"buscar"/.test(c.arguments)) && carries(c.arguments, seen))) {
+          else if (s.cxSeen && [...s.cxSeen].some(([slug, seen]) => slug !== (c.name.startsWith(CX_PREFIX) ? this.connections?.voiceSlug(c.name) : '') && !['crear_documento', 'crear_presentacion'].includes(c.name) && !(c.name === 'agregar_a_archivo' && !/"filas"\s*:\s*\[\s*\[/.test(c.arguments)) && (GOOGLE_READS[c.name] !== slug || /"accion"\s*:\s*"buscar"/.test(c.arguments)) && carries(c.arguments, seen))) {
             this.log.warn(`sesion #${s.n}: ${c.name} bloqueada (lleva texto copiado de una conexion)`); this.usage.add('conexion_fuga_bloqueada');
             result = 'NO se ejecutó: lo que ibas a enviar trae texto copiado de una conexión, y lo leído en una conexión no sale hacia otras herramientas (taller, imágenes, interesados, portafolio, búsquedas ni otra conexión). Díselo a Javier y pídele que te dicte con sus propias palabras lo que quiere.';
           }

@@ -44,6 +44,9 @@ import { UsageService } from '../usage/usage.service';
  *    forma de `placeholderIdMappings` ({layoutPlaceholder: {type, index}, objectId}), las medidas en EMU y que un archivo
  *    recien creado trae una diapositiva (o una hoja con id 0) por defecto. Por eso cada parte dudosa va en su propio
  *    envio: si falla, lo demas queda.
+ *  - Agregar a lo creado (leido el 2026-11-24): `GET docs…/documents/{id}` acepta `drive.file` (el final del cuerpo sale
+ *    de `body.content[].endIndex`); `POST …/values/{rango}:append` (valueInputOption, insertDataOption) acepta
+ *    `drive.file`; una diapositiva nueva sin `insertionIndex` queda al final.
  *  - Agenda: `GET https://www.googleapis.com/calendar/v3/calendars/primary/events` con timeMin, timeMax (RFC 3339),
  *    singleEvents=true y orderBy=startTime (solo vale con singleEvents), maxResults, timeZone.
  *
@@ -405,7 +408,7 @@ export class GoogleService implements OnModuleInit {
   private async write(url: string, body: Record<string, unknown>, params: Record<string, string> = {}): Promise<any> {
     if (!this.has('crear')) throw new GoogleError(this.connected ? 'el permiso guardado no incluye crear documentos: vuelve a conectar Google en el panel' : 'Google no está conectado: se conecta en el panel, en Dispositivos');
     const ok = url === `${DRIVE}/files` ? [MIME_FOLDER, MIME_DOC, MIME_SHEET, MIME_SLIDES].includes(String(body.mimeType)) && !('permissions' in body)
-      : new RegExp(`^https://docs\\.googleapis\\.com/v1/documents/${ID}:batchUpdate$`).test(url) || new RegExp(`^https://sheets\\.googleapis\\.com/v4/spreadsheets/${ID}(/values)?:batchUpdate$`).test(url) || new RegExp(`^https://slides\\.googleapis\\.com/v1/presentations/${ID}:batchUpdate$`).test(url);
+      : new RegExp(`^https://docs\\.googleapis\\.com/v1/documents/${ID}:batchUpdate$`).test(url) || new RegExp(`^https://sheets\\.googleapis\\.com/v4/spreadsheets/${ID}(/values)?:batchUpdate$`).test(url) || new RegExp(`^https://sheets\\.googleapis\\.com/v4/spreadsheets/${ID}/values/A1:append$`).test(url) || new RegExp(`^https://slides\\.googleapis\\.com/v1/presentations/${ID}:batchUpdate$`).test(url);
     if (!ok) throw new GoogleError('esa operación no está permitida');
     const today = this.day(); if (this.used.day !== today) this.used = { day: today, n: 0 };
     if (this.used.n >= this.cfg.googleDailyCalls) throw new GoogleError('se llegó al tope de consultas a Google de hoy');
@@ -435,7 +438,7 @@ export class GoogleService implements OnModuleInit {
   /** Cuantos archivos ha creado hoy (hora del negocio) y el tope. */
   async createdToday(): Promise<{ n: number; limit: number }> {
     const since = this.startOf(this.day()).toISOString();
-    return { n: (await this.db.query('SELECT id FROM google_created WHERE at >= $1', [since])).length, limit: this.cfg.googleCreateDaily };
+    return { n: (await this.db.query<{ kind: string }>('SELECT kind FROM google_created WHERE at >= $1', [since])).filter((r) => !String(r.kind).startsWith('agregado')).length, limit: this.cfg.googleCreateDaily };
   }
   created(limit = 8) { return this.db.query<{ id: number; at: string; kind: string; file_id: string; title: string; chars: number; source: string }>('SELECT * FROM google_created ORDER BY id DESC LIMIT $1', [Math.min(50, limit)]); }
 
@@ -515,23 +518,88 @@ export class GoogleService implements OnModuleInit {
     if (before.length) await this.write(`${SLIDES}/${f.id}:batchUpdate`, { requests: before.map((objectId) => ({ deleteObject: { objectId } })) }).catch(() => { styled = false; });
     return { id: f.id, title: f.name, link: `https://docs.google.com/presentation/d/${f.id}/edit`, chars, styled, slides: list.length + 1, images: placed };
   }
+
+  // ---------- agregar a lo que el avatar creo ----------
+  /**
+   * Busca entre los archivos que el avatar CREO (solo esos se pueden cambiar) por una parte del titulo; sin texto, el
+   * ultimo. Devuelve los que coinciden, del mas reciente al mas antiguo. No consulta a Google.
+   */
+  async ownFiles(query = '', kind = ''): Promise<{ id: string; kind: string; title: string; at: string }[]> {
+    const rows = await this.db.query<{ kind: string; file_id: string; title: string; at: string }>('SELECT kind, file_id, title, at FROM google_created ORDER BY id DESC LIMIT 200');
+    const q = clean(query, 120).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''), plain = (t: string) => t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const made = rows.filter((r) => ['documento', 'hoja', 'presentacion'].includes(r.kind) && (!kind || r.kind === kind)).map((r) => ({ id: r.file_id, kind: r.kind, title: r.title, at: String(r.at) }));
+    if (!q) return made.slice(0, 1);
+    const words = q.split(/\s+/).filter((w) => w.length > 2);
+    return made.filter((r) => { const t = plain(r.title); return t.includes(q) || (words.length > 0 && words.every((w) => t.includes(w))); }).slice(0, 5);
+  }
+
+  /** El archivo debe ser uno que el avatar creo, y seguir existiendo fuera de la papelera. */
+  private async own(id: string, kind: 'documento' | 'hoja' | 'presentacion'): Promise<string> {
+    if (!this.has('crear')) throw new GoogleError('el permiso guardado no incluye crear ni cambiar archivos: vuelve a conectar Google en el panel');
+    const [row] = await this.db.query<{ title: string }>('SELECT title FROM google_created WHERE file_id = $1 AND kind = $2', [String(id), kind]);
+    if (!row) throw new GoogleError('ese archivo no lo creó el avatar: no lo puede cambiar');
+    const f = await this.get(`${DRIVE}/files/${id}`, { fields: 'id,trashed' }).catch(() => null);
+    if (!f?.id || f.trashed) throw new GoogleError('ese archivo ya no está en tu Drive (o está en la papelera)');
+    return row.title;
+  }
+  private async logAdded(kind: string, id: string, title: string, chars: number, source: string) {
+    await this.db.query('INSERT INTO google_created (at, kind, file_id, title, chars, source) VALUES ($1, $2, $3, $4, $5, $6)', [new Date().toISOString(), `agregado:${kind}`, id, title, chars, clean(source, 60)]).catch(() => undefined);
+  }
+
+  /** Agrega texto AL FINAL de un documento creado por el avatar (mismo formato minimo que al crearlo). No borra ni reemplaza nada. */
+  async appendDoc(id: string, content: string, source = 'dictado'): Promise<{ title: string; chars: number; styled: boolean }> {
+    const title = await this.own(id, 'documento'), text = String(content ?? '').replace(/\r/g, '').replace(/[\u0000-\u0008\u000b-\u001f]/g, ' ').trim().slice(0, 30_000);
+    if (text.length < 5) throw new GoogleError('falta qué agregar');
+    const d = await this.get(`${DOCS}/${id}`, { fields: 'body(content(endIndex))' });
+    const end = Math.max(2, ...(Array.isArray(d?.body?.content) ? d.body.content : []).map((c: any) => Number(c?.endIndex) || 0)), at = end - 1; // justo antes del salto final
+    const { plain, styles } = docRequests(text), shift = (r: any) => { const o = r.updateParagraphStyle ?? r.createParagraphBullets; o.range = { startIndex: o.range.startIndex + at, endIndex: o.range.endIndex + at }; return r; };
+    await this.write(`${DOCS}/${id}:batchUpdate`, { requests: [{ insertText: { location: { index: at }, text: `\n${plain.replace(/\n$/, '')}` } }] });
+    let styled = true;
+    if (styles.length) await this.write(`${DOCS}/${id}:batchUpdate`, { requests: styles.map(shift) }).catch((e) => { styled = false; this.log.warn(`texto agregado sin formato: ${(e as Error).message}`); });
+    await this.logAdded('documento', id, title, plain.length, source);
+    return { title, chars: plain.length, styled };
+  }
+
+  /** Agrega filas AL FINAL de la tabla de una hoja creada por el avatar. Valores tal cual, sin formulas. */
+  async appendRows(id: string, rows: unknown[][], source = 'dictado'): Promise<{ title: string; rows: number }> {
+    const title = await this.own(id, 'hoja');
+    const body = (Array.isArray(rows) ? rows : []).slice(0, 500).map((r) => (Array.isArray(r) ? r : [r]).slice(0, 26).map((v) => (typeof v === 'number' && Number.isFinite(v) ? v : clean(v, 500))));
+    if (!body.length) throw new GoogleError('faltan las filas que hay que agregar');
+    await this.write(`${SHEETS}/${id}/values/A1:append`, { values: body }, { valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS' });
+    await this.logAdded('hoja', id, title, JSON.stringify(body).length, source);
+    return { title, rows: body.length };
+  }
+
+  /** Agrega una diapositiva AL FINAL de una presentacion creada por el avatar (con su imagen a la derecha, si trae). */
+  async appendSlide(id: string, slide: SlideSpec, source = 'dictado'): Promise<{ title: string; image: boolean }> {
+    const title = await this.own(id, 'presentacion');
+    const spec = { title: clean(slide?.title, 120), points: (Array.isArray(slide?.points) ? slide.points : []).map((q) => clean(q, 220)).filter(Boolean).slice(0, 6), image: typeof slide?.image === 'string' && /^https:\/\/[^\s]{8,1900}$/.test(slide.image) ? slide.image : '' };
+    if (!spec.title) throw new GoogleError('falta el título de la diapositiva');
+    const { requests, images } = slideRequests('', '', [spec], `mj_${randomBytes(4).toString('hex')}`);
+    await this.write(`${SLIDES}/${id}:batchUpdate`, { requests });
+    let placed = false;
+    for (const img of images) await this.write(`${SLIDES}/${id}:batchUpdate`, { requests: [img] }).then(() => { placed = true; }).catch((e) => this.log.warn(`diapositiva agregada sin imagen: ${(e as Error).message}`));
+    await this.logAdded('presentacion', id, title, JSON.stringify(spec).length, source);
+    return { title, image: placed };
+  }
 }
 
 /**
  * Las ordenes para armar una presentacion: una portada (diseño TITLE) y, por cada punto, una diapositiva con titulo y
  * viñetas. Si la diapositiva lleva imagen se usa el diseño de dos columnas: el texto a la izquierda y, en vez de la
  * columna derecha, la imagen. Las imagenes se devuelven aparte para enviarlas una por una. Medidas en EMU (una
- * diapositiva 16:9 mide 9.144.000 x 5.143.500).
+ * diapositiva 16:9 mide 9.144.000 x 5.143.500). Con `append` (un prefijo unico para los identificadores) no hay portada
+ * y las diapositivas quedan al final de una presentacion que ya existe.
  */
-export function slideRequests(title: string, subtitle: string, slides: SlideSpec[]): { requests: Record<string, unknown>[]; images: Record<string, unknown>[] } {
+export function slideRequests(title: string, subtitle: string, slides: SlideSpec[], append = ''): { requests: Record<string, unknown>[]; images: Record<string, unknown>[] } {
   const requests: Record<string, unknown>[] = [], images: Record<string, unknown>[] = [];
   const map = (type: string, index: number, objectId: string) => ({ layoutPlaceholder: { type, index }, objectId });
-  requests.push({ createSlide: { objectId: 'mj_portada', insertionIndex: 0, slideLayoutReference: { predefinedLayout: 'TITLE' }, placeholderIdMappings: [map('CENTERED_TITLE', 0, 'mj_portada_t'), map('SUBTITLE', 0, 'mj_portada_s')] } });
-  requests.push({ insertText: { objectId: 'mj_portada_t', text: title } });
-  if (subtitle) requests.push({ insertText: { objectId: 'mj_portada_s', text: subtitle } });
+  if (!append) requests.push({ createSlide: { objectId: 'mj_portada', insertionIndex: 0, slideLayoutReference: { predefinedLayout: 'TITLE' }, placeholderIdMappings: [map('CENTERED_TITLE', 0, 'mj_portada_t'), map('SUBTITLE', 0, 'mj_portada_s')] } });
+  if (!append) requests.push({ insertText: { objectId: 'mj_portada_t', text: title } });
+  if (!append && subtitle) requests.push({ insertText: { objectId: 'mj_portada_s', text: subtitle } });
   slides.forEach((sl, k) => {
-    const n = String(k + 1).padStart(2, '0'), page = `mj_dia_${n}`, t = `${page}_t`, b = `${page}_b`, r = `${page}_r`;
-    requests.push({ createSlide: { objectId: page, insertionIndex: k + 1, slideLayoutReference: { predefinedLayout: sl.image ? 'TITLE_AND_TWO_COLUMNS' : 'TITLE_AND_BODY' }, placeholderIdMappings: [map('TITLE', 0, t), map('BODY', 0, b), ...(sl.image ? [map('BODY', 1, r)] : [])] } });
+    const n = String(k + 1).padStart(2, '0'), page = append ? `${append}_${n}` : `mj_dia_${n}`, t = `${page}_t`, b = `${page}_b`, r = `${page}_r`;
+    requests.push({ createSlide: { objectId: page, ...(append ? {} : { insertionIndex: k + 1 }), slideLayoutReference: { predefinedLayout: sl.image ? 'TITLE_AND_TWO_COLUMNS' : 'TITLE_AND_BODY' }, placeholderIdMappings: [map('TITLE', 0, t), map('BODY', 0, b), ...(sl.image ? [map('BODY', 1, r)] : [])] } });
     requests.push({ insertText: { objectId: t, text: sl.title } });
     if (sl.points.length) requests.push({ insertText: { objectId: b, text: sl.points.join('\n') } });
     if (sl.image) {
