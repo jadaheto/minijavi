@@ -3089,10 +3089,44 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     const flaky: any = { query: async (sql: string) => { if (/FROM demos/.test(sql)) throw new Error('caída'); return []; } };
     const sc2 = new ScoringService(scfg, flaky, P.settings); sc2.now = () => new Date(NOW);
     must((await sc2.forLeads([lead(1)])).get(1)!.score === 40, 'si una tabla falla, se califica con lo demás');
+    // ---- Entrega 3: ajustes para el panel, lista por nivel para la voz y el resumen, y la opinión de Javier ----
+    const ed = sc.editable(); must(ed.length === 3 + 19 + 5 && ed.every((x: any) => x.key.startsWith('puntos.') && x.type === 'number' && typeof x.value === 'number' && x.label) && ed.find((x: any) => x.key === 'puntos.no_interesado')!.value === 50, `ajustes editables: ${ed.length}`);
+    data.actions = []; data.wa_messages = []; data.demos = []; data.demo_usage = []; data.avatar_requests = []; data.visits = []; data.wa_delivery = [];
+    const pool = [lead(50, { name: 'Muy Caliente', source: 'voz', company: 'Uno', interest: 'chatbots', detail: 'x', quote_at: ago(0.2) }), lead(51, { name: 'Tibia', source: 'voz', company: 'Dos', interest: 'chatbots', detail: 'x' }), lead(52, { name: 'Fría' }), lead(53, { name: 'Caliente pero cliente', status: 'cliente', source: 'voz', company: 'Tres', interest: 'chatbots', detail: 'x', quote_at: ago(1) })];
+    const hotTop = await sc.top(pool, 'caliente'), warmTop = await sc.top(pool, 'tibio'), coldTop = await sc.top(pool, 'frio', 1);
+    must(hotTop.length === 1 && hotTop[0].lead.id === 50 && hotTop[0].rating.score === 80 && warmTop.map((x) => x.lead.id).join() === '51' && coldTop.length === 1 && coldTop[0].lead.id === 52, `por nivel: ${JSON.stringify([hotTop.map((x) => x.lead.id), warmTop.map((x) => x.lead.id), coldTop.map((x) => x.lead.id)])}`);
+    // Sin pasarle la lista, usa la de «no contactar» por su cuenta.
+    const scOpt = new ScoringService(scfg, fakeDb, P.settings, { blocked: (c: string) => c === pool[0].contact } as any); scOpt.now = () => new Date(NOW);
+    must((await scOpt.top(pool, 'caliente')).length === 0 && (await scOpt.forLeads([pool[0]])).get(50)!.level === 'no_contactar', 'quien pidió no ser contactado no aparece como caliente');
+    // La opinión de Javier: se guarda con el puntaje del momento, se puede cambiar y quitar, y no toca nada más.
+    const { ScoreMarksService, MIN_MARKS } = await import('../scoring/score-marks.service');
+    await P.db.query('DELETE FROM lead_marks'); const mk = new ScoreMarksService(P.db);
+    must(await mk.set(50, 'bien', hotTop[0].rating) && await mk.set(51, 'mal', warmTop[0].rating) && !(await mk.set(52, 'regular', coldTop[0].rating)) && !(await mk.set(53, 'bien', { score: null, level: 'cliente' })) && !(await mk.set(0, 'bien', hotTop[0].rating)), 'marcas válidas e inválidas');
+    const m1 = await mk.all(), acc1 = await mk.accuracy();
+    must(m1.size === 2 && m1.get(50)!.mark === 'bien' && m1.get(50)!.score === 80 && m1.get(50)!.level === 'caliente' && m1.get(51)!.mark === 'mal' && acc1.marked === 2 && acc1.ok === 1 && acc1.enough === false && acc1.needed === MIN_MARKS && MIN_MARKS === 30, `marcas: ${JSON.stringify([...m1])} · ${JSON.stringify(acc1)}`);
+    await mk.set(51, 'bien', warmTop[0].rating); await mk.set(50, '', undefined);
+    const m2 = await mk.all(); must(m2.size === 1 && m2.get(51)!.mark === 'bien', 'cambiar y quitar una marca');
+    for (let k = 0; k < 30; k++) await mk.set(200 + k, k < 24 ? 'bien' : 'mal', { score: 60, level: 'tibio' });
+    const acc2 = await mk.accuracy(); must(acc2.marked === 31 && acc2.ok === 25 && acc2.enough === true, `con 30 o más ya se puede hablar de un porcentaje: ${JSON.stringify(acc2)}`);
+    await P.db.query('DELETE FROM lead_marks');
+    // Por voz: solo el dueño; dice quiénes y por qué, como dato de terceros; no trae teléfonos; sin calientes lo dice.
+    const { ToolsService } = await import('../tools/tools.service');
+    const noop = () => undefined, tdeps = [{ definitions: async () => [] } as any, { list: async () => pool } as any, { enabled: false, defaultModel: { label: '' }, onDone: noop, onAudit: noop, onProgress: noop } as any, { enabled: false } as any, usage, { enabled: false, canGenerate: false } as any, { prompt: () => '' } as any, { brief: async () => '' } as any] as const;
+    const vt = new (ToolsService as any)(scfg, ...tdeps, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, sc);
+    const tnames = async (owner: boolean) => (await vt.definitions(owner)).map((d: any) => d.function.name);
+    must((await tnames(true)).includes('interesados_calificados') && !(await tnames(false)).includes('interesados_calificados'), 'la calificación por voz es solo del dueño');
+    const hotSaid: any = await vt.run('interesados_calificados', '{}', true, {}), coldSaid: any = await vt.run('interesados_calificados', JSON.stringify({ nivel: 'frio', cuantos: 1 }), true, {});
+    must(hotSaid.untrusted === true && /<<<DATOS[\s\S]*#50 Muy Caliente \(Uno\) — 80 puntos[\s\S]*\+15 dejó sus datos hablando[\s\S]*FIN DE DATOS>>>/.test(hotSaid.text) && !/3005550050|Tibia|Fría/.test(hotSaid.text) && /no una certeza/.test(hotSaid.text) && /#52 Fría — 40 puntos[\s\S]*solo la base/.test(coldSaid.text), `calientes por voz: ${String(hotSaid.text).slice(0, 260)}`);
+    const emptyTool = new (ToolsService as any)(scfg, tdeps[0], { list: async () => [pool[2]] } as any, ...tdeps.slice(2), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, sc);
+    const noneSaid: any = await emptyTool.run('interesados_calificados', '{}', true, {}); must(/No hay interesados calientes/.test(typeof noneSaid === 'string' ? noneSaid : noneSaid.text), 'sin calientes lo dice');
+    // En el resumen de la mañana y en el panel.
+    const bsrc = src('src/brief/brief.service.ts'), djs = src('public/js/dueno.js'), dhtml = src('public/dueno.html');
+    must(/this\.scoring!\.top\(await this\.leads\.list\(200\), 'caliente'/.test(bsrc) && /Interesados calientes/.test(bsrc) && /function drawScoring\(\)/.test(djs) && /function opine\(l\)/.test(djs) && /id="score-tune"/.test(dhtml) && /interesados_calificados: 'Reviso cómo van tus interesados\.'/.test(src('src/session/session.gateway.ts')), 'la calificación debe estar en el resumen, en el panel y en las frases de espera');
+
     // No actúa: el servicio no envía, no cambia estados ni toca la puerta de acciones; el panel lo recibe con cada interesado.
     const code = src('src/scoring/scoring.service.ts'), oc = src('src/owner/owner.controller.ts');
-    must(!/INSERT|UPDATE|DELETE FROM|ActionsService|ApprovalsService|WhatsAppService|emitNotice|fetch\(/.test(code) && /rating: scores\.get\(l\.id\)/.test(oc) && /scoring: this\.scoring\?\.table\(\)/.test(oc), 'la calificación solo lee y se entrega al panel');
-    return 'tabla aprobada (base 40, caliente 80, tibio 50); suma voz, necesidad, cotización, documento, demo abierta, respuesta y pago; con las conversaciones unidas a su interesado: demostración, volver otro día, no le interesa (solo la última conversación y con objeción) y sin documento; con los avisos de Meta: lo leyó y no respondió, y número al que no se pudo entregar; resta contacto inválido, sin respuesta, demo sin abrir, pago sin terminar, sin avance e inactividad, cada una con su plazo; lo anterior a la plantilla no es respuesta; no contactar, cliente y descartado fuera; puntos ajustables al instante; 5 consultas para cualquier cantidad; solo lee';
+    must(!/INSERT|UPDATE|DELETE FROM|ActionsService|ApprovalsService|WhatsAppService|emitNotice|fetch\(/.test(code) && /rating: scores\.get\(l\.id\)/.test(oc) && /\.\.\.this\.scoring\.table\(\), settings: this\.scoring\.editable\(\)/.test(oc) && /@Post\('leads\/:id\/calificacion'\)/.test(oc) && !/leads|actions|approvals/.test(src('src/scoring/score-marks.service.ts').replace(/lead_marks|leadId|lead_id/g, '')), 'la calificación solo lee, se entrega al panel, y la opinión solo escribe en su propia tabla');
+    return 'tabla aprobada (base 40, caliente 80, tibio 50); suma voz, necesidad, cotización, documento, demo abierta, respuesta y pago; con las conversaciones unidas a su interesado: demostración, volver otro día, no le interesa (solo la última conversación y con objeción) y sin documento; con los avisos de Meta: lo leyó y no respondió, y número al que no se pudo entregar; resta contacto inválido, sin respuesta, demo sin abrir, pago sin terminar, sin avance e inactividad, cada una con su plazo; lo anterior a la plantilla no es respuesta; no contactar, cliente y descartado fuera; puntos ajustables al instante; lista por nivel para la voz y el resumen; opinión de Javier guardada con el puntaje del momento y porcentaje solo desde 30 marcas; 5 consultas para cualquier cantidad; solo lee';
   });
 
 

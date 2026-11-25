@@ -182,6 +182,7 @@ const FILLERS: Record<string, string | Record<string, string>> = {
   mercados: { tendencias: 'Déjame mirar los mercados.', buscar: 'Déjame buscar ese mercado.' },
   tesla: 'Déjame preguntarle al carro.',
   agenda: 'Reviso tu agenda.',
+  interesados_calificados: 'Reviso cómo van tus interesados.',
   correo: 'Reviso tu correo.',
   drive: 'Busco en tu Drive.',
   trayecto: 'Déjame calcular la ruta.',

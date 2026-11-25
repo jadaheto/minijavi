@@ -1,4 +1,5 @@
 import { ScoringService } from '../scoring/scoring.service';
+import { ScoreMarksService } from '../scoring/score-marks.service';
 import { Body, Controller, Delete, Get, HttpException, Param, Patch, Post, Query, Req, Res, StreamableFile } from '@nestjs/common';
 import { Optional } from '@nestjs/common';
 import { DemoDocsService } from '../demo/demo-docs.service';
@@ -35,7 +36,7 @@ const isHttps = (req: Request) => req.secure || String(req.headers['x-forwarded-
 /** Registro y administracion de los dispositivos del dueño. La pagina es public/owner.html. */
 @Controller('owner')
 export class OwnerController {
-  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService, private readonly optout: OptOutService, private readonly capable: CapableModelService, private readonly actions: ActionsService, private readonly approvals: ApprovalsService, private readonly telegram: TelegramService, private readonly policy: PolicyService, private readonly catalog: CatalogService, @Optional() private readonly demos?: DemoDocsService, @Optional() private readonly scoring?: ScoringService) {}
+  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService, private readonly optout: OptOutService, private readonly capable: CapableModelService, private readonly actions: ActionsService, private readonly approvals: ApprovalsService, private readonly telegram: TelegramService, private readonly policy: PolicyService, private readonly catalog: CatalogService, @Optional() private readonly demos?: DemoDocsService, @Optional() private readonly scoring?: ScoringService, @Optional() private readonly marks?: ScoreMarksService) {}
   private get followDays() { return this.cfg.followupDays; }
 
   private cookie(req: Request, value: string, maxAge: number) {
@@ -175,7 +176,21 @@ export class OwnerController {
   async listLeads(@Req() req: Request) {
     this.require(req);
     const leads = await this.leads.list(), scores = this.scoring ? await this.scoring.forLeads(leads, (c) => this.optout.blocked(c)) : undefined;
-    return { statuses: STATUSES, scoring: this.scoring?.table(), leads: leads.map((l) => ({ ...l, blocked: this.optout.blocked(l.contact), ...(scores?.get(l.id) ? { rating: scores.get(l.id) } : {}) })) };
+    const marks = this.marks ? await this.marks.all() : undefined;
+    return { statuses: STATUSES, scoring: this.scoring ? { ...this.scoring.table(), settings: this.scoring.editable(), accuracy: await this.marks?.accuracy() } : undefined,
+      leads: leads.map((l) => ({ ...l, blocked: this.optout.blocked(l.contact), ...(scores?.get(l.id) ? { rating: scores.get(l.id) } : {}), ...(marks?.get(l.id) ? { ratingMark: marks.get(l.id) } : {}) })) };
+  }
+
+  /** Javier opina de la calificacion de un interesado: «bien», «mal» o '' para quitar la marca. No cambia el puntaje ni el estado. */
+  @Post('leads/:id/calificacion')
+  async markRating(@Req() req: Request, @Param('id') id: string, @Body() body: { mark?: string }) {
+    this.require(req);
+    if (!this.scoring || !this.marks) throw new HttpException({ error: 'sin_calificacion' }, 404);
+    const lead = (await this.leads.list()).find((l) => l.id === Number(id));
+    if (!lead) throw new HttpException({ error: 'no_existe' }, 404);
+    const rating = (await this.scoring.forLeads([lead], (c) => this.optout.blocked(c))).get(lead.id);
+    if (!(await this.marks.set(lead.id, String(body?.mark ?? ''), rating))) throw new HttpException({ error: 'no_se_puede', message: 'Ese interesado no tiene puntaje que marcar, o la marca no es válida.' }, 400);
+    return { ok: true, accuracy: await this.marks.accuracy() };
   }
 
   // ---- no contactar: la lista se ve, se amplia a mano y solo aqui se quita una marca ----

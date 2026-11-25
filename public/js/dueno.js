@@ -257,7 +257,20 @@ async function loadLeads() {
   ({ statuses, leads, scoring } = await json('leads'));
   const fill = (sel, values, label) => { const keep = sel.value; sel.replaceChildren(sel.firstElementChild, ...values.map((v) => el('option', { value: v, textContent: label(v) }))); sel.value = keep; };
   fill($('lead-status'), statuses, pretty); fill($('lead-source'), [...new Set(leads.map((l) => l.source || 'sin dato'))], SOURCE);
-  drawLeads(); loadOptouts();
+  drawLeads(); loadOptouts(); drawScoring();
+}
+/** Los puntos de la calificación, editables: base y umbrales, lo que suma, lo que resta y los plazos. */
+function drawScoring() {
+  $('score-tune').hidden = !scoring; if (!scoring) return;
+  const a = scoring.accuracy; $('score-acc').textContent = !a || !a.marked ? '' : a.enough ? `· marcaste ${a.marked}: ${Math.round((a.ok / a.marked) * 100)} % estaban bien` : `· llevas ${a.marked} marcadas (${a.ok} bien); con ${a.needed} se puede hablar de un porcentaje`;
+  const field = (st) => {
+    const input = el('input', { type: 'number', min: st.min, max: st.max, step: 1, value: st.value, ariaLabel: st.label });
+    input.addEventListener('change', async () => { try { await patchSetting(st.key, Number(input.value)); $('score-msg').textContent = ''; await loadLeads(); } catch (e) { $('score-msg').textContent = `No se guardó «${st.label}»: ${e.message}.`; input.value = st.value; } });
+    return el('label', {}, el('span', { textContent: st.label.replace(/^(Suma|Resta): /, '') }), input, st.hint ? el('small', { textContent: st.hint }) : null);
+  };
+  const open = $('score-tune').open, groups = [['Base y niveles', (s) => /\.(base|caliente|tibio)$/.test(s.key)], ['Suma', (s) => s.label.startsWith('Suma')], ['Resta', (s) => s.label.startsWith('Resta')], ['Plazos (días)', (s) => /\.dias_/.test(s.key)]];
+  $('score-fields').replaceChildren(...groups.map(([title, test]) => el('fieldset', {}, el('legend', { textContent: title }), ...(scoring.settings || []).filter(test).map(field))));
+  $('score-tune').open = open;
 }
 async function loadOptouts() {
   const { optouts } = await json('optouts');
@@ -276,6 +289,12 @@ $('optout-form').addEventListener('submit', async (ev) => {
   $('optout-msg').textContent = !r.ok ? (d.error || 'No se pudo marcar.') : d.added ? 'Marcado.' : 'Ese contacto ya estaba marcado.';
   if (r.ok) { $('optout-contact').value = ''; $('optout-note').value = ''; loadLeads(); }
 });
+/** «¿Está bien este puntaje?»: tu opinión queda guardada con el puntaje de ese momento, para medir después cuánto acierta la tabla. */
+function opine(l) {
+  const cur = l.ratingMark?.mark || '', send = async (mark) => { const r = await api(`leads/${l.id}/calificacion`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mark }) }); if (r.ok) loadLeads(); };
+  const btn = (mark, text) => { const b = el('button', { type: 'button', className: `small${cur === mark ? ' on' : ''}`, textContent: text, ariaPressed: String(cur === mark) }); b.addEventListener('click', () => send(cur === mark ? '' : mark)); return b; };
+  return el('div', { className: 'row opine' }, el('small', { className: 'muted', textContent: cur ? `Lo marcaste el ${fecha(l.ratingMark.at)} (tenía ${l.ratingMark.score}):` : '¿Te parece bien este puntaje?' }), btn('bien', 'Está bien'), btn('mal', 'No coincide'));
+}
 function drawLeads() {
   const q = $('lead-q').value.trim().toLowerCase(), st = $('lead-status').value, src = $('lead-source').value;
   const lv = $('lead-level').value, byScore = $('lead-order').value === 'puntos';
@@ -295,7 +314,8 @@ function drawLeads() {
     const r = l.rating, LEVEL = { caliente: ['Caliente', 'bad'], tibio: ['Tibio', 'warn'], frio: ['Frío', 'info'], cliente: ['Cliente', 'ok'], descartado: ['Descartado', ''], no_contactar: ['Sin calificar', ''] }[r?.level] || null;
     const chip = LEVEL ? el('span', { className: `chip ${LEVEL[1]}`, textContent: r.score === null ? LEVEL[0] : `${LEVEL[0]} · ${r.score}` }) : null;
     const why = r && r.score !== null ? el('details', { className: 'why' }, el('summary', { textContent: r.items.length ? `Por qué ${r.score} puntos` : `${r.score} puntos: solo la base` }),
-      el('ul', {}, el('li', {}, el('span', { textContent: 'Base' }), el('b', { textContent: String(scoring?.base ?? '') })), ...r.items.map((i) => el('li', { className: i.points > 0 ? 'up' : 'down' }, el('span', { textContent: `${i.label}${i.at ? ` · ${fecha(i.at)}` : ''}` }), el('b', { textContent: `${i.points > 0 ? '+' : '−'}${Math.abs(i.points)}` }))))) : null;
+      el('ul', {}, el('li', {}, el('span', { textContent: 'Base' }), el('b', { textContent: String(scoring?.base ?? '') })), ...r.items.map((i) => el('li', { className: i.points > 0 ? 'up' : 'down' }, el('span', { textContent: `${i.label}${i.at ? ` · ${fecha(i.at)}` : ''}` }), el('b', { textContent: `${i.points > 0 ? '+' : '−'}${Math.abs(i.points)}` })))),
+      opine(l)) : null;
     return el('li', {},
       el('div', { className: 'row' }, el('strong', { textContent: l.name + (l.company ? ` — ${l.company}` : '') }), chip, l.blocked ? el('span', { className: 'tag', style: 'background:rgba(217,89,38,.3)', textContent: 'No contactar' }) : null, l.quote_at ? el('span', { className: 'tag', style: 'background:rgba(201,133,0,.35)', textContent: 'Pidió precio' }) : null, el('span', { className: 'tag', textContent: pretty(l.interest) }), el('span', { className: 'tag', textContent: SOURCE(l.source || 'sin dato') })),
       el('small', { textContent: `${l.contact} · ${fecha(l.created_at)} · #${l.id}` }),

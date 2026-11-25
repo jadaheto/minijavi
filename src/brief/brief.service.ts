@@ -10,6 +10,7 @@ import { DeepSeekService } from '../llm/deepseek.service';
 import { AlertsService } from '../ops/alerts.service';
 import { PlaneMcpService } from '../mcp/plane-mcp.service';
 import { GoogleService } from '../google/google.service';
+import { ScoringService } from '../scoring/scoring.service';
 import { buildBoard } from '../mcp/plane-board';
 import { TeslaService, teslaCard } from '../tesla/tesla.service';
 import { PanelsService } from '../panels/panels.service';
@@ -47,6 +48,8 @@ export interface Brief {
   agenda?: { total: number; items: { time: string; title: string }[] };
   /** Correos sin leer de la bandeja principal en el ultimo dia (remitente y asunto: texto de terceros). */
   mail?: { unread: number; items: { from: string; subject: string }[] };
+  /** Interesados calientes segun su puntaje (nombres escritos por ellos). */
+  hot?: { count: number; names: string[] };
   tasks?: { project: string; late: number; today: number; open: number; items: { name: string; late: boolean; due?: string }[] };
   money: { id: string; name: string; value: number; unit: string; change?: number; changeLabel?: string }[];
   news: { ia: string[]; colombia: string[] };
@@ -68,7 +71,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
   constructor(private readonly cfg: ConfigService, private readonly db: DbService, private readonly leads: LeadsService, private readonly visits: VisitsService,
     private readonly usage: UsageService, private readonly workshop: WorkshopService, private readonly llm: DeepSeekService, private readonly alerts: AlertsService,
     private readonly plane: PlaneMcpService, @Optional() private readonly tesla?: TeslaService, @Optional() private readonly panels?: PanelsService,
-    @Optional() private readonly news?: NewsService, @Optional() private readonly newsCo?: ColombiaNewsService, @Optional() private readonly approvals?: ApprovalsService, @Optional() private readonly google?: GoogleService) {}
+    @Optional() private readonly news?: NewsService, @Optional() private readonly newsCo?: ColombiaNewsService, @Optional() private readonly approvals?: ApprovalsService, @Optional() private readonly google?: GoogleService, @Optional() private readonly scoring?: ScoringService) {}
 
   onApplicationBootstrap() { if (this.cfg.briefHour >= 0) { this.timer = setInterval(() => void this.tick(), 60_000); this.timer.unref(); } }
   onModuleDestroy() { clearInterval(this.timer); }
@@ -104,7 +107,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
     const take = async <T>(name: string, p: () => Promise<T>): Promise<T | undefined> => {
       try { return await within(p(), ms); } catch (e) { failed.push(`${name} (${(e as Error).name === 'TimeoutError' ? 'tardó demasiado' : (e as Error).message.slice(0, 80)})`); return undefined; }
     };
-    const [weather, tesla, leads, waiting, waitingOld, visits, calls, approvals, tasks, money, newsCo, usageDays, agenda, mail] = await Promise.all([
+    const [weather, tesla, leads, waiting, waitingOld, visits, calls, approvals, tasks, money, newsCo, usageDays, agenda, mail, hot] = await Promise.all([
       take('el clima', () => weatherNow(this.cfg.defaultCity)),
       this.tesla?.connected ? take('el Tesla', async () => { const c = teslaCard(await this.tesla!.report('')) as any; return { name: String(c.name), level: c.level, rangeKm: c.rangeKm, charging: c.charging, live: !!c.live, ageMin: c.ageMin }; }) : undefined,
       take('los interesados', () => this.leads.leadsSince(since)),
@@ -125,6 +128,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
       take('el consumo', () => this.usage.days(2)),
       this.google?.has('agenda') ? take('la agenda de Google', async () => { const a = await this.google!.agenda('hoy'), ev = a.days.flatMap((d) => d.events); return { total: a.total, items: ev.slice(0, 5).map((e) => ({ time: e.time, title: e.title })) }; }) : undefined,
       this.google?.has('correo') ? take('el correo', async () => { const m = await this.google!.mail('in:inbox is:unread category:primary newer_than:1d', 8); return { unread: m.length, items: m.slice(0, 4).map((x) => ({ from: x.from, subject: x.subject })) }; }) : undefined,
+      this.scoring ? take('la calificación de interesados', async () => { const top = await this.scoring!.top(await this.leads.list(200), 'caliente', 20); return { count: top.length, names: top.slice(0, 4).map((x) => x.lead.name) }; }) : undefined,
     ]);
     const y = usageDays?.find((d) => d.day === yesterday);
     const wk = this.workshop.enabled ? (() => { const list = this.workshop.list(); return { busy: this.workshop.busy() ? this.workshop.progress() : '', done: list.filter((p) => p.unseen && p.status !== 'error').map((p) => p.name), failed: list.filter((p) => p.status === 'error' && p.unseen).map((p) => p.name) }; })() : undefined;
@@ -142,6 +146,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
       tasks,
       agenda,
       mail,
+      hot,
       money: (money ?? []).map((m) => ({ id: m.id, name: m.name, value: m.value, unit: m.unit, change: m.change, changeLabel: m.changeLabel })),
       news: { ia: (this.news?.items ?? []).slice(0, 3).map((n) => n.title), colombia: (newsCo ?? []).slice(0, 3).map((n) => n.title) },
       workshop: wk,
@@ -149,7 +154,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
       failed: [...new Set(failed)],
       quiet: false,
     };
-    brief.quiet = !(agenda && agenda.total) && !brief.leads.length && !brief.calls.length && !brief.approvals && !brief.waitingOld && !(tasks && (tasks.late || tasks.today)) && !(wk && (wk.done.length || wk.failed.length));
+    brief.quiet = !(hot && hot.count) && !(agenda && agenda.total) && !brief.leads.length && !brief.calls.length && !brief.approvals && !brief.waitingOld && !(tasks && (tasks.late || tasks.today)) && !(wk && (wk.done.length || wk.failed.length));
     return brief;
   }
 
@@ -176,6 +181,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
     if (b.approvals) p.push(`Acciones esperando su aprobación en la bandeja: ${b.approvals}.`);
     if (b.agenda) p.push(b.agenda.total ? `Agenda de hoy: ${b.agenda.total} ${b.agenda.total === 1 ? 'evento' : 'eventos'}. ` + asData('la agenda de Google (títulos escritos por quien creó cada evento)', b.agenda.items.map((e) => `${e.time}: ${e.title}`).join('; ')) : 'Agenda de hoy: nada.');
     if (b.mail) p.push(b.mail.unread ? `Correo: ${b.mail.unread}${b.mail.unread >= 8 ? ' o más' : ''} sin leer en la bandeja principal desde ayer. ` + asData('el correo de Gmail (remitentes y asuntos escritos por terceros)', b.mail.items.map((m) => `${m.from}: ${m.subject}`).join('; ')) : 'Correo: nada sin leer desde ayer.');
+    if (b.hot?.count) p.push(`Interesados calientes (por puntaje): ${b.hot.count}. ` + asData('los interesados (nombres escritos por ellos)', b.hot.names.join(', ')));
     if (b.tasks) p.push(`Tareas de Plane (${b.tasks.project}): ${b.tasks.open} abiertas, ${b.tasks.late} atrasadas, ${b.tasks.today} vencen hoy.` + (b.tasks.items.length ? ' ' + asData('Plane (tareas)', b.tasks.items.map((k) => `${k.name} (${k.late ? `atrasada desde ${k.due}` : 'vence hoy'})`).join(' | ')) : ''));
     const m = this.moneyLine(b); if (m) p.push(`${m}.`);
     if (b.news.ia.length || b.news.colombia.length) p.push('Titulares: ' + asData('los medios de noticias', [...b.news.colombia.map((x) => `Colombia: ${x}`), ...b.news.ia.map((x) => `IA: ${x}`)].join(' | ')));
@@ -198,6 +204,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
     if (b.approvals) l.push(`✅ Por aprobar en la bandeja: ${b.approvals}.`);
     if (b.agenda?.total) l.push(`📅 Agenda: ${b.agenda.total} hoy${b.agenda.items[0] ? `; lo primero, ${b.agenda.items[0].time.toLowerCase()}: ${b.agenda.items[0].title}` : ''}.`);
     if (b.mail?.unread) l.push(`✉️ Correo: ${b.mail.unread}${b.mail.unread >= 8 ? '+' : ''} sin leer${b.mail.items[0] ? `; el más reciente, de ${b.mail.items[0].from}` : ''}.`);
+    if (b.hot?.count) l.push(`🔥 Interesados calientes: ${b.hot.count} (${b.hot.names.slice(0, 3).join(', ')}).`);
     if (b.tasks && (b.tasks.late || b.tasks.today)) l.push(`📋 Plane: ${b.tasks.late} atrasadas, ${b.tasks.today} vencen hoy.`);
     if (b.workshop?.done.length) l.push(`🛠 El taller terminó: ${b.workshop.done.join(', ')}.`);
     if (b.workshop?.failed.length) l.push(`🛠 Con error en el taller: ${b.workshop.failed.join(', ')}.`);
@@ -235,6 +242,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
     if (b.approvals) cards.push({ id: 'aprobaciones', icon: '✅', label: 'Por aprobar', value: b.approvals, alert: true, note: 'en la bandeja' });
     if (b.agenda) cards.push({ id: 'agenda', icon: '📅', label: 'Agenda de hoy', value: b.agenda.total, note: b.agenda.items.slice(0, 2).map((e) => `${e.time} ${e.title}`.slice(0, 40)).join(' · ') || 'Nada en la agenda' });
     if (b.mail) cards.push({ id: 'correo', icon: '✉️', label: 'Correo sin leer', value: b.mail.unread, alert: b.mail.unread > 0, note: b.mail.items.slice(0, 2).map((m) => m.from).join(' · ') || 'Nada desde ayer' });
+    if (b.hot?.count) cards.push({ id: 'calientes', icon: '🔥', label: 'Interesados calientes', value: b.hot.count, alert: true, note: b.hot.names.slice(0, 3).join(' · ') });
     if (b.tasks) cards.push({ id: 'tareas', icon: '📋', label: `Plane · ${b.tasks.project}`, value: b.tasks.late + b.tasks.today, alert: b.tasks.late > 0, note: `${b.tasks.late} atrasadas · ${b.tasks.today} hoy · ${b.tasks.open} abiertas`, list: b.tasks.items.slice(0, 3).map((k) => k.name) });
     for (const m of b.money) cards.push({ id: m.id, icon: m.id === 'trm' ? '💵' : '₿', label: m.id === 'trm' ? 'Dólar (TRM)' : 'Bitcoin', value: m.value, unit: m.id === 'trm' ? 'COP' : 'USD', decimals: m.id === 'trm' ? 2 : 0, change: m.change, changeUnit: m.id === 'trm' ? 'pesos' : '%' });
     if (b.workshop && (b.workshop.busy || b.workshop.done.length || b.workshop.failed.length)) cards.push({ id: 'taller', icon: '🛠', label: 'Taller', note: [b.workshop.busy && 'trabajando', b.workshop.done.length && `terminó ${b.workshop.done.join(', ')}`, b.workshop.failed.length && `con error ${b.workshop.failed.join(', ')}`].filter(Boolean).join(' · '), alert: b.workshop.failed.length > 0 });

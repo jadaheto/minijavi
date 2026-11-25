@@ -89,6 +89,12 @@
             <select id="lead-level" aria-label="Nivel"><option value="">Todos los niveles</option><option value="caliente">Calientes</option><option value="tibio">Tibios</option><option value="frio">Fríos</option></select>
             <select id="lead-order" aria-label="Orden"><option value="puntos">Mayor puntaje primero</option><option value="fecha">Más recientes primero</option></select>
           </div>
+          <details class="tune" id="score-tune">
+            <summary>Ajustar los puntos <small id="score-acc"></small></summary>
+            <p class="muted">Cada interesado arranca en la base y suma o resta según lo que hizo. El cambio se aplica enseguida a todos. Poner una señal en 0 la apaga. El puntaje solo ordena esta lista: no envía nada ni cambia el estado de nadie.</p>
+            <div class="tune-grid" id="score-fields"></div>
+            <small class="danger-text" id="score-msg"></small>
+          </details>
           <ul class="list" id="lead-list"></ul>
           <h2 style="margin-top:18px">No contactar <small id="optout-count"></small></h2>
           <p class="muted" style="margin:0">Quien pide que no lo contacten queda aquí y el avatar no le escribe ni lo llama por su cuenta. Si vuelve a escribir, sí se le responde. Solo tú puedes quitar una marca.</p>

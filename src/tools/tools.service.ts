@@ -41,6 +41,7 @@ export interface ToolResult { text: string; scene?: string; reaction?: string; c
   /** El resultado es contenido leido de esta conexion (su identificador). */ cx?: string; }
 
 import { GoogleService, describeAgenda } from '../google/google.service';
+import { ScoringService } from '../scoring/scoring.service';
 export { asData } from './data';
 import { asData } from './data';
 import { CX_PREFIX, ConnectionsService } from '../connections/connections.service';
@@ -130,7 +131,7 @@ export class ToolsService {
   private readonly tools: Record<string, Tool>;
   /** Herramientas locales que solo existen en sesiones del dueño. */
   private readonly ownerTools: Record<string, Tool>;
-  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService, news?: NewsService, markets?: PolymarketService, panels?: PanelsService, maps?: MapsService, newsCo?: ColombiaNewsService, brief?: BriefService, demos?: DemoDocsService, private readonly connections?: ConnectionsService, google?: GoogleService) {
+  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService, news?: NewsService, markets?: PolymarketService, panels?: PanelsService, maps?: MapsService, newsCo?: ColombiaNewsService, brief?: BriefService, demos?: DemoDocsService, private readonly connections?: ConnectionsService, google?: GoogleService, scoring?: ScoringService) {
     this.tools = {
       hora_actual: {
         description: 'Devuelve la fecha y la hora actuales. Usala cuando pregunten que hora es o que dia es hoy.',
@@ -707,6 +708,24 @@ export class ToolsService {
         return { untrusted: true, markets: { action: 'list', title: shown.title, items: events },
           text: `En pantalla hay ${events.length} mercados numerados con sus probabilidades.\n${asData('Polymarket (títulos y cifras de terceros)', lines.join('\n'))}\n` +
             `Cuéntale dos o tres en una frase cada uno, diciendo "el mercado le da un X por ciento a...", y dile que puede abrir cualquiera por su número para ver su gráfica. ${rules}` };
+      },
+    };
+    // Calificacion de interesados: quienes estan calientes, tibios o frios, con el porque. Solo informa.
+    if (scoring) this.ownerTools.interesados_calificados = {
+      description:
+        'Dice qué interesados están calientes, tibios o fríos según su puntaje, del más alto al más bajo, con lo que les sumó y les restó. Úsala cuando Javier pregunte quiénes están calientes, a quién llamar primero o cómo va un interesado. ' +
+        'Solo informa: no contacta a nadie ni cambia estados. Si quiere actuar sobre uno, eso va con actualizar_interesado y con su confirmación.',
+      parameters: { type: 'object', properties: {
+        nivel: { type: 'string', enum: ['caliente', 'tibio', 'frio'], description: 'Qué nivel quiere oír. Por defecto, caliente.' },
+        cuantos: { type: 'integer', description: 'Cuántos como máximo (por defecto 5).' },
+      } },
+      run: async (args: Record<string, unknown>): Promise<ToolResult | string> => {
+        const level = (['tibio', 'frio'].includes(String(args.nivel)) ? String(args.nivel) : 'caliente') as 'caliente' | 'tibio' | 'frio', max = Math.min(10, Math.max(1, Math.round(Number(args.cuantos)) || 5));
+        const all = await this.leads.list(200), top = await scoring.top(all, level, max), t = scoring.table();
+        const word = { caliente: 'calientes', tibio: 'tibios', frio: 'fríos' }[level];
+        if (!top.length) return `No hay interesados ${word} ahora mismo (caliente es de ${t.hot} puntos en adelante; tibio, de ${t.warm}). Díselo así.`;
+        const lines = top.map(({ lead: l, rating: r }) => `#${l.id} ${l.name}${l.company ? ` (${l.company})` : ''} — ${r.score} puntos · estado ${l.status}${r.items.length ? ` · ${r.items.map((i) => `${i.points > 0 ? '+' : ''}${i.points} ${i.label.toLowerCase()}`).join('; ')}` : ' · solo la base'}`);
+        return { untrusted: true, text: `${asData('los interesados (nombres y empresas escritos por ellos)', lines.join('\n'))}\nHay ${top.length} ${word}${top.length === max ? ' (o más)' : ''}. Dile quiénes son y, de cada uno, lo más importante de por qué tiene ese puntaje, en pocas frases. No leas teléfonos ni todos los puntos. El puntaje es una guía hecha con reglas, no una certeza.` };
       },
     };
     // Agenda de Google de Javier: solo lectura (el permiso que se pide a Google no deja crear ni cambiar nada).

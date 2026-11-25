@@ -1,7 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
 import { DbService } from '../db/db.service';
-import { contactKey } from '../security/optout.service';
+import { OptOutService, contactKey } from '../security/optout.service';
 import { SettingsService } from '../settings/settings.service';
 
 /**
@@ -67,7 +67,7 @@ export class ScoringService {
   /** Para las pruebas: la hora "de ahora". */
   now: () => Date = () => new Date();
 
-  constructor(private readonly cfg: ConfigService, private readonly db: DbService, private readonly settings: SettingsService) {
+  constructor(private readonly cfg: ConfigService, private readonly db: DbService, private readonly settings: SettingsService, @Optional() private readonly optout?: OptOutService) {
     const g = 'puntos';
     settings.define('puntos.base', { type: 'number', def: 40, min: 0, max: 100, label: 'Puntos con los que arranca cada interesado', group: g });
     settings.define('puntos.caliente', { type: 'number', def: 80, min: 1, max: 100, label: 'Desde cuántos puntos es caliente', group: g });
@@ -81,6 +81,15 @@ export class ScoringService {
   /** La tabla vigente (para el panel): cada señal con sus puntos de ahora. */
   table() { return { base: this.pts('base'), hot: this.pts('caliente'), warm: Math.min(this.pts('tibio'), this.pts('caliente') - 1), signals: SIGNALS.map((s) => ({ id: s.id, label: s.label, hint: s.hint, points: s.sign * this.pts(s.id) })), days: Object.fromEntries(SCORE_DAYS.map((d) => [d.id, this.settings.number(`puntos.${d.id}`)])) }; }
 
+  /** Los ajustes de la calificacion tal como los edita el panel (clave, etiqueta, valor, limites). */
+  editable() { return this.settings.list().filter((s) => s.group === 'puntos'); }
+
+  /** Los interesados de un nivel, de mayor a menor puntaje (para la voz y el resumen). */
+  async top<T extends ScoredLead>(leads: T[], level: 'caliente' | 'tibio' | 'frio', max = 5): Promise<{ lead: T; rating: LeadScore }[]> {
+    const scores = await this.forLeads(leads);
+    return leads.map((lead) => ({ lead, rating: scores.get(lead.id)! })).filter((x) => x.rating?.level === level).sort((a, b) => (b.rating.score ?? 0) - (a.rating.score ?? 0)).slice(0, max);
+  }
+
   level(score: number): 'caliente' | 'tibio' | 'frio' { const t = this.table(); return score >= t.hot ? 'caliente' : score >= t.warm ? 'tibio' : 'frio'; }
 
   /**
@@ -88,7 +97,7 @@ export class ScoringService {
    * "no contactar"). Hace unas pocas consultas para todos, no una por interesado. Nunca lanza: si una fuente falla, sus
    * señales simplemente no cuentan.
    */
-  async forLeads(leads: ScoredLead[], blocked: (contact: string) => boolean = () => false): Promise<Map<number, LeadScore>> {
+  async forLeads(leads: ScoredLead[], blocked: (contact: string) => boolean = (c) => this.optout?.blocked(c) ?? false): Promise<Map<number, LeadScore>> {
     const out = new Map<number, LeadScore>(); if (!leads.length) return out;
     const biz = this.cfg.businessId, now = this.now().getTime();
     const key = (c: string) => contactKey(c, this.cfg.whatsappDefaultCountry);

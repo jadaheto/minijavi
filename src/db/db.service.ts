@@ -88,6 +88,8 @@ const SCHEMA = [
      turns INTEGER NOT NULL DEFAULT 0, leads TEXT NOT NULL DEFAULT '', cases INTEGER NOT NULL DEFAULT 0)`,
   // Entrega y lectura de lo que se le envia a cada numero por WhatsApp (avisos `statuses` de Meta): lo ultimo de cada tipo.
   `CREATE TABLE IF NOT EXISTS wa_delivery (phone TEXT PRIMARY KEY, sent_at TEXT NOT NULL DEFAULT '', delivered_at TEXT NOT NULL DEFAULT '', read_at TEXT NOT NULL DEFAULT '', failed_at TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '')`,
+  // Lo que opina Javier de la calificacion de un interesado (bien | mal), con el puntaje que tenia al marcarla.
+  `CREATE TABLE IF NOT EXISTS lead_marks (lead_id INTEGER PRIMARY KEY, at TEXT NOT NULL, score INTEGER NOT NULL DEFAULT 0, level TEXT NOT NULL DEFAULT '', mark TEXT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS leads_created ON leads (created_at)`,
   `CREATE INDEX IF NOT EXISTS conversations_at ON conversations (at)`,
   `CREATE INDEX IF NOT EXISTS jobs_at ON jobs (at)`,
