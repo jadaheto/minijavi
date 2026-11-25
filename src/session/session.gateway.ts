@@ -91,6 +91,7 @@ interface Session {
   cxSeen?: Map<string, Set<string>>;
   mail?: { items: { id: string; from: string; subject: string }[] }; // correos listados en esta conversacion
   files?: { items: { id: string; name: string }[] };                  // archivos de Drive listados en esta conversacion
+  docs?: { pending?: { key: string; turn: number } };                 // documento que el avatar propuso crear y espera el «sí»
   notes: { text: string; card?: unknown; slug?: string; gallery?: Omit<GalleryState, 'index'>; image?: GalleryItem; images?: GalleryItem[]; audit?: string }[]; // avisos del taller pendientes de contar
   noteTimer?: NodeJS.Timeout;
   startedAt: number;
@@ -979,7 +980,7 @@ export class SessionGateway implements OnGatewayConnection {
             this.log.warn(`sesion #${s.n}: ${c.name} bloqueada (${auto ? 'aviso automatico' : 'el turno ya leyo texto de otra fuente'})`);
             result = 'NO se ejecutó. Por seguridad, una consulta a una conexión no corre en un aviso automático ni en la misma respuesta en que leíste datos de otra fuente. Dile a Javier qué ibas a consultar y pídele que te lo confirme; si dice que sí, vuelve a llamarla.';
           }
-          else if (s.cxSeen && [...s.cxSeen].some(([slug, seen]) => slug !== (c.name.startsWith(CX_PREFIX) ? this.connections?.voiceSlug(c.name) : '') && (GOOGLE_READS[c.name] !== slug || /"accion"\s*:\s*"buscar"/.test(c.arguments)) && carries(c.arguments, seen))) {
+          else if (s.cxSeen && [...s.cxSeen].some(([slug, seen]) => slug !== (c.name.startsWith(CX_PREFIX) ? this.connections?.voiceSlug(c.name) : '') && c.name !== 'crear_documento' && (GOOGLE_READS[c.name] !== slug || /"accion"\s*:\s*"buscar"/.test(c.arguments)) && carries(c.arguments, seen))) {
             this.log.warn(`sesion #${s.n}: ${c.name} bloqueada (lleva texto copiado de una conexion)`); this.usage.add('conexion_fuga_bloqueada');
             result = 'NO se ejecutó: lo que ibas a enviar trae texto copiado de una conexión, y lo leído en una conexión no sale hacia otras herramientas (taller, imágenes, interesados, portafolio, búsquedas ni otra conexión). Díselo a Javier y pídele que te dicte con sus propias palabras lo que quiere.';
           }
@@ -988,8 +989,8 @@ export class SessionGateway implements OnGatewayConnection {
             result = 'NO se ejecutó. Por seguridad, esta acción no corre en la misma respuesta en que leíste datos de terceros ni en un aviso automático. Dile a Javier qué ibas a hacer y pídele que te lo confirme; si dice que sí, vuelve a llamar la herramienta.';
           }
           else {
-            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, news: (s.news ??= { index: 0 }), mail: (s.mail ??= { items: [] }), files: (s.files ??= { items: [] }), marketList: (s.marketList ??= { items: [], title: '' }), places: (s.places ??= { chargers: [] }), locate: s.owner && !s.callerPhone && !s.gadget ? () => this.locate(client, s) : undefined, demo: s.demo, canUpload: !!this.demoDocs?.enabled && !s.callerPhone && !s.gadget && (!s.demo.doc || s.demo.doc.state === 'esperando'), source: s.callerPhone ? 'llamada' : 'voz',
-              notify: (note) => { if (s.ready) { s.notes.push(note); this.pumpNotes(client, s); } },
+            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, news: (s.news ??= { index: 0 }), mail: (s.mail ??= { items: [] }), files: (s.files ??= { items: [] }), docs: (s.docs ??= {}), turn: s.userTurns, auto, marketList: (s.marketList ??= { items: [], title: '' }), places: (s.places ??= { chargers: [] }), locate: s.owner && !s.callerPhone && !s.gadget ? () => this.locate(client, s) : undefined, demo: s.demo, canUpload: !!this.demoDocs?.enabled && !s.callerPhone && !s.gadget && (!s.demo.doc || s.demo.doc.state === 'esperando'), source: s.callerPhone ? 'llamada' : 'voz',
+              notify: (note) => { if (s.ready) { s.notes.push(note as Session['notes'][number]); this.pumpNotes(client, s); } },
               cxRead: (slug, raw) => { const all = (s.cxSeen ??= new Map<string, Set<string>>()); if (!all.has(slug)) all.set(slug, new Set()); remember(all.get(slug)!, raw); } });
             if (c.name === 'buscar_imagenes' && out.gallery) s.imageSearches++;
             if (out.gallery) this.sendGallery(client, s, out.gallery);

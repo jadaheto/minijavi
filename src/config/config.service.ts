@@ -131,6 +131,8 @@ export class ConfigService {
   readonly googleDailyCalls: number;
   /** Cada cuantos minutos se revisa si llego correo nuevo para avisar (0 = sin avisos de correo). */
   readonly mailNoticeMinutes: number;
+  /** Cuantos archivos puede crear el avatar en el Drive de Javier por dia (0 = no puede crear). */
+  readonly googleCreateDaily: number;
   /** Noticias de IA: webhook (https) que devuelve la pagina del boletin, y hora local desde la que se piden una vez al dia. */
   readonly newsUrl: string;
   readonly newsHour: number;
@@ -412,6 +414,7 @@ export class ConfigService {
     this.googleRedirectUri = str('GOOGLE_REDIRECT_URI');
     this.googleDailyCalls = int('GOOGLE_CONSULTAS_DIA', 400, 1);
     this.mailNoticeMinutes = Math.min(120, int('CORREO_AVISOS_MIN', 5, 0));
+    this.googleCreateDaily = Math.min(200, int('GOOGLE_CREAR_DIA', 20, 0));
     this.spotifyMarket = /^[A-Za-z]{2}$/.test(str('SPOTIFY_MARKET')) ? str('SPOTIFY_MARKET').toUpperCase() : 'CO';
     this.musicDefaultQuery = str('MUSIC_DEFAULT_QUERY', 'lofi para programar');
     this.musicVolume = Math.min(100, int('MUSIC_VOLUME', 15, 0));

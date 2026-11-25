@@ -839,7 +839,7 @@ $('spotify-disconnect').addEventListener('click', async () => { await api('spoti
 
 // Google: solo lectura (por ahora, la agenda). El permiso que se pide no deja crear ni cambiar nada.
 const GOOGLE_BACK = { ok: 'Cuenta de Google conectada.', cancelado: 'No se conectó: cancelaste la autorización en Google.', error: 'No se pudo conectar con Google.' };
-const GOOGLE_PARTS = { agenda: 'la agenda', correo: 'el correo', drive: 'Drive' };
+const GOOGLE_PARTS = { agenda: 'la agenda', correo: 'el correo', drive: 'Drive', crear: 'crear documentos' };
 let googleBack = new URLSearchParams(location.search).get('google') || '', googleWhy = new URLSearchParams(location.search).get('motivo') || '';
 if (googleBack) history.replaceState(null, '', location.pathname + location.hash);
 async function loadGoogle() {
@@ -847,10 +847,13 @@ async function loadGoogle() {
   const off = !st.configured && /apagado|modo negocio|modo dueño/.test(st.problem || '');
   $('google-card').hidden = off; if (off) return;
   const parts = (st.parts || []).map((p) => GOOGLE_PARTS[p] || p).join(', ');
-  $('google-state').textContent = !st.configured ? `Sin configurar: ${st.problem}.` : st.connected ? `Conectado${st.account ? ` como ${st.account}` : ''} desde ${fecha(st.since)}. Puede leer ${parts || 'nada todavía'}.` : 'Sin conectar: el avatar no puede ver tu agenda.';
+  $('google-state').textContent = !st.configured ? `Sin configurar: ${st.problem}.` : st.connected ? `Conectado${st.account ? ` como ${st.account}` : ''} desde ${fecha(st.since)}. Puede: ${parts || 'nada todavía'}.` : 'Sin conectar: el avatar no puede ver tu agenda.';
   $('google-state').className = st.connected ? 'ok' : '';
   $('google-note').textContent = [GOOGLE_BACK[googleBack] ? `${GOOGLE_BACK[googleBack]}${googleBack === 'error' && googleWhy ? ` (${googleWhy})` : ''}` : '', st.error || '', (st.missing || []).length ? `Falta permiso para ${st.missing.map((p) => GOOGLE_PARTS[p] || p).join(', ')}: vuelve a conectar.` : '',
-    st.connected ? `Solo lectura. Al pedirle un correo o un archivo, su texto se le entrega al modelo de lenguaje para que te lo cuente; no se guarda. Consultas de hoy: ${st.usedToday} de ${st.dailyLimit}.` : st.configured ? 'Te lleva a Google para autorizar y vuelve aquí. Solo se pide permiso de LECTURA: el avatar no puede crear, cambiar ni borrar nada.' : `Dirección de retorno para registrar en Google Cloud: ${st.redirect || '(falta PUBLIC_URL)'}`].filter(Boolean).join(' ');
+    st.connected ? `Lee tu agenda, tu correo y tu Drive; solo puede crear archivos nuevos en la carpeta «minijavi» y no puede cambiar, compartir ni borrar los tuyos. Al pedirle un correo o un archivo, su texto se le entrega al modelo de lenguaje para que te lo cuente; no se guarda. Consultas de hoy: ${st.usedToday} de ${st.dailyLimit}.` : st.configured ? 'Te lleva a Google para autorizar y vuelve aquí. Solo se pide permiso de LECTURA: el avatar no puede crear, cambiar ni borrar nada.' : `Dirección de retorno para registrar en Google Cloud: ${st.redirect || '(falta PUBLIC_URL)'}`].filter(Boolean).join(' ');
+  // Lo que el avatar ha creado en tu Drive (solo puede tocar esos archivos).
+  $('google-made').replaceChildren(...(st.created || []).map((f) => el('li', {}, el('a', { href: `https://docs.google.com/document/d/${encodeURIComponent(f.file_id)}/edit`, target: '_blank', rel: 'noopener', textContent: f.title || 'Documento' }), el('small', { className: 'muted', textContent: ` · ${fecha(f.at)} · ${f.chars} caracteres · ${f.source}` }))));
+  $('google-made-title').hidden = !(st.created || []).length; if (st.createdToday) $('google-made-title').textContent = `Creados por el avatar (hoy ${st.createdToday.n} de ${st.createdToday.limit})`;
   $('google-connect').hidden = !st.configured; $('google-connect').textContent = st.connected ? 'Volver a conectar' : 'Conectar Google';
   $('google-disconnect').hidden = !st.connected;
 }

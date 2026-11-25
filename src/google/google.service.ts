@@ -30,6 +30,12 @@ import { UsageService } from '../usage/usage.service';
  *    barra invertida), orderBy, pageSize y fields; `GET .../files/{id}?alt=media` da el contenido de un archivo guardado
  *    en Drive; los documentos de Google se sacan con `GET .../files/{id}/export?mimeType=` (texto llano para
  *    documentos y presentaciones, CSV de la primera hoja para hojas de calculo; tope de 10 MB).
+ *  - Leer mejor y crear (referencias de Docs v1, Sheets v4, Slides v1 y Drive v3 leidas el 2026-11-24): Sheets
+ *    `GET .../spreadsheets/{id}` (pestañas) y `.../values:batchGet?ranges=` y Slides `GET .../presentations/{id}` aceptan
+ *    `drive.readonly`. Crear: `POST .../drive/v3/files` (solo metadatos: nombre, tipo y carpeta) y
+ *    `POST docs.googleapis.com/v1/documents/{id}:batchUpdate` (insertText, updateParagraphStyle, createParagraphBullets)
+ *    aceptan `drive.file`. El valor `BULLET_DISC_CIRCLE_SQUARE` de las viñetas y la forma exacta de las diapositivas
+ *    vienen de conocimiento previo, no de esas paginas: si el formato falla, el documento queda en texto llano.
  *  - Agenda: `GET https://www.googleapis.com/calendar/v3/calendars/primary/events` con timeMin, timeMax (RFC 3339),
  *    singleEvents=true y orderBy=startTime (solo vale con singleEvents), maxResults, timeZone.
  *
@@ -42,10 +48,16 @@ const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth', TOKEN_URL = 'ht
 const CALENDAR = 'https://www.googleapis.com/calendar/v3';
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const DRIVE = 'https://www.googleapis.com/drive/v3';
+const DOCS = 'https://docs.googleapis.com/v1/documents', SHEETS = 'https://sheets.googleapis.com/v4/spreadsheets', SLIDES = 'https://slides.googleapis.com/v1/presentations';
+const FOLDER_KEY = 'google_folder', FOLDER_NAME = 'minijavi', MIME_FOLDER = 'application/vnd.google-apps.folder', MIME_DOC = 'application/vnd.google-apps.document';
 /** Permisos por parte. Cada parte nueva (correo, Drive) suma el suyo y pide volver a conectar: nunca se pide de mas. */
-export const GOOGLE_SCOPES = { agenda: 'https://www.googleapis.com/auth/calendar.readonly', correo: 'https://www.googleapis.com/auth/gmail.readonly', drive: 'https://www.googleapis.com/auth/drive.readonly' } as const;
+export const GOOGLE_SCOPES = { agenda: 'https://www.googleapis.com/auth/calendar.readonly', correo: 'https://www.googleapis.com/auth/gmail.readonly', drive: 'https://www.googleapis.com/auth/drive.readonly', crear: 'https://www.googleapis.com/auth/drive.file' } as const;
 export type GooglePart = keyof typeof GOOGLE_SCOPES;
-/** Lo unico que esta clase acepta tener: si Google devolviera un permiso que no es de lectura, no se guarda. */
+/**
+ * Lo unico que esta clase acepta tener: permisos de lectura y UNO de escritura, `drive.file`, con el que Google solo deja
+ * tocar los archivos que esta misma aplicacion creo (los demas siguen siendo de solo lectura). Cualquier otro no se guarda.
+ */
+const WRITE_OWN = 'https://www.googleapis.com/auth/drive.file';
 const READ_ONLY = /^(openid|email|profile|https:\/\/www\.googleapis\.com\/auth\/(userinfo\.(email|profile)|[a-z.]+\.readonly))$/;
 
 interface Stored { refresh: string; scope: string; since: string; account: string }
@@ -55,7 +67,8 @@ export interface Agenda { title: string; from: string; to: string; days: AgendaD
 export interface MailItem { id: string; from: string; subject: string; date: string; when: string; snippet: string; unread: boolean }
 export interface MailFull extends MailItem { to: string; text: string; truncated: boolean; attachments: number }
 export interface DriveFile { id: string; name: string; kind: string; mime: string; when: string; owner: string; readable: boolean }
-export interface DriveDoc extends DriveFile { text: string; truncated: boolean; note: string }
+export interface DriveDoc extends DriveFile { text: string; truncated: boolean; note: string; /** Hojas de calculo: nombres de sus pestañas y cual se leyo. */ tabs?: string[]; tab?: string }
+export interface CreatedFile { id: string; title: string; link: string; chars: number; styled: boolean }
 export class GoogleError extends Error { constructor(message: string, readonly status = 0) { super(message); } }
 
 const clean = (s: unknown, max: number) => String(s ?? '').replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -143,8 +156,8 @@ export class GoogleService implements OnModuleInit {
     if (!st || st.until < Date.now()) throw new GoogleError('esa autorización no existe, ya se usó o venció');
     const d = await this.token({ grant_type: 'authorization_code', code, redirect_uri: st.redirect });
     const scope = clean(d.scope, 2000), granted = scope.split(' ').filter(Boolean);
-    const extra = granted.filter((s) => !READ_ONLY.test(s));
-    if (extra.length) { void this.revoke(String(d.refresh_token || d.access_token)); throw new GoogleError('Google devolvió un permiso que no es de solo lectura; no se guardó nada'); }
+    const extra = granted.filter((s) => !READ_ONLY.test(s) && s !== WRITE_OWN);
+    if (extra.length) { void this.revoke(String(d.refresh_token || d.access_token)); throw new GoogleError('Google devolvió un permiso que no es de los pedidos; no se guardó nada'); }
     if (!d.refresh_token) throw new GoogleError('Google no entregó el permiso de larga duración; quita el acceso de minijavi en tu cuenta de Google y conecta de nuevo');
     if (!granted.some((s) => (Object.values(GOOGLE_SCOPES) as string[]).includes(s))) throw new GoogleError('no diste ninguno de los permisos que se pidieron');
     this.access = { token: String(d.access_token), until: Date.now() + (Number(d.expires_in) || 3000) * 1000 - 60_000 };
@@ -336,16 +349,128 @@ export class GoogleService implements OnModuleInit {
    * hojas de calculo como CSV de su primera hoja, y los archivos de texto tal cual. PDF, Word, imagenes y demas NO se leen
    * aqui: se devuelve solo su ficha, con una nota.
    */
-  async fileRead(id: string): Promise<DriveDoc> {
+  async fileRead(id: string, tab = ''): Promise<DriveDoc> {
     if (!this.has('drive')) throw new GoogleError('el permiso guardado no incluye Drive: vuelve a conectar Google en el panel');
     if (!/^[A-Za-z0-9_-]{10,100}$/.test(String(id))) throw new GoogleError('ese archivo no existe');
     const meta = this.driveFile(await this.get(`${DRIVE}/files/${id}`, { fields: 'id,name,mimeType,modifiedTime,owners(displayName)' })), MAX = 6000;
     if (!meta.readable) return { ...meta, text: '', truncated: false, note: `es ${meta.kind === 'Archivo' ? 'un archivo' : `un ${meta.kind}`.replace('un Imagen', 'una imagen').replace('un Hoja', 'una hoja').replace('un Presentación', 'una presentación')} y aquí solo se pueden leer documentos, hojas de cálculo, presentaciones de Google y archivos de texto` };
+    // Hojas de calculo y presentaciones: por sus propias API (todas las pestañas; cada diapositiva con sus notas). Si esa
+    // API no esta encendida en el proyecto o falla, se cae a la exportacion de Drive de siempre.
+    if (meta.mime.endsWith('spreadsheet')) { const r = await this.sheetRead(id, tab).catch(() => null); if (r) return { ...meta, text: r.text.slice(0, MAX), truncated: r.text.length > MAX, note: r.tabs.length > 1 ? `pestaña «${r.tab}» de ${r.tabs.length}` : '', tabs: r.tabs, tab: r.tab }; }
+    if (meta.mime.endsWith('presentation')) { const r = await this.slidesRead(id).catch(() => null); if (r) return { ...meta, text: r.text.slice(0, MAX), truncated: r.text.length > MAX, note: `${r.slides} diapositiva${r.slides === 1 ? '' : 's'}` }; }
     const google = meta.mime.startsWith('application/vnd.google-apps.');
     const r = google ? await this.getText(`${DRIVE}/files/${id}/export`, { mimeType: meta.mime.endsWith('spreadsheet') ? 'text/csv' : 'text/plain' }, 400_000) : await this.getText(`${DRIVE}/files/${id}`, { alt: 'media' }, 400_000);
     const text = r.text.replace(/^﻿/, '').replace(/\r/g, '').replace(/[\u0000-\u0008\u000b-\u001f]/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
     return { ...meta, text: text.slice(0, MAX), truncated: r.cut || text.length > MAX, note: meta.mime.endsWith('spreadsheet') ? 'solo la primera hoja' : '' };
   }
+
+  /** Una hoja de calculo por la API de Sheets: sus pestañas y los valores de una (la pedida, o la primera). */
+  private async sheetRead(id: string, tab: string): Promise<{ text: string; tabs: string[]; tab: string }> {
+    const meta = await this.get(`${SHEETS}/${id}`, { fields: 'sheets.properties(title,sheetType)' });
+    const tabs: string[] = (Array.isArray(meta?.sheets) ? meta.sheets : []).filter((x: any) => (x?.properties?.sheetType ?? 'GRID') === 'GRID').map((x: any) => clean(x?.properties?.title, 80)).filter(Boolean).slice(0, 40);
+    if (!tabs.length) throw new GoogleError('la hoja no tiene pestañas');
+    const want = clean(tab, 80).toLowerCase(), pick = tabs.find((t) => t.toLowerCase() === want) ?? tabs.find((t) => want && t.toLowerCase().includes(want)) ?? tabs[0];
+    const d = await this.get(`${SHEETS}/${id}/values:batchGet`, { ranges: `'${pick.replace(/'/g, "''")}'!A1:Z200` });
+    const rows: unknown[][] = Array.isArray(d?.valueRanges?.[0]?.values) ? d.valueRanges[0].values : [];
+    return { tabs, tab: pick, text: rows.map((r) => (Array.isArray(r) ? r : []).map((c) => clean(c, 200)).join(' | ')).filter((l) => l.replace(/[| ]/g, '')).join('\n') };
+  }
+
+  /** Una presentacion por la API de Slides: el texto de cada diapositiva y sus notas del orador. */
+  private async slidesRead(id: string): Promise<{ text: string; slides: number }> {
+    const d = await this.get(`${SLIDES}/${id}`, { fields: 'slides(pageElements(shape(text(textElements(textRun(content)))),table(tableRows(tableCells(text(textElements(textRun(content))))))),slideProperties(notesPage(pageElements(shape(text(textElements(textRun(content))))))))' });
+    const runs = (el: any): string => (Array.isArray(el?.shape?.text?.textElements) ? el.shape.text.textElements : []).map((t: any) => String(t?.textRun?.content ?? '')).join('')
+      + (Array.isArray(el?.table?.tableRows) ? el.table.tableRows.map((r: any) => (r?.tableCells ?? []).map((c: any) => (c?.text?.textElements ?? []).map((t: any) => String(t?.textRun?.content ?? '')).join('').trim()).join(' | ')).join('\n') : '');
+    const tidy = (t: string) => t.replace(/\r/g, '').replace(/[\u0000-\u0008\u000b-\u001f]/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n{2,}/g, '\n').trim();
+    const slides: any[] = Array.isArray(d?.slides) ? d.slides.slice(0, 80) : [];
+    const text = slides.map((sl, k) => { const body = tidy((sl?.pageElements ?? []).map(runs).join('\n')), notes = tidy((sl?.slideProperties?.notesPage?.pageElements ?? []).map(runs).join('\n')); return `Diapositiva ${k + 1}:\n${body || '(sin texto)'}${notes ? `\nNotas: ${notes}` : ''}`; }).join('\n\n');
+    return { text, slides: slides.length };
+  }
+
+  // ---------- crear ----------
+  /**
+   * Lo UNICO que esta clase envia para cambiar algo, y solo hacia dos direcciones: crear un archivo en Drive (una carpeta o
+   * un documento vacio) y escribir dentro de un documento. No hay borrar, mover, compartir ni cambiar permisos. Ademas el
+   * permiso (`drive.file`) solo alcanza a los archivos que esta aplicacion creo.
+   */
+  private async write(url: string, body: Record<string, unknown>, params: Record<string, string> = {}): Promise<any> {
+    if (!this.has('crear')) throw new GoogleError(this.connected ? 'el permiso guardado no incluye crear documentos: vuelve a conectar Google en el panel' : 'Google no está conectado: se conecta en el panel, en Dispositivos');
+    const ok = url === `${DRIVE}/files` ? [MIME_FOLDER, MIME_DOC].includes(String(body.mimeType)) && !('permissions' in body) : /^https:\/\/docs\.googleapis\.com\/v1\/documents\/[A-Za-z0-9_-]{10,100}:batchUpdate$/.test(url);
+    if (!ok) throw new GoogleError('esa operación no está permitida');
+    const today = this.day(); if (this.used.day !== today) this.used = { day: today, n: 0 };
+    if (this.used.n >= this.cfg.googleDailyCalls) throw new GoogleError('se llegó al tope de consultas a Google de hoy');
+    this.used.n++; this.usage?.add('google_calls');
+    const q = new URLSearchParams(params).toString();
+    const res = await fetch(q ? `${url}?${q}` : url, { method: 'POST', headers: { Authorization: `Bearer ${await this.accessToken()}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(20_000) });
+    if (res.status === 401) this.access = undefined;
+    if (!res.ok) {
+      const err: any = await res.json().catch(() => ({})), why = JSON.stringify([err?.error?.status, err?.error?.errors, err?.error?.message]).slice(0, 800);
+      this.log.warn(`Google respondió ${res.status} al crear (${new URL(url).hostname})`);
+      if (res.status === 403 && /accessNotConfigured|SERVICE_DISABLED|has not been used in project|is disabled/i.test(why)) throw new GoogleError(`la ${/docs\./.test(url) ? 'Google Docs API' : 'Google Drive API'} no está encendida en tu proyecto de Google Cloud`, 403);
+      throw new GoogleError(res.status === 403 ? 'Google no dejó crear el archivo (permiso insuficiente)' : `Google respondió ${res.status} al crear`, res.status);
+    }
+    return res.json().catch(() => ({}));
+  }
+
+  /** La carpeta «minijavi» del Drive, creada por el avatar (solo en una carpeta suya puede poner archivos). Se recuerda su identificador. */
+  private async folder(): Promise<string> {
+    const saved = (await this.db.query<{ value: string }>('SELECT value FROM meta WHERE key = $1', [FOLDER_KEY]))[0]?.value;
+    if (saved && /^[A-Za-z0-9_-]{10,100}$/.test(saved)) { const f = await this.get(`${DRIVE}/files/${saved}`, { fields: 'id,trashed' }).catch(() => null); if (f?.id && !f.trashed) return saved; }
+    const made = await this.write(`${DRIVE}/files`, { name: FOLDER_NAME, mimeType: MIME_FOLDER }, { fields: 'id' });
+    if (!/^[A-Za-z0-9_-]{10,100}$/.test(String(made?.id ?? ''))) throw new GoogleError('Google no devolvió la carpeta creada');
+    await this.db.query('DELETE FROM meta WHERE key = $1', [FOLDER_KEY]); await this.db.query('INSERT INTO meta (key, value) VALUES ($1, $2)', [FOLDER_KEY, made.id]);
+    return made.id;
+  }
+
+  /** Cuantos archivos ha creado hoy (hora del negocio) y el tope. */
+  async createdToday(): Promise<{ n: number; limit: number }> {
+    const since = this.startOf(this.day()).toISOString();
+    return { n: (await this.db.query('SELECT id FROM google_created WHERE at >= $1', [since])).length, limit: this.cfg.googleCreateDaily };
+  }
+  created(limit = 8) { return this.db.query<{ id: number; at: string; kind: string; file_id: string; title: string; chars: number; source: string }>('SELECT * FROM google_created ORDER BY id DESC LIMIT $1', [Math.min(50, limit)]); }
+
+  /**
+   * Crea un documento de Google NUEVO y privado en la carpeta «minijavi». `content` usa un formato minimo: "# " titulo de
+   * seccion, "## " subtitulo, "- " viñeta; lo demas, parrafos. `source`: de donde salio el texto (para el registro).
+   * No comparte el documento con nadie y no toca ningun otro archivo.
+   */
+  async createDoc(title: string, content: string, source = 'dictado'): Promise<CreatedFile> {
+    const name = clean(title, 120), text = String(content ?? '').replace(/\r/g, '').replace(/[\u0000-\u0008\u000b-\u001f]/g, ' ').trim().slice(0, 30_000);
+    if (name.length < 2) throw new GoogleError('falta el título del documento');
+    if (text.length < 10) throw new GoogleError('falta el contenido del documento');
+    const today = await this.createdToday();
+    if (today.limit <= 0) throw new GoogleError('crear documentos está apagado (GOOGLE_CREAR_DIA=0)');
+    if (today.n >= today.limit) throw new GoogleError(`ya se crearon ${today.n} archivos hoy, que es el tope`);
+    const made = await this.write(`${DRIVE}/files`, { name, mimeType: MIME_DOC, parents: [await this.folder()] }, { fields: 'id,webViewLink' });
+    const id = String(made?.id ?? ''); if (!/^[A-Za-z0-9_-]{10,100}$/.test(id)) throw new GoogleError('Google no devolvió el documento creado');
+    await this.db.query('INSERT INTO google_created (at, kind, file_id, title, chars, source) VALUES ($1, $2, $3, $4, $5, $6)', [new Date().toISOString(), 'documento', id, name, text.length, clean(source, 60)]);
+    this.usage?.add('google_creados');
+    // El texto entero de una vez, y despues el formato sobre los tramos que le tocan (las posiciones cuentan desde 1).
+    const { plain, styles } = docRequests(text);
+    await this.write(`${DOCS}/${id}:batchUpdate`, { requests: [{ insertText: { location: { index: 1 }, text: plain } }] });
+    let styled = true;
+    if (styles.length) await this.write(`${DOCS}/${id}:batchUpdate`, { requests: styles }).catch((e) => { styled = false; this.log.warn(`documento creado sin formato: ${(e as Error).message}`); });
+    const link = typeof made.webViewLink === 'string' && made.webViewLink.startsWith('https://docs.google.com/') ? made.webViewLink : `https://docs.google.com/document/d/${id}/edit`;
+    return { id, title: name, link, chars: plain.length, styled };
+  }
+}
+
+/**
+ * El contenido de un documento, de su formato minimo a lo que pide la API de Docs: el texto llano completo y, aparte, el
+ * formato de cada tramo (titulos y viñetas). Las posiciones son las del documento: cuentan desde 1 y en unidades UTF-16
+ * (las mismas de `length` en JavaScript).
+ */
+export function docRequests(content: string): { plain: string; styles: Record<string, unknown>[] } {
+  const styles: Record<string, unknown>[] = []; let plain = '', at = 1;
+  for (const raw of content.split('\n')) {
+    const h1 = /^#\s+(.*)$/.exec(raw), h2 = /^##\s+(.*)$/.exec(raw), li = /^\s*[-*•]\s+(.*)$/.exec(raw);
+    const line = (h2?.[1] ?? h1?.[1] ?? li?.[1] ?? raw).replace(/\*\*(.+?)\*\*/g, '$1').trimEnd(), range = { startIndex: at, endIndex: at + line.length + 1 };
+    if (line) {
+      if (h2 || h1) styles.push({ updateParagraphStyle: { range, paragraphStyle: { namedStyleType: h2 ? 'HEADING_2' : 'HEADING_1' }, fields: 'namedStyleType' } });
+      else if (li) styles.push({ createParagraphBullets: { range, bulletPreset: 'BULLET_DISC_CIRCLE_SQUARE' } });
+    }
+    plain += `${line}\n`; at += line.length + 1;
+  }
+  return { plain, styles: styles.slice(0, 400) };
 }
 
 /** Texto de una parte de un correo (base64url). */

@@ -14,7 +14,11 @@ export class GoogleController {
   private require(req: Request) { if (!this.owner.verify(req.headers.cookie)) throw new HttpException({ error: 'no_autorizado' }, 401); }
 
   @Get('owner/google')
-  status(@Req() req: Request) { this.require(req); return this.google.status; }
+  async status(@Req() req: Request) {
+    this.require(req);
+    const st = this.google.status;
+    return st.connected ? { ...st, created: await this.google.created(8).catch(() => []), createdToday: await this.google.createdToday().catch(() => undefined) } : st;
+  }
 
   @Post('owner/google/connect')
   connect(@Req() req: Request) {
