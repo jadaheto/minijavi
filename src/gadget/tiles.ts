@@ -127,6 +127,13 @@ function mail(d: Data): Tile[] {
   return listTiles(String(d.title ?? 'Correos'), items.map((m) => `${m.n ?? ''}. ${clip(m.from, 18)}: ${m.subject ?? ''}`));
 }
 
+/** Drive: la lista de archivos o, si hay uno abierto, su nombre. */
+function files(d: Data): Tile[] {
+  if (d.open) return listTiles(String(d.open.kindName ?? 'Drive'), wrapLines(String(d.open.name ?? ''), LIST_CHARS, LIST_ROWS));
+  const items: Data[] = Array.isArray(d.items) ? d.items : [];
+  return listTiles(String(d.title ?? 'Archivos'), items.map((f) => `${f.n ?? ''}. ${f.name ?? ''}`));
+}
+
 /** Agenda: cuántas cosas hay y, debajo, las más cercanas con su hora. */
 function agenda(d: Data): Tile[] {
   const days: Data[] = Array.isArray(d.days) ? d.days : [], rows: string[] = [];
@@ -159,7 +166,7 @@ export function tilesFor(msg: unknown): Tile[] {
     if (m.type === 'weather') return weather(m);
     if (m.type === 'news') return news(m);
     if (m.type === 'markets') return markets(m);
-    if (m.type === 'panel') return m.kind === 'finance' ? finance(m) : m.kind === 'route' ? route(m) : m.kind === 'brief' ? brief(m) : m.kind === 'status' ? status(m) : m.kind === 'board' ? board(m) : m.kind === 'chargers' ? chargers(m) : m.kind === 'agenda' ? agenda(m) : m.kind === 'mail' ? mail(m) : [];
+    if (m.type === 'panel') return m.kind === 'finance' ? finance(m) : m.kind === 'route' ? route(m) : m.kind === 'brief' ? brief(m) : m.kind === 'status' ? status(m) : m.kind === 'board' ? board(m) : m.kind === 'chargers' ? chargers(m) : m.kind === 'agenda' ? agenda(m) : m.kind === 'mail' ? mail(m) : m.kind === 'files' ? files(m) : [];
   } catch { /* un dato con otra forma: sin tarjeta, el avatar igual lo dice */ }
   return [];
 }

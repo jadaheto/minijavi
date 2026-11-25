@@ -25,6 +25,11 @@ import { UsageService } from '../usage/usage.service';
  *    Gmail, labelIds, maxResults) devuelve solo ids; `GET .../messages/{id}` con format=metadata + metadataHeaders (lista)
  *    o format=full (leer): cabeceras en `payload.headers`, texto en `payload.body.data` o en `payload.parts[]`, en
  *    base64url. `snippet` es un trozo corto del texto y `labelIds` trae UNREAD si no se ha leido.
+ *  - Drive (referencia v3 y guias de busqueda y de formatos, leidas el mismo dia): `GET .../drive/v3/files` con `q`
+ *    (`name contains 'x'`, `fullText contains 'x'`, `trashed = false`; la comilla y la barra invertida se escapan con
+ *    barra invertida), orderBy, pageSize y fields; `GET .../files/{id}?alt=media` da el contenido de un archivo guardado
+ *    en Drive; los documentos de Google se sacan con `GET .../files/{id}/export?mimeType=` (texto llano para
+ *    documentos y presentaciones, CSV de la primera hoja para hojas de calculo; tope de 10 MB).
  *  - Agenda: `GET https://www.googleapis.com/calendar/v3/calendars/primary/events` con timeMin, timeMax (RFC 3339),
  *    singleEvents=true y orderBy=startTime (solo vale con singleEvents), maxResults, timeZone.
  *
@@ -36,8 +41,9 @@ const META_KEY = 'google_auth';
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth', TOKEN_URL = 'https://oauth2.googleapis.com/token', REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 const CALENDAR = 'https://www.googleapis.com/calendar/v3';
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
+const DRIVE = 'https://www.googleapis.com/drive/v3';
 /** Permisos por parte. Cada parte nueva (correo, Drive) suma el suyo y pide volver a conectar: nunca se pide de mas. */
-export const GOOGLE_SCOPES = { agenda: 'https://www.googleapis.com/auth/calendar.readonly', correo: 'https://www.googleapis.com/auth/gmail.readonly' } as const;
+export const GOOGLE_SCOPES = { agenda: 'https://www.googleapis.com/auth/calendar.readonly', correo: 'https://www.googleapis.com/auth/gmail.readonly', drive: 'https://www.googleapis.com/auth/drive.readonly' } as const;
 export type GooglePart = keyof typeof GOOGLE_SCOPES;
 /** Lo unico que esta clase acepta tener: si Google devolviera un permiso que no es de lectura, no se guarda. */
 const READ_ONLY = /^(openid|email|profile|https:\/\/www\.googleapis\.com\/auth\/(userinfo\.(email|profile)|[a-z.]+\.readonly))$/;
@@ -48,6 +54,8 @@ export interface AgendaDay { date: string; label: string; events: AgendaEvent[] 
 export interface Agenda { title: string; from: string; to: string; days: AgendaDay[]; total: number; truncated: boolean }
 export interface MailItem { id: string; from: string; subject: string; date: string; when: string; snippet: string; unread: boolean }
 export interface MailFull extends MailItem { to: string; text: string; truncated: boolean; attachments: number }
+export interface DriveFile { id: string; name: string; kind: string; mime: string; when: string; owner: string; readable: boolean }
+export interface DriveDoc extends DriveFile { text: string; truncated: boolean; note: string }
 export class GoogleError extends Error { constructor(message: string, readonly status = 0) { super(message); } }
 
 const clean = (s: unknown, max: number) => String(s ?? '').replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -62,6 +70,7 @@ export class GoogleService implements OnModuleInit {
   private readonly states = new Map<string, { until: number; redirect: string }>();
   private readonly cache = new Map<string, { at: number; value: Agenda }>();
   private readonly mailCache = new Map<string, { at: number; value: MailItem[] }>();
+  private readonly fileCache = new Map<string, { at: number; value: DriveFile[] }>();
   private used = { day: '', n: 0 };
   private lastError = '';
   private warned = false;
@@ -104,7 +113,7 @@ export class GoogleService implements OnModuleInit {
   }
 
   private async save(s: Stored | undefined) {
-    this.stored = s; this.access = undefined; this.cache.clear(); this.mailCache.clear();
+    this.stored = s; this.access = undefined; this.cache.clear(); this.mailCache.clear(); this.fileCache.clear();
     if (!s) { await this.db.query('DELETE FROM meta WHERE key = $1', [META_KEY]); return; }
     const sealed = this.vault.seal(JSON.stringify(s));
     await this.db.query('DELETE FROM meta WHERE key = $1', [META_KEY]);
@@ -280,6 +289,62 @@ export class GoogleService implements OnModuleInit {
     const m = await this.get(`${GMAIL}/messages/${id}`, { format: 'full' });
     const body = mailBody(m?.payload), MAX = 6000;
     return { ...this.mailItem(m), to: clean(this.header(m, 'to'), 120), text: body.text.slice(0, MAX), truncated: body.text.length > MAX, attachments: body.attachments };
+  }
+
+  // ---------- Drive ----------
+  /** Igual que `get`, pero devuelve texto (el contenido de un archivo) y corta lo que pase de `maxBytes`. */
+  private async getText(url: string, params: Record<string, string>, maxBytes: number): Promise<{ text: string; cut: boolean }> {
+    const today = this.day(); if (this.used.day !== today) this.used = { day: today, n: 0 };
+    if (this.used.n >= this.cfg.googleDailyCalls) throw new GoogleError('se llegó al tope de consultas a Google de hoy');
+    this.used.n++; this.usage?.add('google_calls');
+    const res = await fetch(`${url}?${new URLSearchParams(params).toString()}`, { headers: { Authorization: `Bearer ${await this.accessToken()}` }, signal: AbortSignal.timeout(15_000) });
+    if (res.status === 401) this.access = undefined;
+    if (!res.ok) { this.log.warn(`Google respondió ${res.status} en ${new URL(url).pathname.replace(/files\/[^/]+/, 'files/<id>')}`); throw new GoogleError(res.status === 403 ? 'Google no deja leer ese archivo (puede ser muy grande o no tener permiso de descarga)' : res.status === 404 ? 'Google no encontró ese archivo' : `Google respondió ${res.status}`, res.status); }
+    const reader = res.body?.getReader(); if (!reader) return { text: '', cut: false };
+    const chunks: Buffer[] = []; let size = 0, cut = false;
+    for (;;) { const { done, value } = await reader.read(); if (done) break; size += value.length; if (size > maxBytes) { chunks.push(Buffer.from(value.subarray(0, Math.max(0, value.length - (size - maxBytes))))); cut = true; void reader.cancel().catch(() => undefined); break; } chunks.push(Buffer.from(value)); }
+    return { text: Buffer.concat(chunks).toString('utf8'), cut };
+  }
+
+  private driveFile(f: any): DriveFile {
+    const mime = String(f?.mimeType ?? ''), at = new Date(String(f?.modifiedTime ?? ''));
+    const kinds: Record<string, string> = { 'application/vnd.google-apps.document': 'Documento', 'application/vnd.google-apps.spreadsheet': 'Hoja de cálculo', 'application/vnd.google-apps.presentation': 'Presentación', 'application/vnd.google-apps.folder': 'Carpeta', 'application/vnd.google-apps.form': 'Formulario', 'application/pdf': 'PDF' };
+    const kind = kinds[mime] ?? (mime.startsWith('image/') ? 'Imagen' : mime.startsWith('video/') ? 'Video' : mime.startsWith('audio/') ? 'Audio' : mime.startsWith('text/') ? 'Texto' : /word|officedocument\.wordprocessing/.test(mime) ? 'Word' : /excel|officedocument\.spreadsheet/.test(mime) ? 'Excel' : /powerpoint|officedocument\.presentation/.test(mime) ? 'PowerPoint' : 'Archivo');
+    return { id: String(f?.id ?? ''), name: clean(f?.name, 100) || '(sin nombre)', kind, mime, owner: clean(f?.owners?.[0]?.displayName, 50),
+      when: Number.isNaN(at.getTime()) ? '' : new Intl.DateTimeFormat('es-CO', { timeZone: this.cfg.timezone, day: 'numeric', month: 'short', year: 'numeric' }).format(at),
+      readable: ['application/vnd.google-apps.document', 'application/vnd.google-apps.spreadsheet', 'application/vnd.google-apps.presentation', 'application/json'].includes(mime) || mime.startsWith('text/') };
+  }
+
+  /**
+   * Busca archivos en Drive por nombre o por contenido; sin texto, los modificados mas recientemente. No trae la papelera
+   * ni carpetas. Los nombres (y lo que haya dentro) pueden ser de terceros: tambien llegan archivos que otros compartieron.
+   */
+  async files(query = '', max = 6): Promise<DriveFile[]> {
+    if (!this.has('drive')) throw new GoogleError(this.connected ? 'el permiso guardado no incluye Drive: vuelve a conectar Google en el panel' : 'Google no está conectado: se conecta en el panel, en Dispositivos');
+    const text = clean(query, 120), n = Math.max(1, Math.min(10, Math.floor(max) || 6)), key = `${text}/${n}`;
+    const hit = this.fileCache.get(key); if (hit && Date.now() - hit.at < 45_000) return hit.value;
+    const quoted = text.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); // en la consulta de Drive, la comilla y la barra invertida van escapadas
+    const base = "trashed = false and mimeType != 'application/vnd.google-apps.folder'";
+    const d = await this.get(`${DRIVE}/files`, { q: text ? `(name contains '${quoted}' or fullText contains '${quoted}') and ${base}` : base, pageSize: String(n), fields: 'files(id,name,mimeType,modifiedTime,owners(displayName))', ...(text ? {} : { orderBy: 'modifiedTime desc' }) });
+    const out = (Array.isArray(d?.files) ? d.files : []).filter((f: any) => /^[A-Za-z0-9_-]{10,100}$/.test(String(f?.id ?? ''))).slice(0, n).map((f: any) => this.driveFile(f));
+    this.fileCache.set(key, { at: Date.now(), value: out }); if (this.fileCache.size > 30) this.fileCache.delete(this.fileCache.keys().next().value!);
+    return out;
+  }
+
+  /**
+   * El texto de un archivo (hasta 6.000 caracteres). Documentos y presentaciones de Google salen como texto llano, las
+   * hojas de calculo como CSV de su primera hoja, y los archivos de texto tal cual. PDF, Word, imagenes y demas NO se leen
+   * aqui: se devuelve solo su ficha, con una nota.
+   */
+  async fileRead(id: string): Promise<DriveDoc> {
+    if (!this.has('drive')) throw new GoogleError('el permiso guardado no incluye Drive: vuelve a conectar Google en el panel');
+    if (!/^[A-Za-z0-9_-]{10,100}$/.test(String(id))) throw new GoogleError('ese archivo no existe');
+    const meta = this.driveFile(await this.get(`${DRIVE}/files/${id}`, { fields: 'id,name,mimeType,modifiedTime,owners(displayName)' })), MAX = 6000;
+    if (!meta.readable) return { ...meta, text: '', truncated: false, note: `es ${meta.kind === 'Archivo' ? 'un archivo' : `un ${meta.kind}`.replace('un Imagen', 'una imagen').replace('un Hoja', 'una hoja').replace('un Presentación', 'una presentación')} y aquí solo se pueden leer documentos, hojas de cálculo, presentaciones de Google y archivos de texto` };
+    const google = meta.mime.startsWith('application/vnd.google-apps.');
+    const r = google ? await this.getText(`${DRIVE}/files/${id}/export`, { mimeType: meta.mime.endsWith('spreadsheet') ? 'text/csv' : 'text/plain' }, 400_000) : await this.getText(`${DRIVE}/files/${id}`, { alt: 'media' }, 400_000);
+    const text = r.text.replace(/^﻿/, '').replace(/\r/g, '').replace(/[\u0000-\u0008\u000b-\u001f]/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    return { ...meta, text: text.slice(0, MAX), truncated: r.cut || text.length > MAX, note: meta.mime.endsWith('spreadsheet') ? 'solo la primera hoja' : '' };
   }
 }
 

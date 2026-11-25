@@ -366,6 +366,7 @@ body.panel .cover-art, body.showing .pnl { display: none; }
 .pnl-empty { margin: 0; color: #9fb0d0; }
 /* Correo: la lista usa las filas de la agenda (el número va donde iba la hora); lo no leído lleva una marca. */
 .pnl-mail .pnl-events li { grid-template-columns: 1.6em minmax(0, 1fr); }
+.pnl-mail .pnl-events li.dim { opacity: 0.6; }
 .pnl-mail .pnl-events li.unread { border-left: 3px solid #7fb4ff; } .pnl-mail .pnl-events li.unread strong { font-weight: 700; }
 .pnl-mail .pnl-ev small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .pnl-mail-head { display: grid; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid rgb(255 255 255 / 0.1); } .pnl-mail-head strong { font-size: 1.05rem; overflow-wrap: anywhere; } .pnl-mail-head small { color: #9fb0d0; }

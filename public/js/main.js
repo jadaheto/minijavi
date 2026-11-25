@@ -145,7 +145,7 @@ let work = null;
 // cargadores y Tesla cargando: energia; tablero, servicios y consumo: los suyos). La musica de YouTube lleva ondas; la de
 // Spotify, su caratula desenfocada (otra capa). Las imagenes generadas y los bocetos no llevan fondo.
 let newsScene = null, sceneHold = 0, hadPanelScene = false;
-const DATA_SCENES = { finance: 'mercado', status: 'radar', usage: 'flujo', board: 'tablero', route: 'carretera', chargers: 'energia', brief: 'soleado', agenda: 'tablero', mail: 'flujo' };
+const DATA_SCENES = { finance: 'mercado', status: 'radar', usage: 'flujo', board: 'tablero', route: 'carretera', chargers: 'energia', brief: 'soleado', agenda: 'tablero', mail: 'flujo', files: 'tablero' };
 /** Fondo del panel que esta en pantalla (null si no hay ninguno). Manda sobre el fondo que pida una respuesta. */
 const panelScene = () => (news.active ? newsScene || 'neuronal' : markets.active ? 'mercado' : tesla.active ? (tesla.charging ? 'energia' : 'carretera')
   : dataPanel.active ? dataPanel.scene || DATA_SCENES[dataPanel.kind] || null : null);
