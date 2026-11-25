@@ -1,3 +1,4 @@
+import { OwnerMemoryService } from '../memory/owner-memory.service';
 import { LOOK_MAX_BYTES, LOOK_TOOL, VisionService, isJpeg } from '../vision/vision.service';
 import { KnowledgeDocsService } from '../knowledge/knowledge-docs.service';
 import { CX_PREFIX, ConnectionsService } from '../connections/connections.service';
@@ -94,6 +95,7 @@ interface Session {
   cxSeen?: Map<string, Set<string>>;
   mail?: { items: { id: string; from: string; subject: string }[] }; // correos listados en esta conversacion
   files?: { items: { id: string; name: string }[] };                  // archivos de Drive listados en esta conversacion
+  ownerSaid?: string[]; // lo que dijo el dueño en esta conversacion (para el repaso de la memoria al cerrar)
   web?: { items: { url: string; title: string; site: string }[]; page?: { url: string; title: string; site: string; parts: string[]; part: number } }; // busqueda web y pagina abierta
   docs?: { pending?: { key: string; turn: number } };                 // documento que el avatar propuso crear y espera el «sí»
   notes: { text: string; card?: unknown; panel?: Record<string, unknown>; slug?: string; gallery?: Omit<GalleryState, 'index'>; image?: GalleryItem; images?: GalleryItem[]; audit?: string }[]; // avisos del taller pendientes de contar
@@ -194,6 +196,7 @@ const FILLERS: Record<string, string | Record<string, string>> = {
   correo: 'Reviso tu correo.',
   drive: 'Busco en tu Drive.',
   buscar_web: 'Déjame buscar.',
+  memoria: { ver: 'Déjame ver qué tengo anotado.', buscar: 'Déjame ver qué tengo anotado.' },
   leer_pagina: { abrir: 'Abro la página.', '': 'Abro la página.', leer: 'Abro la página.' },
   trayecto: 'Déjame calcular la ruta.',
   cargadores: 'Déjame buscar cargadores.',
@@ -400,6 +403,7 @@ export class SessionGateway implements OnGatewayConnection {
     @Optional() private readonly notices?: NoticesService,
     @Optional() private readonly knowDocs?: KnowledgeDocsService,
     @Optional() private readonly vision?: VisionService,
+    @Optional() private readonly ownerMemory?: OwnerMemoryService,
   ) {
     // Cuando Claude Code termina un encargo, se le cuenta a Javier en las sesiones de dueño abiertas.
     this.workshop.onDone((d) => { for (const [s, client] of this.owners) void this.workshopNote(client, s, d.project.slug); });
@@ -601,7 +605,7 @@ export class SessionGateway implements OnGatewayConnection {
       : '';
     if (this.biz?.on) s.history.push({ role: 'system', content: this.biz.prompt() + TAG_RULES }); // MODO NEGOCIO: el asistente de ese cliente, nada de Javier
     else if (s.page) s.history.push({ role: 'system', content: pagePrompt(s.page) + TAG_RULES });
-    else s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + (s.music?.remote ? REMOTE_MUSIC_RULES : s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery, this.workshop.enabled) : '') + (s.owner ? DATA_RULES + (this.connections?.voiceOn ? CONNECTION_RULES : '') : DEMO_RULES) + (s.gallery && (this.images.enabled || (s.owner && (this.workshop.enabled || this.images.canGenerate))) ? IMAGE_RULES(this.images.enabled, s.owner && this.workshop.enabled, s.owner && this.images.canGenerate) : '') + this.portfolio.prompt(!!s.gallery) + (this.knowDocs?.prompt(s.owner) ?? '') + (s.owner ? '' : this.catalog.prompt()) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote + (s.gadget ? GADGET_RULES : '') + (s.car ? CAR_RULES : '') });
+    else s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + (s.music?.remote ? REMOTE_MUSIC_RULES : s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery, this.workshop.enabled) : '') + (s.owner ? DATA_RULES + (this.connections?.voiceOn ? CONNECTION_RULES : '') : DEMO_RULES) + (s.gallery && (this.images.enabled || (s.owner && (this.workshop.enabled || this.images.canGenerate))) ? IMAGE_RULES(this.images.enabled, s.owner && this.workshop.enabled, s.owner && this.images.canGenerate) : '') + this.portfolio.prompt(!!s.gallery) + (this.knowDocs?.prompt(s.owner) ?? '') + (s.owner ? this.ownerMemory?.prompt() ?? '' : '') + (s.owner ? '' : this.catalog.prompt()) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote + (s.gadget ? GADGET_RULES : '') + (s.car ? CAR_RULES : '') });
     s.stt = this.stt.open({
       // Idioma: en modo carro la escucha es solo en español (con ruido y musica la deteccion de idioma falla y el avatar
       // terminaba respondiendo en ingles). En una sesion del dueño con musica sonando tampoco se cambia de idioma por lo
@@ -717,6 +721,8 @@ export class SessionGateway implements OnGatewayConnection {
       this.usage.add('demo_page_s', sec);
       void this.demoDocs?.addUsage(page.id, sec).then(() => this.demoDocs?.opened_(page, sec, s.userTurns, first)).catch(() => undefined); // cuenta para los topes y avisa a Javier que la abrieron
     } // la charla de prueba cuenta para el tope del dia de esa demo
+    // Memoria del dueño: repaso en segundo plano de lo que dijo Javier (no en la placa ni en el carro: ahi hay mas ruido).
+    if (s.owner && s.ownerSaid?.length) void this.ownerMemory?.review(s.ownerSaid);
     if (!s.owner && s.userTurns > 0 && !s.page && !this.biz?.on) void this.wrapUp(s); // la charla con el asistente de un negocio no es una visita de un interesado
     // Conversaciones del sitio (solo si SAVE_CONVERSATIONS=1; las llamadas las guarda su propio controlador y las del dueño no se guardan).
     if (this.cfg.saveConversations && !s.owner && !s.callerPhone && !s.page && s.userTurns > 0) {
@@ -982,6 +988,8 @@ export class SessionGateway implements OnGatewayConnection {
   private async respond(client: WebSocket, s: Session, userText: string, lang = 'es', auto = false) {
     const turn = this.newTurn(s);
     turn.lang = lang; if (!auto) s.userTurns++;
+    // Lo que dijo Javier, tal cual (sin notas del sistema ni contexto pegado): es lo unico que ve el repaso de la memoria.
+    if (!auto && s.owner && !s.gadget && !s.car && (s.ownerSaid ??= []).length < 80) s.ownerSaid.push(userText.slice(0, 400));
     // Respuesta adelantada: sirve solo si se pidio con el mismo texto que quedo como definitivo.
     const spec = s.spec && norm(s.spec.text) === norm(userText) && s.spec.lang === lang && !s.spec.err ? s.spec : undefined;
     if (!spec) s.spec?.ctrl.abort();
@@ -1070,7 +1078,7 @@ export class SessionGateway implements OnGatewayConnection {
             result = 'NO se ejecutó. Por seguridad, esta acción no corre en la misma respuesta en que leíste datos de terceros ni en un aviso automático. Dile a Javier qué ibas a hacer y pídele que te lo confirme; si dice que sí, vuelve a llamar la herramienta.';
           }
           else {
-            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, news: (s.news ??= { index: 0 }), mail: (s.mail ??= { items: [] }), files: (s.files ??= { items: [] }), web: (s.web ??= { items: [] }), privateRead: !!s.cxSeen && [...s.cxSeen.keys()].some((k) => k !== 'web'), docs: (s.docs ??= {}), turn: s.userTurns, auto, session: s.n, show: s.owner && !s.callerPhone && !s.gadget ? (m) => { if (s.ready && (m?.type === 'know_upload' || m?.type === 'know_doc')) { this.send(client, m); s.lastActivity = Date.now(); } } : undefined, marketList: (s.marketList ??= { items: [], title: '' }), places: (s.places ??= { chargers: [] }), locate: s.owner && !s.callerPhone && !s.gadget ? () => this.locate(client, s) : undefined, demo: s.demo, canUpload: !!this.demoDocs?.enabled && !s.callerPhone && !s.gadget && (!s.demo.doc || s.demo.doc.state === 'esperando'), source: s.callerPhone ? 'llamada' : 'voz',
+            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, news: (s.news ??= { index: 0 }), mail: (s.mail ??= { items: [] }), files: (s.files ??= { items: [] }), web: (s.web ??= { items: [] }), tainted: !!turn.tainted, privateRead: !!s.cxSeen && [...s.cxSeen.keys()].some((k) => k !== 'web'), docs: (s.docs ??= {}), turn: s.userTurns, auto, session: s.n, show: s.owner && !s.callerPhone && !s.gadget ? (m) => { if (s.ready && (m?.type === 'know_upload' || m?.type === 'know_doc')) { this.send(client, m); s.lastActivity = Date.now(); } } : undefined, marketList: (s.marketList ??= { items: [], title: '' }), places: (s.places ??= { chargers: [] }), locate: s.owner && !s.callerPhone && !s.gadget ? () => this.locate(client, s) : undefined, demo: s.demo, canUpload: !!this.demoDocs?.enabled && !s.callerPhone && !s.gadget && (!s.demo.doc || s.demo.doc.state === 'esperando'), source: s.callerPhone ? 'llamada' : 'voz',
               notify: (note) => { if (s.ready) { s.notes.push(note as Session['notes'][number]); this.pumpNotes(client, s); } },
               cxRead: (slug, raw) => { const all = (s.cxSeen ??= new Map<string, Set<string>>()); if (!all.has(slug)) all.set(slug, new Set()); remember(all.get(slug)!, raw); } });
             if (c.name === 'buscar_imagenes' && out.gallery) s.imageSearches++;

@@ -51,6 +51,7 @@
           <button role="tab" data-tab="decisiones">Decisiones</button>
           <button role="tab" data-tab="conexiones">Conexiones</button>
           <button role="tab" data-tab="consumo">Consumo</button>
+          <button role="tab" data-tab="memoria">Memoria <span class="count" data-count="memoria"></span></button>
           <button role="tab" data-tab="dispositivos">Dispositivos</button>
         </div>
       </div>
@@ -246,6 +247,18 @@
           <p class="muted" id="know-note">Los documentos que le has subido al avatar para que sepa más.</p>
           <p class="muted" id="know-msg" aria-live="polite"></p>
           <ul class="list" id="know-list"></ul>
+        </section>
+
+        <section data-view="memoria" class="card" hidden>
+          <h2>Memoria <small id="mem-count"></small></h2>
+          <p class="muted" id="mem-note">Lo que el avatar recuerda de ti de una conversación a otra.</p>
+          <form class="row" id="mem-form">
+            <input type="text" id="mem-text" maxlength="240" placeholder="Algo que quieres que recuerde (una idea, corta)" aria-label="Qué debe recordar" required>
+            <select id="mem-section" aria-label="Sección"></select>
+            <button type="submit" class="small primary">Guardar</button>
+          </form>
+          <p class="muted" id="mem-msg" aria-live="polite"></p>
+          <div id="mem-list"></div>
         </section>
 
         <section data-view="demos" class="card" hidden>

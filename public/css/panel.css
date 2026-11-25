@@ -201,3 +201,10 @@ th { color: var(--ink-3); font-weight: 500; }
 .made-info { display: grid; gap: 4px; min-width: 0; } .made-info strong { overflow-wrap: anywhere; } .made-info .row { margin-top: 6px; }
 .made-qr { background: #fff; padding: 6px; border-radius: 8px; margin-top: 6px; } .made-qr[hidden] { display: none; }
 @media (max-width: 560px) { .made-row { grid-template-columns: 84px minmax(0, 1fr); } .made-thumb, .made-mark { width: 84px; } }
+
+/* Memoria del dueño */
+#mem-form input[type=text] { flex: 1 1 260px; min-width: 0; }
+#mem-list h3 { margin: 26px 0 4px; padding-top: 14px; border-top: 1px solid var(--line, rgb(255 255 255 / 0.08)); font-size: 0.82rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+#mem-list li .row input[type=text] { flex: 1 1 240px; min-width: 0; }
+.mem-text { overflow-wrap: anywhere; }
+#mem-list h3:first-child { margin-top: 14px; }

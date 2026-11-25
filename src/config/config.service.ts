@@ -263,6 +263,11 @@ export class ConfigService {
   readonly imagesPerSession: number;
   /** «Mira esto»: el avatar ve por la camara cuando se lo piden (VISION=0 lo apaga) y cuantas veces por conversacion un visitante. */
   readonly vision: boolean;
+  /** Memoria del dueño entre conversaciones (MEMORIA_DUENO=0 la apaga): tope de la memoria fija y dias que vive una nota sin usar. */
+  readonly ownerMemory: boolean;
+  readonly ownerMemoryReview: boolean;
+  readonly ownerMemoryChars: number;
+  readonly ownerMemoryNoteDays: number;
   /** Buscar en la web y leer paginas (solo dueño; WEB=0 lo apaga). Brave si hay clave; si no, OpenAI con la clave del modelo capaz. */
   readonly web: boolean;
   readonly tavilyKey: string;
@@ -475,6 +480,10 @@ export class ConfigService {
     this.imageOpenAiQuality = ['low', 'medium', 'high'].includes(str('IMAGEN_OPENAI_CALIDAD').toLowerCase()) ? str('IMAGEN_OPENAI_CALIDAD').toLowerCase() : 'medium';
     this.imagesPerSession = int('IMAGES_PER_SESSION', 4, 0);
     this.vision = str('VISION', '1') !== '0';
+    this.ownerMemory = str('MEMORIA_DUENO', '1') !== '0' && str('OWNER_SECRET').length >= 16;
+    this.ownerMemoryReview = str('MEMORIA_REPASO', '1') !== '0';
+    this.ownerMemoryChars = Math.min(6000, int('MEMORIA_CARACTERES', 2000, 300));
+    this.ownerMemoryNoteDays = int('MEMORIA_NOTAS_DIAS', 180, 0);
     this.web = str('WEB', '1') !== '0';
     this.tavilyKey = str('TAVILY_API_KEY');
     this.braveKey = str('BRAVE_API_KEY');
@@ -588,7 +597,7 @@ ${readFileSync(costenoFile, 'utf8').trim()}` : '';
       Object.assign(this as any, {
         business: b, greeting: b.saludo, elevenVoiceId: b.voz || this.elevenVoiceId, costenoPrompt: '',
         ownerSecret: '', claudeToken: '', planeMcpUrl: '', youtubeApiKey: '', spotifyClientId: '', spotifyClientSecret: '', teslaClientId: '', teslaClientSecret: '',
-        googleMapsKey: '', openChargeMapKey: '', polymarket: false, newsUrl: '', newsColombia: false, unsplashAccessKey: '', magnificApiKey: '', imageOpenAiKey: '', web: false, braveKey: '', tavilyKey: '',
+        googleMapsKey: '', openChargeMapKey: '', polymarket: false, newsUrl: '', newsColombia: false, unsplashAccessKey: '', magnificApiKey: '', imageOpenAiKey: '', web: false, braveKey: '', tavilyKey: '', ownerMemory: false,
         briefHour: -1, followupHour: -1, demoDocs: false, knowDocs: false, avatarCustom: false, vaultKey: '', callMode: 'rechazar', whatsappReplies: this.whatsappReplies === 'avatar' ? 'avatar' : 'off', n8nWebhookUrl: '', leadsWebhookUrl: '', visitorMemoryDays: 0, visitReports: false,
       });
     }

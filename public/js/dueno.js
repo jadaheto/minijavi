@@ -68,7 +68,7 @@ const pretty = (k) => String(k).replace(/_/g, ' ').replace(/^formulario:/, 'form
 const SOURCE = (k) => (k === 'sin dato' ? 'Sin dato (anteriores)' : k === 'voz' ? 'Conversación en el sitio' : k === 'llamada' ? 'Llamada de WhatsApp' : pretty(k));
 
 // ---------- pestañas ----------
-const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, demos: loadDemos, avatares: loadAvatars, conexiones: loadConnections, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, creados: loadMade, conocimiento: loadKnow, dispositivos: loadDevices };
+const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, demos: loadDemos, avatares: loadAvatars, conexiones: loadConnections, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, creados: loadMade, conocimiento: loadKnow, memoria: loadMemory, dispositivos: loadDevices };
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
   for (const b of $('tabs').querySelectorAll('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
@@ -743,6 +743,49 @@ $('know-sync')?.addEventListener('click', async () => {
   const r = await api('conocimiento/sincronizar', { method: 'POST' }), d = await r.json().catch(() => ({}));
   await loadKnow();
   $('know-msg').textContent = !r.ok ? 'No se pudo sincronizar.' : `Revisados: ${d.checked}. ${d.updated?.length ? `Actualizados: ${d.updated.join(', ')}.` : 'Ninguno había cambiado.'}${d.removed?.length ? ` Ya no están en Drive: ${d.removed.join(', ')}.` : ''}${d.problems?.length ? ` Con problema: ${d.problems.join('; ')}.` : ''}`;
+});
+
+// Memoria del dueño: lo que el avatar recuerda de Javier entre conversaciones. Aqui se ve todo, se agrega, se corrige,
+// se aprueba lo que propuso el repaso y se borra.
+async function memAct(path, body, msg) {
+  const r = await api(`memoria${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), d = await r.json().catch(() => ({}));
+  await loadMemory();
+  $('mem-msg').textContent = r.ok ? `${msg}${d.moved ? ' La memoria fija estaba llena: lo más viejo pasó a las notas.' : ''}` : d.message || `No se pudo (${r.status}).`;
+  return r.ok;
+}
+async function loadMemory() {
+  const d = await json('memoria'), items = d.items || [], sections = d.sections || [], waiting = items.filter((m) => m.status === 'pendiente');
+  badge('memoria', waiting.length);
+  $('mem-count').textContent = d.enabled ? `(usa ${d.used} de ${d.max} caracteres)` : '';
+  $('mem-form').hidden = !d.enabled;
+  $('mem-note').textContent = !d.enabled ? 'La memoria está apagada.'
+    : !items.length ? 'Todavía no recuerda nada. En modo dueño dile «recuerda que…», o escríbelo aquí.'
+    : 'Lo que el avatar recuerda de ti de una conversación a otra. Lo de las cuatro primeras secciones lo tiene presente siempre; las notas las consulta cuando hace falta. Un cambio se nota desde la conversación siguiente.';
+  const sel = $('mem-section'); if (!sel.options.length) for (const s of sections) sel.append(el('option', { value: s.id, textContent: s.label }));
+  const btn = (text, fn, cls = 'small') => { const b = el('button', { type: 'button', className: cls, textContent: text }); b.addEventListener('click', () => fn(b)); return b; };
+  const sure = (text, fn) => btn(text, (b) => { if (b.dataset.sure) fn(); else { b.dataset.sure = '1'; b.textContent = '¿Seguro? Toca otra vez'; } }, 'small danger');
+  const row = (m) => {
+    const text = el('span', { className: 'mem-text', textContent: m.text });
+    const edit = btn('Corregir', () => {
+      const input = el('input', { type: 'text', value: m.text, maxLength: 240, ariaLabel: 'Texto del recuerdo' }), move = el('select', { ariaLabel: 'Sección' });
+      for (const s of sections) move.append(el('option', { value: s.id, textContent: s.label, selected: s.id === m.section }));
+      li.replaceChildren(el('div', { className: 'row' }, input, move, btn('Guardar cambio', () => memAct(`/${m.id}`, { accion: 'cambiar', text: input.value, section: move.value }, 'Corregido.'), 'small primary'), btn('Cancelar', () => loadMemory())));
+      input.focus();
+    });
+    const origin = { voz: 'lo dijiste', panel: 'lo escribiste aquí', repaso: 'lo propuso el repaso' }[m.origin] || m.origin;
+    const li = el('li', {}, el('div', { className: 'row between' }, text, m.status === 'pendiente' ? el('span', { className: 'chip warn', textContent: 'Por aprobar' }) : null),
+      el('small', { className: 'muted', textContent: [origin, fecha(m.updated_at)].filter(Boolean).join(' · ') }),
+      el('div', { className: 'row', style: 'margin-top:6px' }, m.status === 'pendiente' ? btn('Aprobar', () => memAct(`/${m.id}`, { accion: 'aprobar' }, 'Aprobado.'), 'small primary') : null, edit, sure(m.status === 'pendiente' ? 'Descartar' : 'Borrar', () => memAct(`/${m.id}`, { accion: 'borrar' }, 'Borrado.'))));
+    return li;
+  };
+  const groups = [];
+  if (waiting.length) groups.push(el('h3', { textContent: `Por aprobar (${waiting.length})` }), el('ul', { className: 'list' }, ...waiting.map(row)));
+  for (const s of sections) { const rows = items.filter((m) => m.status !== 'pendiente' && m.section === s.id); if (rows.length) groups.push(el('h3', { textContent: `${s.label} (${rows.length})` }), el('ul', { className: 'list' }, ...rows.map(row))); }
+  $('mem-list').replaceChildren(...groups);
+}
+$('mem-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (await memAct('', { text: $('mem-text').value, section: $('mem-section').value }, 'Guardado.')) $('mem-text').value = '';
 });
 
 async function loadImages() {
