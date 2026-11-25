@@ -252,9 +252,9 @@ $('case-form').addEventListener('submit', async (ev) => {
 });
 
 // ---------- interesados ----------
-let leads = [], statuses = [];
+let leads = [], statuses = [], scoring = null;
 async function loadLeads() {
-  ({ statuses, leads } = await json('leads'));
+  ({ statuses, leads, scoring } = await json('leads'));
   const fill = (sel, values, label) => { const keep = sel.value; sel.replaceChildren(sel.firstElementChild, ...values.map((v) => el('option', { value: v, textContent: label(v) }))); sel.value = keep; };
   fill($('lead-status'), statuses, pretty); fill($('lead-source'), [...new Set(leads.map((l) => l.source || 'sin dato'))], SOURCE);
   drawLeads(); loadOptouts();
@@ -278,7 +278,10 @@ $('optout-form').addEventListener('submit', async (ev) => {
 });
 function drawLeads() {
   const q = $('lead-q').value.trim().toLowerCase(), st = $('lead-status').value, src = $('lead-source').value;
-  const rows = leads.filter((l) => (!st || l.status === st) && (!src || (l.source || 'sin dato') === src) && (!q || `${l.name} ${l.contact} ${l.company} ${l.detail} ${l.notes}`.toLowerCase().includes(q)));
+  const lv = $('lead-level').value, byScore = $('lead-order').value === 'puntos';
+  const rows = leads.filter((l) => (!st || l.status === st) && (!lv || l.rating?.level === lv) && (!src || (l.source || 'sin dato') === src) && (!q || `${l.name} ${l.contact} ${l.company} ${l.detail} ${l.notes}`.toLowerCase().includes(q)));
+  // Por puntaje: los calificados de mayor a menor; los que no se califican (cliente, descartado, no contactar) van al final.
+  if (byScore) rows.sort((a, b) => (b.rating?.score ?? -1) - (a.rating?.score ?? -1) || Date.parse(b.created_at) - Date.parse(a.created_at));
   $('lead-count').textContent = `(${rows.length}${rows.length !== leads.length ? ` de ${leads.length}` : ''})`;
   $('lead-list').replaceChildren(...(rows.length ? rows.map((l) => {
     const save = (patch) => api(`leads/${l.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
@@ -288,14 +291,19 @@ function drawLeads() {
     notes.addEventListener('change', async () => { await save({ notes: notes.value }); l.notes = notes.value; });
     const del = el('button', { type: 'button', className: 'small danger', textContent: 'Borrar' });
     del.addEventListener('click', async () => { if (del.dataset.sure) { await api(`leads/${l.id}`, { method: 'DELETE' }); loadLeads(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Toca otra vez'; } });
+    // Calificación: nivel y puntos, con el desglose de qué sumó y qué restó (el puntaje ordena y sugiere; no hace nada solo).
+    const r = l.rating, LEVEL = { caliente: ['Caliente', 'bad'], tibio: ['Tibio', 'warn'], frio: ['Frío', 'info'], cliente: ['Cliente', 'ok'], descartado: ['Descartado', ''], no_contactar: ['Sin calificar', ''] }[r?.level] || null;
+    const chip = LEVEL ? el('span', { className: `chip ${LEVEL[1]}`, textContent: r.score === null ? LEVEL[0] : `${LEVEL[0]} · ${r.score}` }) : null;
+    const why = r && r.score !== null ? el('details', { className: 'why' }, el('summary', { textContent: r.items.length ? `Por qué ${r.score} puntos` : `${r.score} puntos: solo la base` }),
+      el('ul', {}, el('li', {}, el('span', { textContent: 'Base' }), el('b', { textContent: String(scoring?.base ?? '') })), ...r.items.map((i) => el('li', { className: i.points > 0 ? 'up' : 'down' }, el('span', { textContent: `${i.label}${i.at ? ` · ${fecha(i.at)}` : ''}` }), el('b', { textContent: `${i.points > 0 ? '+' : '−'}${Math.abs(i.points)}` }))))) : null;
     return el('li', {},
-      el('div', { className: 'row' }, el('strong', { textContent: l.name + (l.company ? ` — ${l.company}` : '') }), l.blocked ? el('span', { className: 'tag', style: 'background:rgba(217,89,38,.3)', textContent: 'No contactar' }) : null, l.quote_at ? el('span', { className: 'tag', style: 'background:rgba(201,133,0,.35)', textContent: 'Pidió precio' }) : null, el('span', { className: 'tag', textContent: pretty(l.interest) }), el('span', { className: 'tag', textContent: SOURCE(l.source || 'sin dato') })),
+      el('div', { className: 'row' }, el('strong', { textContent: l.name + (l.company ? ` — ${l.company}` : '') }), chip, l.blocked ? el('span', { className: 'tag', style: 'background:rgba(217,89,38,.3)', textContent: 'No contactar' }) : null, l.quote_at ? el('span', { className: 'tag', style: 'background:rgba(201,133,0,.35)', textContent: 'Pidió precio' }) : null, el('span', { className: 'tag', textContent: pretty(l.interest) }), el('span', { className: 'tag', textContent: SOURCE(l.source || 'sin dato') })),
       el('small', { textContent: `${l.contact} · ${fecha(l.created_at)} · #${l.id}` }),
       l.status === 'nuevo' && Date.now() - Date.parse(l.created_at) > 2 * 86400000 ? el('span', { style: 'color:var(--warn);font-size:14px', textContent: `Sin contactar hace ${Math.floor((Date.now() - Date.parse(l.created_at)) / 86400000)} días` }) : null,
-      l.detail ? el('div', { textContent: l.detail }) : null, el('div', { className: 'row' }, sel, del), notes);
+      l.detail ? el('div', { textContent: l.detail }) : null, why, el('div', { className: 'row' }, sel, del), notes);
   }) : [el('p', { className: 'muted', textContent: leads.length ? 'Ninguno coincide con el filtro.' : 'Todavía no hay interesados.' })]));
 }
-for (const id of ['lead-q', 'lead-status', 'lead-source']) $(id).addEventListener('input', drawLeads);
+for (const id of ['lead-q', 'lead-status', 'lead-source', 'lead-level', 'lead-order']) $(id).addEventListener('input', drawLeads);
 
 // ---------- conversaciones ----------
 async function loadConversations() {

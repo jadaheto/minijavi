@@ -2974,6 +2974,77 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     return 'pedido con total y confirmación; cita como solicitud; interesado con autorización; topes; contacto del chat puesto por el servidor; pausa y reenvío; avisos por Telegram y, con la ventana abierta, WhatsApp; recordatorio antes de cerrar; panel con clave, cookie y bloqueo; chat del negocio y "hola" del dueño';
   });
 
+  await check('Calificación de interesados con puntos: reglas con desglose, plazos, niveles, ajustes desde el panel y nada que actúe por su cuenta', async () => {
+    const { ScoringService, SIGNALS, SCORE_DAYS } = await import('../scoring/scoring.service');
+    const src = (f: string) => readFileSync(resolve(__dirname, `../../${f}`), 'utf8');
+    const NOW = Date.parse('2026-11-24T15:00:00-05:00'), ago = (days: number) => new Date(NOW - days * 86_400_000).toISOString();
+    // Datos de mentira: la calificación solo LEE, así que se le entrega una base que responde por tabla.
+    const data: Record<string, any[]> = { actions: [], wa_messages: [], demos: [], demo_usage: [], avatar_requests: [] };
+    const asked: string[] = [], fakeDb: any = { query: async (sql: string) => { asked.push(sql); const t = /FROM (\w+)/.exec(sql)?.[1] ?? ''; if (!/^\s*SELECT/i.test(sql)) throw new Error('la calificación intentó escribir'); return data[t] ?? []; } };
+    const scfg: any = Object.assign(Object.create(Object.getPrototypeOf(P.cfg)), P.cfg, { whatsappDefaultCountry: '57' });
+    const sc = new ScoringService(scfg, fakeDb, P.settings); sc.now = () => new Date(NOW);
+    const lead = (id: number, o: any = {}) => ({ id, created_at: ago(1), contact: `30055500${String(id).padStart(2, '0')}`, company: '', interest: 'otro', detail: '', status: 'nuevo', source: 'formulario:x', quote_at: '', ...o });
+    const one = async (l: any, blocked = false) => (await sc.forLeads([l], () => blocked)).get(l.id)!;
+    const ids = (r: any) => r.items.map((x: any) => x.id).sort().join(',');
+    // La tabla de fábrica es la aprobada por Javier.
+    const t0 = sc.table(), pts = Object.fromEntries(t0.signals.map((s: any) => [s.id, s.points]));
+    must(t0.base === 40 && t0.hot === 80 && t0.warm === 50 && pts.voz === 15 && pts.necesidad === 10 && pts.cotizacion === 15 && pts.documento === 15 && pts.demo_abierta === 10 && pts.respondio === 10 && pts.pago_avatar === 20 && pts.telefono === -25 && pts.sin_respuesta === -15 && pts.demo_sin_abrir === -20 && pts.pago_pendiente === -30 && pts.sin_avance === -30 && pts.inactivo === -20
+      && t0.days.dias_whatsapp === 3 && t0.days.dias_demo === 3 && t0.days.dias_pago === 7 && t0.days.dias_avance === 10 && t0.days.dias_inactivo === 14 && SIGNALS.length === 14 && SCORE_DAYS.length === 5, `tabla de fábrica: ${JSON.stringify(t0).slice(0, 300)}`);
+    // Recién llegado por formulario, sin nada más: la base, tibio... no: 40 es frío (menos de 50).
+    const a = await one(lead(1)); must(a.score === 40 && a.level === 'frio' && a.items.length === 0, `recién llegado: ${JSON.stringify(a)}`);
+    // Por voz, con empresa y necesidad, y pidió precio: 40 + 15 + 10 + 15 = 80 → caliente, con su desglose y fechas.
+    const b = await one(lead(2, { source: 'voz', company: 'Panadería', interest: 'bots_de_whatsapp', detail: 'pedidos', quote_at: ago(0.5) }));
+    must(b.score === 80 && b.level === 'caliente' && ids(b) === 'cotizacion,necesidad,voz' && b.items.every((x: any) => x.points > 0 && x.label && x.at), `caliente: ${JSON.stringify(b)}`);
+    // Contacto que no sirve.
+    const c = await one(lead(3, { contact: 'llámame' })); must(c.score === 15 && ids(c) === 'telefono', `contacto inválido: ${JSON.stringify(c)}`);
+    must(ids(await one(lead(4, { contact: 'persona@ejemplo.invalid' }))) === '', 'un correo es un contacto válido');
+    // WhatsApp: se le envió la plantilla. Antes del plazo no pasa nada; al tercer día resta; si responde, suma y deja de restar.
+    data.actions = [{ lead_id: 5, contact: '573005550005', kind: 'plantilla_bienvenida', status: 'enviada', at: ago(2) }];
+    must(ids(await one(lead(5, { created_at: ago(2) }))) === '', 'a los 2 días aún no cuenta como no respondido');
+    data.actions[0].at = ago(4); const nr = await one(lead(5, { created_at: ago(4) })); must(ids(nr) === 'sin_respuesta' && nr.score === 25, `no respondió: ${JSON.stringify(nr)}`);
+    data.wa_messages = [{ phone: '573005550005', at: ago(5) }]; must(ids(await one(lead(5, { created_at: ago(6) }))) === 'sin_respuesta', 'un mensaje ANTERIOR a la plantilla no es una respuesta');
+    data.wa_messages = [{ phone: '573005550005', at: ago(1) }]; const rp = await one(lead(5, { created_at: ago(4) })); must(ids(rp) === 'respondio' && rp.score === 50 && rp.level === 'tibio', `respondió: ${JSON.stringify(rp)}`);
+    must(ids(await one(lead(6, { created_at: ago(4) }))) === '', 'la plantilla de otro interesado no cuenta');
+    // La plantilla también se reconoce por el número, aunque la acción no traiga el id del interesado.
+    data.actions = [{ lead_id: null, contact: '573005550007', kind: 'plantilla_bienvenida', status: 'enviada', at: ago(4) }]; data.wa_messages = [];
+    must(ids(await one(lead(7, { created_at: ago(4) }))) === 'sin_respuesta', 'plantilla reconocida por el número');
+    // Demo: subió documento (+15), se le envió y no la abrió en 3 días (−20), la abrió (+10 y deja de restar).
+    data.actions = [{ lead_id: 8, contact: '573005550008', kind: 'enviar_demo', status: 'enviada', at: ago(4) }]; data.demos = [{ id: 'demo-8', lead_id: 8, status: 'lista', created_at: ago(5) }];
+    const d1 = await one(lead(8, { created_at: ago(5) })); must(ids(d1) === 'demo_sin_abrir,documento' && d1.score === 35, `demo sin abrir: ${JSON.stringify(d1)}`);
+    data.demo_usage = [{ demo: 'demo-8', day: ago(1).slice(0, 10), sessions: 2 }, { demo: 'otra', day: ago(1).slice(0, 10), sessions: 9 }];
+    const d2 = await one(lead(8, { created_at: ago(5) })); must(ids(d2) === 'demo_abierta,documento' && d2.score === 65, `demo abierta: ${JSON.stringify(d2)}`);
+    // Avatar: empezó y no pagó en 7 días (−30); pago aprobado (+20 y deja de restar).
+    data.avatar_requests = [{ lead_id: 9, state: 'PENDIENTE_PAGO', created_at: ago(8), updated_at: ago(8) }];
+    must(ids(await one(lead(9, { created_at: ago(8) }))) === 'pago_pendiente', 'pago pendiente');
+    data.avatar_requests[0].created_at = ago(3); must(ids(await one(lead(9, { created_at: ago(3) }))) === '', 'a los 3 días el pago aún no cuenta como abandonado');
+    data.avatar_requests = [{ lead_id: 9, state: 'COMPLETADO', created_at: ago(8), updated_at: ago(7) }]; must(ids(await one(lead(9, { created_at: ago(8) }))) === 'pago_avatar', 'pago hecho');
+    // Tiempo: sin avance a los 10 días en «nuevo»; inactivo a los 14; inactivo largo a los 30. Nunca baja de 0.
+    must(ids(await one(lead(10, { created_at: ago(11) }))) === 'sin_avance' && ids(await one(lead(10, { created_at: ago(11), status: 'contactado' }))) === '', 'sin avance solo si sigue en nuevo');
+    const old = await one(lead(11, { created_at: ago(40) })); must(ids(old) === 'inactivo,inactivo_largo,sin_avance' && old.score === 0 && old.level === 'frio', `viejo e inactivo: ${JSON.stringify(old)}`);
+    data.wa_messages = [{ phone: '573005550012', at: ago(2) }]; data.actions = [{ lead_id: 12, contact: '573005550012', kind: 'plantilla_bienvenida', status: 'enviada', at: ago(39) }];
+    const back = await one(lead(12, { created_at: ago(40), status: 'contactado' })); must(ids(back) === 'respondio' && back.lastActivity.slice(0, 10) === ago(2).slice(0, 10), `actividad reciente quita lo de inactivo: ${JSON.stringify(back)}`);
+    // Quien no se califica: no contactar, cliente, descartado.
+    const nc = await one(lead(13, { source: 'voz' }), true), cl = await one(lead(14, { status: 'cliente' })), ds = await one(lead(15, { status: 'descartado' }));
+    must(nc.score === null && nc.level === 'no_contactar' && nc.items.length === 0 && cl.score === null && cl.level === 'cliente' && ds.level === 'descartado', 'no contactar, cliente y descartado quedan fuera del puntaje');
+    // Los ajustes del panel cambian el resultado al instante (y un valor fuera de rango no entra); 0 apaga una señal.
+    must((await P.settings.set('puntos.voz', 30)) === '' && (await P.settings.set('puntos.caliente', 70)) === '' && (await P.settings.set('puntos.voz', 500)) !== '' && (await P.settings.set('puntos.inventada', 5)) !== '', 'ajustes de puntos');
+    const tuned = await one(lead(16, { source: 'voz' })); must(tuned.score === 70 && tuned.level === 'caliente', `con los puntos cambiados: ${JSON.stringify(tuned)}`);
+    await P.settings.set('puntos.voz', 0); must(ids(await one(lead(16, { source: 'voz' }))) === '', 'una señal en 0 no aparece');
+    await P.settings.set('puntos.voz', 15); await P.settings.set('puntos.caliente', 80);
+    // Muchos a la vez: unas pocas consultas en total, no una por interesado; y solo lee.
+    asked.length = 0; const many = await sc.forLeads(Array.from({ length: 60 }, (_, k) => lead(100 + k)));
+    must(many.size === 60 && asked.length === 5 && asked.every((q) => /^\s*SELECT/i.test(q)), `60 interesados con ${asked.length} consultas`);
+    // Una fuente caída no tumba la calificación.
+    const flaky: any = { query: async (sql: string) => { if (/FROM demos/.test(sql)) throw new Error('caída'); return []; } };
+    const sc2 = new ScoringService(scfg, flaky, P.settings); sc2.now = () => new Date(NOW);
+    must((await sc2.forLeads([lead(1)])).get(1)!.score === 40, 'si una tabla falla, se califica con lo demás');
+    // No actúa: el servicio no envía, no cambia estados ni toca la puerta de acciones; el panel lo recibe con cada interesado.
+    const code = src('src/scoring/scoring.service.ts'), oc = src('src/owner/owner.controller.ts');
+    must(!/INSERT|UPDATE|DELETE FROM|ActionsService|ApprovalsService|WhatsAppService|emitNotice|fetch\(/.test(code) && /rating: scores\.get\(l\.id\)/.test(oc) && /scoring: this\.scoring\?\.table\(\)/.test(oc), 'la calificación solo lee y se entrega al panel');
+    return 'tabla aprobada (base 40, caliente 80, tibio 50); suma voz, necesidad, cotización, documento, demo abierta, respuesta y pago; resta contacto inválido, sin respuesta, demo sin abrir, pago sin terminar, sin avance e inactividad, cada una con su plazo; lo anterior a la plantilla no es respuesta; no contactar, cliente y descartado fuera; puntos ajustables al instante; 5 consultas para cualquier cantidad; solo lee';
+  });
+
+
   await check('Google (solo lectura): conexión con retorno de un solo uso, permiso cifrado, agenda, correo y Drive por voz como dato de terceros revisado, y nada que escriba', async () => {
     const { GoogleService, describeAgenda, GOOGLE_SCOPES, mailBody, htmlToText } = await import('../google/google.service');
     const { GoogleController } = await import('../google/google.controller');

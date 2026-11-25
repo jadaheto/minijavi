@@ -51,6 +51,10 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: .9rem/1.5 
 .rail button[data-tab][aria-selected="true"] { background: var(--accent-soft); color: var(--ink); box-shadow: inset 2px 0 0 var(--accent); }
 .count { min-width: 1.45rem; padding: 1px 6px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); font: 600 .78rem/1.5 var(--font-body); text-align: center; font-variant-numeric: tabular-nums; }
 .count:empty { display: none; }
+/* Desglose de la calificación de un interesado: qué sumó y qué restó. */
+.why summary { cursor: pointer; color: var(--ink-2); font-size: .9rem; } .why ul { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: grid; gap: 2px; max-width: 34rem; }
+.why li { display: flex; justify-content: space-between; gap: var(--space-3); padding: 3px 0; border: 0; font-size: .9rem; color: var(--ink-2); } .why li b { font-variant-numeric: tabular-nums; }
+.why li.up b { color: var(--ok); } .why li.down b { color: var(--bad); }
 /* Botón de menú: solo existe en pantallas angostas. Tres rayas que pasan a una X; un punto si hay algo pendiente. */
 .menu-btn { display: none; position: relative; place-items: center; width: 44px; height: 44px; min-height: 0; padding: 0; margin-left: auto; border-radius: var(--radius-sm); background: var(--raised); border: 1px solid var(--line); color: var(--ink); }
 .menu-btn .bars, .menu-btn .bars::before, .menu-btn .bars::after { display: block; width: 18px; height: 2px; border-radius: 2px; background: currentColor; transition: transform .2s, opacity .2s; }

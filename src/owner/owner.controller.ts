@@ -1,3 +1,4 @@
+import { ScoringService } from '../scoring/scoring.service';
 import { Body, Controller, Delete, Get, HttpException, Param, Patch, Post, Query, Req, Res, StreamableFile } from '@nestjs/common';
 import { Optional } from '@nestjs/common';
 import { DemoDocsService } from '../demo/demo-docs.service';
@@ -34,7 +35,7 @@ const isHttps = (req: Request) => req.secure || String(req.headers['x-forwarded-
 /** Registro y administracion de los dispositivos del dueño. La pagina es public/owner.html. */
 @Controller('owner')
 export class OwnerController {
-  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService, private readonly optout: OptOutService, private readonly capable: CapableModelService, private readonly actions: ActionsService, private readonly approvals: ApprovalsService, private readonly telegram: TelegramService, private readonly policy: PolicyService, private readonly catalog: CatalogService, @Optional() private readonly demos?: DemoDocsService) {}
+  constructor(private readonly owner: OwnerService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly usage: UsageService, private readonly images: ImagesService, private readonly music: MusicService, private readonly alerts: AlertsService, private readonly ops: OpsService, private readonly cfg: ConfigService, private readonly portfolio: PortfolioService, private readonly visits: VisitsService, private readonly decisions: DecisionsService, private readonly settings: SettingsService, private readonly optout: OptOutService, private readonly capable: CapableModelService, private readonly actions: ActionsService, private readonly approvals: ApprovalsService, private readonly telegram: TelegramService, private readonly policy: PolicyService, private readonly catalog: CatalogService, @Optional() private readonly demos?: DemoDocsService, @Optional() private readonly scoring?: ScoringService) {}
   private get followDays() { return this.cfg.followupDays; }
 
   private cookie(req: Request, value: string, maxAge: number) {
@@ -169,8 +170,13 @@ export class OwnerController {
   async jobs(@Req() req: Request) { this.require(req); return { jobs: await this.workshop.jobs(100) }; }
 
   // ---- interesados (solo desde un dispositivo registrado) ----
+  /** Interesados con su calificacion (puntos, nivel y desglose). El puntaje ordena y sugiere: no cambia nada por si solo. */
   @Get('leads')
-  async listLeads(@Req() req: Request) { this.require(req); return { statuses: STATUSES, leads: (await this.leads.list()).map((l) => ({ ...l, blocked: this.optout.blocked(l.contact) })) }; }
+  async listLeads(@Req() req: Request) {
+    this.require(req);
+    const leads = await this.leads.list(), scores = this.scoring ? await this.scoring.forLeads(leads, (c) => this.optout.blocked(c)) : undefined;
+    return { statuses: STATUSES, scoring: this.scoring?.table(), leads: leads.map((l) => ({ ...l, blocked: this.optout.blocked(l.contact), ...(scores?.get(l.id) ? { rating: scores.get(l.id) } : {}) })) };
+  }
 
   // ---- no contactar: la lista se ve, se amplia a mano y solo aqui se quita una marca ----
   @Get('optouts')
