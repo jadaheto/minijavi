@@ -1,3 +1,4 @@
+import { SLIDE_THEMES, slideImagePrompt, themeName } from '../google/slide-design';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
 import { INTERESTS, LeadsService } from '../leads/leads.service';
@@ -918,14 +919,15 @@ export class ToolsService {
     // imagen generada (cada imagen se cobra y cuenta en el tope diario de imagenes). Siempre en segundo plano.
     if (google?.configured && writer) this.ownerTools.crear_presentacion = {
       description:
-        'Crea una presentación de Google NUEVA y privada en el Drive de Javier (carpeta «minijavi»): portada y una diapositiva por punto, con imágenes generadas a la derecha del texto. No edita, comparte ni borra archivos. ' +
+        'Crea una presentación de Google NUEVA y privada en el Drive de Javier (carpeta «minijavi»), ya diseñada: tema de color, portada con una imagen de fondo y una diapositiva por punto con su imagen generada. No edita, comparte ni borra archivos. ' +
         'Siempre en dos pasos: la primera llamada no crea nada; dile qué vas a crear (y cuántas imágenes, porque cada una se cobra) y, cuando diga que sí, vuelve a llamarla con el MISMO título. Se arma en segundo plano y tarda uno o dos minutos.',
       parameters: { type: 'object', properties: {
         titulo: { type: 'string', description: 'Título de la presentación.' },
         encargo: { type: 'string', description: 'De qué trata y qué debe decir, con las indicaciones de Javier.' },
         material: { type: 'string', description: 'Texto leído (correo o archivo) que Javier pidió usar como base. Solo si él lo pidió.' },
         diapositivas: { type: 'integer', description: 'Cuántas diapositivas además de la portada (de 3 a 10; por defecto 6).' },
-        imagenes: { type: 'integer', description: 'Cuántas imágenes generar (de 0 a 6; por defecto 3). 0 = solo texto.' },
+        imagenes: { type: 'integer', description: 'Cuántas diapositivas llevan imagen (de 0 a 6; por defecto 3); además se genera una para la portada. 0 = sin ninguna imagen.' },
+        tema: { type: 'string', enum: ['noche', 'grafito', 'bosque', 'arena', 'claro'], description: 'Solo si Javier pide un aspecto: noche (oscuro azul), grafito (oscuro gris y ámbar), bosque (oscuro verde), arena (claro cálido), claro (blanco). Si no dice nada, NO lo envíes: se elige según el asunto.' },
       }, required: ['titulo', 'encargo'] },
       run: async (args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult | string> => {
         const title = String(args.titulo ?? '').replace(/\s+/g, ' ').trim().slice(0, 120), brief = String(args.encargo ?? '').trim(), material = String(args.material ?? '').trim();
@@ -935,24 +937,29 @@ export class ToolsService {
         const count = Math.min(10, Math.max(3, Math.round(Number(args.diapositivas)) || 6));
         const canDraw = images.canGenerate && cfg.publicUrl.startsWith('https://'); // Google baja cada imagen de una dirección pública
         const pics = canDraw ? Math.min(6, Math.max(0, args.imagenes === undefined || args.imagenes === null || args.imagenes === '' ? 3 : Math.round(Number(args.imagenes)) || 0)) : 0;
-        const wait = needsYes(ctx, 'presentacion', title, `qué presentación vas a crear («${title}»): unas ${count} diapositivas${pics ? ` y ${pics === 1 ? '1 imagen generada (se cobra)' : `${pics} imágenes generadas (cada una se cobra)`}` : ', solo texto'}${material ? ', usando lo que acabas de leer' : ''}`); if (wait) return wait;
+        const total = pics ? pics + 1 : 0, asked = typeof args.tema === 'string' && args.tema.trim() ? themeName(args.tema) : ''; // la portada lleva la suya
+        const wait = needsYes(ctx, 'presentacion', title, `qué presentación vas a crear («${title}»): unas ${count} diapositivas${asked ? `, con el tema ${SLIDE_THEMES[asked].label}` : ''}${total ? ` y ${total} imágenes generadas en alta calidad (la de la portada y ${pics === 1 ? 'una más' : `${pics} más`}; cada una se cobra)` : ', solo texto'}${material ? ', usando lo que acabas de leer' : ''}`); if (wait) return wait;
         if (!ctx.notify) return 'NO se creó: en esta conversación no se puede avisar después.';
         const notify = ctx.notify;
         void (async () => {
-          const o = await writer.outline(title, brief, material, count, pics > 0);
+          const o = await writer.outline(title, brief, material, count, pics > 0, asked);
           // Las imagenes, una tras otra (cada una tarda unos segundos y cuenta en el tope diario). La que falle se queda sin imagen.
-          const urls = new Map<number, string>(); let drawn = 0, failed = 0;
-          for (let k = 0; k < o.slides.length && drawn < pics; k++) {
+          // Todas con la misma direccion de arte (el estilo del guion + la paleta del tema), en alta calidad: la portada
+          // horizontal y las de las diapositivas verticales, a toda la altura.
+          const urls = new Map<number, string>(); let drawn = 0, failed = 0, cover = '', stop = false;
+          const draw = async (scene: string, isCover: boolean) => { try { const r = await images.generate(slideImagePrompt(o.theme, o.style, scene, isCover), isCover ? 'horizontal' : 'vertical', undefined, 'high'); drawn++; return `${cfg.publicUrl}/imagenes/${r.name}`; } catch (e) { failed++; if (/tope|límite|limite/i.test((e as Error).message)) stop = true; return ''; } };
+          if (pics > 0) cover = await draw(o.cover || `Una escena que represente: ${title}`, true);
+          for (let k = 0, n = 0; k < o.slides.length && n < pics && !stop; k++) {
             if (!o.slides[k].picture) continue;
-            try { const r = await images.generate(`Ilustración limpia y moderna para una diapositiva, sin ningún texto ni letras, sin logos: ${o.slides[k].picture}`, 'horizontal'); urls.set(k, `${cfg.publicUrl}/imagenes/${r.name}`); drawn++; }
-            catch (e) { failed++; if (/tope|límite|limite/i.test((e as Error).message)) break; }
+            const u = await draw(o.slides[k].picture, false); n++; if (u) urls.set(k, u);
           }
-          const f = await google.createSlides(title, o.subtitle, o.slides.map((s2, k) => ({ title: s2.title, points: s2.points, image: urls.get(k) })), `guion de ${o.by}${material ? ' + lo leído' : ''}`);
+          const f = await google.createSlides(title, o.subtitle, o.slides.map((s2, k) => ({ title: s2.title, points: s2.points, image: urls.get(k), notes: s2.notes })), `guion de ${o.by}${material ? ' + lo leído' : ''}`, { theme: o.theme, cover });
+          const pending = o.slides.filter((s2) => /POR COMPLETAR/i.test(s2.notes)).length;
           const qr = await QRCode.toDataURL(f.link, { margin: 1, width: 360, errorCorrectionLevel: 'M' }).catch(() => undefined);
           notify({ card: { title: 'Presentación creada', lines: [f.title, `${f.slides} diapositivas${f.images ? ` · ${f.images} imágenes` : ''}. En tu Drive, carpeta «minijavi».`], ...(qr ? { qr, caption: 'Ábrela desde el celular' } : {}) },
-            text: `(Aviso del sistema: ya está creada la presentación «${f.title}» que Javier pidió: ${f.slides} diapositivas${f.images ? ` y ${f.images} imágenes generadas` : ', sin imágenes'}${drawn > (f.images ?? 0) ? ` (${drawn - (f.images ?? 0)} imagen(es) no entraron)` : ''}${failed ? `; ${failed} imagen(es) no se pudieron generar` : ''}. Es privada y quedó en la carpeta «minijavi» de su Drive. En pantalla está el código QR. Díselo en una frase y recuérdale revisarla.)` });
+            text: `(Aviso del sistema: ya está creada la presentación «${f.title}» que Javier pidió: ${f.slides} diapositivas${f.images ? ` y ${f.images} imágenes generadas` : ', sin imágenes'}${drawn > (f.images ?? 0) ? ` (${drawn - (f.images ?? 0)} imagen(es) no entraron)` : ''}${failed ? `; ${failed} imagen(es) no se pudieron generar` : ''}. Tema ${SLIDE_THEMES[o.theme].label}.${pending ? ` En las notas del orador de ${pending} diapositiva(s) quedó anotado qué dato falta por completar.` : ''} Es privada y quedó en la carpeta «minijavi» de su Drive. En pantalla está el código QR. Díselo en una o dos frases y recuérdale revisarla.)` });
         })().catch((e) => notify({ text: `(Aviso del sistema: NO se pudo crear la presentación «${title}»: ${(e as Error).message}. Díselo tal cual.)` }));
-        return `La presentación «${title}» se está armando en segundo plano${pics ? ` con ${pics === 1 ? '1 imagen' : `${pics} imágenes`}` : ''}; tarda uno o dos minutos. Dile que le avisas cuando esté en su Drive.${!canDraw && Number(args.imagenes) !== 0 ? ' Aquí no se pueden generar imágenes: irá solo con texto.' : ''}`;
+        return `La presentación «${title}» se está armando en segundo plano${total ? ` con ${total} imágenes` : ''}; tarda entre dos y cuatro minutos. Dile que le avisas cuando esté en su Drive.${!canDraw && Number(args.imagenes) !== 0 ? ' Aquí no se pueden generar imágenes: irá solo con texto.' : ''}`;
       },
     };
     // Agregar a un archivo que el avatar creo: texto al final de un documento, filas al final de una hoja o una diapositiva
@@ -984,7 +991,7 @@ export class ToolsService {
           if (kind === 'documento') { const r = await google.appendDoc(f.id, content); return `Listo: se agregó el texto al final del documento «${r.title}» (${r.chars} caracteres)${r.styled ? '' : ', en texto llano'}. Díselo en una frase.`; }
           if (kind === 'hoja') { const r = await google.appendRows(f.id, rows); return `Listo: se agregaron ${r.rows} fila${r.rows === 1 ? '' : 's'} al final de la hoja «${r.title}». Díselo en una frase.`; }
           let image = '';
-          if (picture && canDraw) image = await images.generate(`Ilustración limpia y moderna para una diapositiva, sin ningún texto ni letras, sin logos: ${picture.slice(0, 300)}`, 'horizontal').then((r) => `${cfg.publicUrl}/imagenes/${r.name}`).catch(() => '');
+          if (picture && canDraw) image = await images.generate(slideImagePrompt(await google.themeOf(f.id), '', picture.slice(0, 300)), 'vertical', undefined, 'high').then((r) => `${cfg.publicUrl}/imagenes/${r.name}`).catch(() => '');
           const r = await google.appendSlide(f.id, { title: String(sl.titulo), points: (Array.isArray(sl.puntos) ? sl.puntos : []).map((x) => String(x)), image });
           return `Listo: se agregó la diapositiva al final de la presentación «${r.title}»${picture ? (r.image ? ', con su imagen' : ', pero sin imagen (no se pudo generar o poner)') : ''}. Díselo en una frase.`;
         } catch (e) { return `NO se cambió: ${(e as Error).message}. Díselo tal cual.`; }

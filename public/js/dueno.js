@@ -68,7 +68,7 @@ const pretty = (k) => String(k).replace(/_/g, ' ').replace(/^formulario:/, 'form
 const SOURCE = (k) => (k === 'sin dato' ? 'Sin dato (anteriores)' : k === 'voz' ? 'Conversación en el sitio' : k === 'llamada' ? 'Llamada de WhatsApp' : pretty(k));
 
 // ---------- pestañas ----------
-const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, demos: loadDemos, avatares: loadAvatars, conexiones: loadConnections, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, dispositivos: loadDevices };
+const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, demos: loadDemos, avatares: loadAvatars, conexiones: loadConnections, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, creados: loadMade, dispositivos: loadDevices };
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
   for (const b of $('tabs').querySelectorAll('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
@@ -675,6 +675,34 @@ async function loadDemos() {
     del.addEventListener('click', async () => { if (del.dataset.sure) { await api(`demos/${encodeURIComponent(d.id)}`, { method: 'DELETE' }); loadDemos(); } else { del.dataset.sure = '1'; del.textContent = '¿Seguro? Borra también su documento'; } });
     kids.push(el('div', { className: 'row' }, ...(d.status === 'listo' ? [open, copy] : []), more, del));
     return el('li', { className: 'demo-row' }, ...kids);
+  }));
+}
+
+// Lo que el avatar creo en Google (documentos, hojas y presentaciones). Solo se muestra: aqui no se borra ni se cambia.
+const MADE = { documento: 'Documento', hoja: 'Hoja de cálculo', presentacion: 'Presentación' };
+let madeKind = '';
+async function loadMade() {
+  const d = await json('google/creados'), all = d.files || [], files = all.filter((f) => !madeKind || f.kind === madeKind);
+  $('made-count').textContent = `(${all.length})`;
+  $('made-note').textContent = !all.length ? (!d.configured ? 'Google no está configurado en el servidor.' : d.connected ? 'Todavía no hay nada. Pídele al avatar, en modo dueño, un documento, una hoja o una presentación y aparecerá aquí.' : 'Google no está conectado: se conecta en Dispositivos.')
+    : `Lo que el avatar ha creado en tu Drive, en la carpeta «minijavi».${d.today ? ` Hoy: ${d.today.n} de ${d.today.limit}.` : ''} Desde aquí solo se abren: para cambiarlos o borrarlos, en Google.${d.connected ? '' : ' Google está desconectado: los enlaces siguen sirviendo, las miniaturas no.'}`;
+  const kinds = ['', ...Object.keys(MADE).filter((k) => all.some((f) => f.kind === k))];
+  $('made-filter').hidden = kinds.length < 3;
+  $('made-filter').replaceChildren(...kinds.map((k) => { const b = el('button', { type: 'button', className: `small${k === madeKind ? ' primary' : ''}`, textContent: k ? `${MADE[k]} (${all.filter((f) => f.kind === k).length})` : 'Todos' }); b.setAttribute('aria-pressed', String(k === madeKind)); b.addEventListener('click', () => { madeKind = k; loadMade(); }); return b; }));
+  $('made-list').replaceChildren(...files.map((f) => {
+    const mark = el('span', { className: `made-mark k-${f.kind}`, textContent: { documento: 'Doc', hoja: 'Hoja', presentacion: 'Pres' }[f.kind] });
+    mark.setAttribute('aria-hidden', 'true');
+    let pic = mark;
+    if (f.thumb) { const img = el('img', { className: 'made-thumb', src: `/owner/google/creados/${encodeURIComponent(f.id)}/miniatura`, alt: `Portada de ${f.title}`, loading: 'lazy', width: 200, height: 112 }); img.addEventListener('error', () => img.replaceWith(mark)); pic = img; }
+    const qr = f.qr ? el('img', { className: 'made-qr', src: f.qr, alt: `Código QR de ${f.title}`, width: 140, height: 140, hidden: true }) : null;
+    const show = qr ? el('button', { type: 'button', className: 'small', textContent: 'Ver QR' }) : null;
+    show?.addEventListener('click', () => { qr.hidden = !qr.hidden; show.textContent = qr.hidden ? 'Ver QR' : 'Ocultar QR'; });
+    const added = (f.added || []).length;
+    return el('li', {}, el('div', { className: 'made-row' }, pic,
+      el('div', { className: 'made-info' }, el('strong', { textContent: f.title || 'Archivo' }),
+        el('small', { className: 'muted', textContent: [MADE[f.kind], fecha(f.at), f.source, f.theme ? `tema ${{ noche: 'oscuro azul', grafito: 'oscuro grafito', bosque: 'oscuro verde', arena: 'claro cálido', claro: 'claro' }[f.theme] || f.theme}` : ''].filter(Boolean).join(' · ') }),
+        added ? el('small', { className: 'muted', textContent: `Se le agregó contenido ${added === 1 ? 'una vez' : `${added} veces`} (la última, ${fecha(f.added[0].at)}).` }) : null,
+        el('div', { className: 'row' }, el('a', { className: 'button small primary', href: f.link, target: '_blank', rel: 'noopener', textContent: 'Abrir en Google' }), show), qr)));
   }));
 }
 

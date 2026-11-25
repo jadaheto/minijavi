@@ -5,6 +5,8 @@ import { Vault } from '../connections/vault';
 import { DbService } from '../db/db.service';
 import { AlertsService } from '../ops/alerts.service';
 import { UsageService } from '../usage/usage.service';
+import { SlideSpec, slideRequests, themeName } from './slide-design';
+export { SlideSpec, slideRequests } from './slide-design';
 
 /**
  * Google de Javier (conexiones, etapa B; plan aprobado el 2026-11-24). SOLO LECTURA y solo en modo dueño.
@@ -80,8 +82,7 @@ export interface MailItem { id: string; from: string; subject: string; date: str
 export interface MailFull extends MailItem { to: string; text: string; truncated: boolean; attachments: number }
 export interface DriveFile { id: string; name: string; kind: string; mime: string; when: string; owner: string; readable: boolean }
 export interface DriveDoc extends DriveFile { text: string; truncated: boolean; note: string; /** Hojas de calculo: nombres de sus pestañas y cual se leyo. */ tabs?: string[]; tab?: string }
-export interface CreatedFile { id: string; title: string; link: string; chars: number; styled: boolean; /** Presentaciones: cuantas diapositivas e imagenes quedaron. */ slides?: number; images?: number; rows?: number }
-export interface SlideSpec { title: string; points: string[]; /** Direccion publica de la imagen de esta diapositiva (opcional). */ image?: string }
+export interface CreatedFile { id: string; title: string; link: string; chars: number; styled: boolean; /** Presentaciones: cuantas diapositivas e imagenes quedaron. */ slides?: number; images?: number; rows?: number; theme?: string }
 export class GoogleError extends Error { constructor(message: string, readonly status = 0) { super(message); } }
 
 const clean = (s: unknown, max: number) => String(s ?? '').replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -501,22 +502,71 @@ export class GoogleService implements OnModuleInit {
   }
 
   /**
-   * Crea una presentacion NUEVA y privada: portada, y una diapositiva por punto con su titulo, sus viñetas y, si trae,
-   * su imagen a la derecha. Las imagenes las baja Google de la direccion publica que se le pasa; cada una va en su propio
-   * envio para que una que falle no deje la presentacion sin las demas.
+   * Crea una presentacion NUEVA y privada con el diseño de `slide-design.ts`: portada (con la imagen `cover` de fondo, si
+   * hay) y una diapositiva por punto con su titulo, sus viñetas y, si trae, su imagen. Las imagenes las baja Google de la
+   * direccion publica que se le pasa; cada una va en su propio envio para que una que falle no deje la presentacion sin
+   * las demas. Las notas (lo que falta por completar) van a las notas del orador, no a la diapositiva.
    */
-  async createSlides(title: string, subtitle: string, slides: SlideSpec[], source = 'redactado'): Promise<CreatedFile> {
-    const list = (Array.isArray(slides) ? slides : []).slice(0, 12).map((x) => ({ title: clean(x?.title, 120), points: (Array.isArray(x?.points) ? x.points : []).map((q) => clean(q, 220)).filter(Boolean).slice(0, 6), image: typeof x?.image === 'string' && /^https:\/\/[^\s]{8,1900}$/.test(x.image) ? x.image : '' })).filter((x) => x.title);
+  async createSlides(title: string, subtitle: string, slides: SlideSpec[], source = 'redactado', design: { theme?: string; cover?: string } = {}): Promise<CreatedFile> {
+    const url = (v: unknown) => (typeof v === 'string' && /^https:\/\/[^\s]{8,1900}$/.test(v) ? v : '');
+    const list = (Array.isArray(slides) ? slides : []).slice(0, 12).map((x) => ({ title: clean(x?.title, 120), points: (Array.isArray(x?.points) ? x.points : []).map((q) => clean(q, 220)).filter(Boolean).slice(0, 6), image: url(x?.image), notes: clean(x?.notes, 1200) })).filter((x) => x.title);
     if (!list.length) throw new GoogleError('la presentación no tiene diapositivas');
-    const chars = JSON.stringify(list).length, f = await this.newFile('presentacion', MIME_SLIDES, title, chars, source);
+    const theme = themeName(design.theme), chars = JSON.stringify(list).length, f = await this.newFile('presentacion', MIME_SLIDES, title, chars, source);
+    await this.db.query('UPDATE google_created SET theme = $1 WHERE file_id = $2', [theme, f.id]).catch(() => undefined);
     // Lo que el archivo traia al nacer (una diapositiva vacia) se quita al final, cuando ya existen las nuestras.
     const before: string[] = await this.get(`${SLIDES}/${f.id}`, { fields: 'slides(objectId)' }).then((d: any) => (Array.isArray(d?.slides) ? d.slides : []).map((x: any) => String(x?.objectId ?? '')).filter(Boolean)).catch(() => []);
-    const { requests, images } = slideRequests(f.name, clean(subtitle, 160), list);
+    const { requests, images, notes } = slideRequests(f.name, clean(subtitle, 160), list, '', theme, url(design.cover));
     await this.write(`${SLIDES}/${f.id}:batchUpdate`, { requests });
     let placed = 0, styled = true;
-    for (const img of images) await this.write(`${SLIDES}/${f.id}:batchUpdate`, { requests: [img] }).then(() => { placed++; }).catch((e) => { styled = false; this.log.warn(`presentación: una imagen no entró (${(e as Error).message})`); });
+    for (const img of images) await this.write(`${SLIDES}/${f.id}:batchUpdate`, { requests: img }).then(() => { placed++; }).catch((e) => { styled = false; this.log.warn(`presentación: una imagen no entró (${(e as Error).message})`); });
     if (before.length) await this.write(`${SLIDES}/${f.id}:batchUpdate`, { requests: before.map((objectId) => ({ deleteObject: { objectId } })) }).catch(() => { styled = false; });
-    return { id: f.id, title: f.name, link: `https://docs.google.com/presentation/d/${f.id}/edit`, chars, styled, slides: list.length + 1, images: placed };
+    if (notes.length) await this.speakerNotes(f.id, notes).catch((e) => this.log.warn(`presentación: las notas no entraron (${(e as Error).message})`));
+    return { id: f.id, title: f.name, link: `https://docs.google.com/presentation/d/${f.id}/edit`, chars, styled, slides: list.length + 1, images: placed, theme };
+  }
+
+  /** Escribe las notas del orador: Google dice en que caja van las de cada diapositiva (`speakerNotesObjectId`). */
+  private async speakerNotes(id: string, notes: { page: string; text: string }[]): Promise<void> {
+    const d: any = await this.get(`${SLIDES}/${id}`, { fields: 'slides(objectId,slideProperties(notesPage(notesProperties(speakerNotesObjectId))))' });
+    const where = new Map<string, string>((Array.isArray(d?.slides) ? d.slides : []).map((x: any) => [String(x?.objectId ?? ''), String(x?.slideProperties?.notesPage?.notesProperties?.speakerNotesObjectId ?? '')]));
+    const requests = notes.filter((n) => where.get(n.page)).map((n) => ({ insertText: { objectId: where.get(n.page), text: n.text } }));
+    if (requests.length) await this.write(`${SLIDES}/${id}:batchUpdate`, { requests });
+  }
+
+  // ---------- lo creado, para el panel ----------
+  /**
+   * Los archivos que el avatar creo, del mas reciente al mas antiguo, cada uno con lo que se le agrego despues. Sale de
+   * la tabla propia: no consulta a Google (un archivo que Javier borro en Drive sigue apareciendo aqui).
+   */
+  async createdFiles(limit = 100): Promise<{ id: string; kind: string; title: string; at: string; source: string; theme: string; added: { at: string; source: string }[] }[]> {
+    const rows = await this.db.query<{ at: string; kind: string; file_id: string; title: string; source: string; theme: string }>('SELECT at, kind, file_id, title, source, theme FROM google_created ORDER BY id DESC LIMIT 600');
+    const out = new Map<string, { id: string; kind: string; title: string; at: string; source: string; theme: string; added: { at: string; source: string }[] }>(), added = new Map<string, { at: string; source: string }[]>();
+    for (const r of rows) {
+      if (String(r.kind).startsWith('agregado:')) { const l = added.get(r.file_id) ?? []; l.push({ at: String(r.at), source: r.source }); added.set(r.file_id, l); }
+      else if (['documento', 'hoja', 'presentacion'].includes(r.kind) && !out.has(r.file_id)) out.set(r.file_id, { id: r.file_id, kind: r.kind, title: r.title, at: String(r.at), source: r.source, theme: r.theme ?? '', added: [] });
+    }
+    return [...out.values()].slice(0, Math.min(200, limit)).map((f) => ({ ...f, added: added.get(f.id) ?? [] }));
+  }
+
+  /**
+   * La miniatura de la portada de una presentacion creada por el avatar (PNG de 200 px de ancho). Google entrega una
+   * direccion temporal ligada a la cuenta: el servidor baja la imagen y la guarda en memoria; la direccion no sale de aqui.
+   */
+  private thumbs = new Map<string, { at: number; buf: Buffer }>();
+  async thumbnail(id: string): Promise<Buffer> {
+    const hit = this.thumbs.get(id); if (hit && Date.now() - hit.at < 6 * 3600_000) return hit.buf;
+    const [row] = await this.db.query<{ kind: string }>('SELECT kind FROM google_created WHERE file_id = $1 AND kind = $2', [String(id), 'presentacion']);
+    if (!row) throw new GoogleError('ese archivo no es una presentación creada por el avatar', 404);
+    const d: any = await this.get(`${SLIDES}/${id}`, { fields: 'slides(objectId)' }), page = String(d?.slides?.[0]?.objectId ?? '');
+    if (!/^[A-Za-z0-9_][A-Za-z0-9_:-]{0,60}$/.test(page)) throw new GoogleError('la presentación no tiene diapositivas');
+    const t: any = await this.get(`${SLIDES}/${id}/pages/${page}/thumbnail`, { 'thumbnailProperties.thumbnailSize': 'SMALL', 'thumbnailProperties.mimeType': 'PNG' });
+    let u: URL; try { u = new URL(String(t?.contentUrl ?? '')); } catch { throw new GoogleError('Google no devolvió la miniatura'); }
+    if (u.protocol !== 'https:' || !/(^|\.)(googleusercontent\.com|google\.com)$/.test(u.hostname)) throw new GoogleError('Google devolvió una dirección inesperada para la miniatura');
+    const res = await fetch(u, { signal: AbortSignal.timeout(10_000), redirect: 'error' }); if (!res.ok) throw new GoogleError('no se pudo bajar la miniatura');
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < 100 || buf.length > 600_000 || buf.readUInt32BE(0) !== 0x89504e47) throw new GoogleError('la miniatura no es una imagen válida');
+    if (this.thumbs.size >= 60) this.thumbs.delete(this.thumbs.keys().next().value as string);
+    this.thumbs.set(id, { at: Date.now(), buf });
+    return buf;
   }
 
   // ---------- agregar a lo que el avatar creo ----------
@@ -570,44 +620,25 @@ export class GoogleService implements OnModuleInit {
     return { title, rows: body.length };
   }
 
+  /** El tema con que se creo una presentacion ('claro' si es anterior a los temas). */
+  async themeOf(id: string): Promise<string> {
+    const [row] = await this.db.query<{ theme: string }>('SELECT theme FROM google_created WHERE file_id = $1 AND kind = $2', [String(id), 'presentacion']).catch(() => []);
+    return themeName(row?.theme, 'claro');
+  }
+
   /** Agrega una diapositiva AL FINAL de una presentacion creada por el avatar (con su imagen a la derecha, si trae). */
   async appendSlide(id: string, slide: SlideSpec, source = 'dictado'): Promise<{ title: string; image: boolean }> {
     const title = await this.own(id, 'presentacion');
     const spec = { title: clean(slide?.title, 120), points: (Array.isArray(slide?.points) ? slide.points : []).map((q) => clean(q, 220)).filter(Boolean).slice(0, 6), image: typeof slide?.image === 'string' && /^https:\/\/[^\s]{8,1900}$/.test(slide.image) ? slide.image : '' };
     if (!spec.title) throw new GoogleError('falta el título de la diapositiva');
-    const { requests, images } = slideRequests('', '', [spec], `mj_${randomBytes(4).toString('hex')}`);
+    // Con el tema con que nacio la presentacion; las anteriores a los temas (fondo blanco) siguen en claro.
+    const { requests, images } = slideRequests('', '', [spec], `mj_${randomBytes(4).toString('hex')}`, await this.themeOf(id));
     await this.write(`${SLIDES}/${id}:batchUpdate`, { requests });
     let placed = false;
-    for (const img of images) await this.write(`${SLIDES}/${id}:batchUpdate`, { requests: [img] }).then(() => { placed = true; }).catch((e) => this.log.warn(`diapositiva agregada sin imagen: ${(e as Error).message}`));
+    for (const img of images) await this.write(`${SLIDES}/${id}:batchUpdate`, { requests: img }).then(() => { placed = true; }).catch((e) => this.log.warn(`diapositiva agregada sin imagen: ${(e as Error).message}`));
     await this.logAdded('presentacion', id, title, JSON.stringify(spec).length, source);
     return { title, image: placed };
   }
-}
-
-/**
- * Las ordenes para armar una presentacion: una portada (diseño TITLE) y, por cada punto, una diapositiva con titulo y
- * viñetas. Si la diapositiva lleva imagen se usa el diseño de dos columnas: el texto a la izquierda y, en vez de la
- * columna derecha, la imagen. Las imagenes se devuelven aparte para enviarlas una por una. Medidas en EMU (una
- * diapositiva 16:9 mide 9.144.000 x 5.143.500). Con `append` (un prefijo unico para los identificadores) no hay portada
- * y las diapositivas quedan al final de una presentacion que ya existe.
- */
-export function slideRequests(title: string, subtitle: string, slides: SlideSpec[], append = ''): { requests: Record<string, unknown>[]; images: Record<string, unknown>[] } {
-  const requests: Record<string, unknown>[] = [], images: Record<string, unknown>[] = [];
-  const map = (type: string, index: number, objectId: string) => ({ layoutPlaceholder: { type, index }, objectId });
-  if (!append) requests.push({ createSlide: { objectId: 'mj_portada', insertionIndex: 0, slideLayoutReference: { predefinedLayout: 'TITLE' }, placeholderIdMappings: [map('CENTERED_TITLE', 0, 'mj_portada_t'), map('SUBTITLE', 0, 'mj_portada_s')] } });
-  if (!append) requests.push({ insertText: { objectId: 'mj_portada_t', text: title } });
-  if (!append && subtitle) requests.push({ insertText: { objectId: 'mj_portada_s', text: subtitle } });
-  slides.forEach((sl, k) => {
-    const n = String(k + 1).padStart(2, '0'), page = append ? `${append}_${n}` : `mj_dia_${n}`, t = `${page}_t`, b = `${page}_b`, r = `${page}_r`;
-    requests.push({ createSlide: { objectId: page, ...(append ? {} : { insertionIndex: k + 1 }), slideLayoutReference: { predefinedLayout: sl.image ? 'TITLE_AND_TWO_COLUMNS' : 'TITLE_AND_BODY' }, placeholderIdMappings: [map('TITLE', 0, t), map('BODY', 0, b), ...(sl.image ? [map('BODY', 1, r)] : [])] } });
-    requests.push({ insertText: { objectId: t, text: sl.title } });
-    if (sl.points.length) requests.push({ insertText: { objectId: b, text: sl.points.join('\n') } });
-    if (sl.image) {
-      requests.push({ deleteObject: { objectId: r } });
-      images.push({ createImage: { objectId: `${page}_img`, url: sl.image, elementProperties: { pageObjectId: page, size: { width: { magnitude: 3_900_000, unit: 'EMU' }, height: { magnitude: 2_600_000, unit: 'EMU' } }, transform: { scaleX: 1, scaleY: 1, translateX: 4_850_000, translateY: 1_500_000, unit: 'EMU' } } } });
-    }
-  });
-  return { requests, images };
 }
 
 /**

@@ -42,6 +42,7 @@
           <button role="tab" data-tab="catalogo">Catálogo</button>
           <button role="tab" data-tab="imagenes">Imágenes</button>
           <button role="tab" data-tab="taller">Taller</button>
+          <button role="tab" data-tab="creados">Creados</button>
         </div>
         <div class="group"><h2>Control</h2>
           <button role="tab" data-tab="autonomia">Autonomía</button>
@@ -230,6 +231,13 @@
           <h2>Imágenes generadas con IA <small id="image-count"></small></h2>
           <p class="muted" id="image-note">Todas las que le pides al avatar quedan aquí guardadas, con la descripción que diste.</p>
           <div class="image-grid" id="image-grid"></div>
+        </section>
+
+        <section data-view="creados" class="card" hidden>
+          <h2>Creados por el avatar <small id="made-count"></small></h2>
+          <p class="muted" id="made-note">Los documentos, hojas y presentaciones que el avatar ha creado en tu Drive, en la carpeta «minijavi».</p>
+          <div class="row" id="made-filter" role="group" aria-label="Filtrar por tipo"></div>
+          <ul class="list made" id="made-list"></ul>
         </section>
 
         <section data-view="demos" class="card" hidden>

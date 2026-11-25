@@ -231,6 +231,11 @@ function visitorId() {
 let cardTimer = null;
 function showCard(card) {
   if (gallery) hideGallery(); // comparten el mismo lugar de la pantalla
+  // La tarjeta (casi siempre un QR recien creado) no puede quedar debajo de un panel: se cierra lo que haya a la derecha.
+  if (news.active) { news.hide(); socket?.send({ type: 'news', index: 0 }); }
+  if (markets.active) markets.hide();
+  if (tesla.active) tesla.hide();
+  if (dataPanel.active) dataPanel.hide();
   $('card-title').textContent = card.title || '';
   $('card-lines').replaceChildren(...(card.lines || []).map((t) => { const li = document.createElement('li'); li.textContent = t; return li; }));
   $('card-qr').hidden = !card.qr; if (card.qr) $('card-qr').src = card.qr;

@@ -147,11 +147,11 @@ export class ImagesService implements OnModuleInit {
    * 2026-11-19: PRIMERO OpenAI y, si falla (sin saldo, caido, clave, tiempo), Magnific. Si OpenAI la rechaza por su filtro
    * de contenido NO se reintenta con el otro proveedor. Devuelve el nombre, quien la hizo y, si hubo relevo, por que.
    */
-  async generate(prompt: string, format = 'horizontal', signal?: AbortSignal): Promise<{ name: string; provider: 'OpenAI' | 'Magnific'; fallback?: string }> {
+  async generate(prompt: string, format = 'horizontal', signal?: AbortSignal, quality?: 'low' | 'medium' | 'high'): Promise<{ name: string; provider: 'OpenAI' | 'Magnific'; fallback?: string }> {
     const fmt = FORMATS[format] ? format : 'horizontal';
     let img: { buf: Buffer; type: string } | undefined, provider: 'OpenAI' | 'Magnific' = 'OpenAI', fallback: string | undefined;
     if (this.cfg.imageOpenAiKey) {
-      try { img = (await this.viaOpenAi(prompt, fmt, signal))[0]; this.usage.add('image_openai'); }
+      try { img = (await this.viaOpenAi(prompt, fmt, signal, 1, undefined, quality))[0]; this.usage.add('image_openai'); }
       catch (e) {
         if (e instanceof Blocked || !this.cfg.magnificApiKey || signal?.aborted) throw e;
         fallback = (e as Error).message; this.log.warn(`imagen: ${fallback}; se intenta con Magnific`);
@@ -168,10 +168,10 @@ export class ImagesService implements OnModuleInit {
    * GPT Image devuelven siempre la imagen en `data[0].b64_json`. No se confirmo en la documentacion la forma exacta del
    * rechazo por contenido: se reconoce por `moderation_blocked` o por las palabras de su mensaje.
    */
-  private async viaOpenAi(prompt: string, format: string, signal?: AbortSignal, n = 1, editFile?: string): Promise<{ buf: Buffer; type: string }[]> {
+  private async viaOpenAi(prompt: string, format: string, signal?: AbortSignal, n = 1, editFile?: string, quality?: string): Promise<{ buf: Buffer; type: string }[]> {
     // Con `editFile` se editan imagenes: `POST /v1/images/edits` en JSON, con la imagen como data URL en `images[].image_url`
     // (referencia leida el 2026-11-19). `n` (1 a 10) pide varias versiones en una sola peticion, en las dos rutas.
-    const common = { model: this.cfg.imageOpenAiModel, prompt: prompt.slice(0, 4000), size: OPENAI_SIZES[format], quality: this.cfg.imageOpenAiQuality, output_format: 'jpeg', n };
+    const common = { model: this.cfg.imageOpenAiModel, prompt: prompt.slice(0, 4000), size: OPENAI_SIZES[format], quality: quality ?? this.cfg.imageOpenAiQuality, output_format: 'jpeg', n };
     let body: Record<string, unknown> = common, path = 'generations';
     if (editFile) {
       const buf = readFileSync(editFile), mime = editFile.endsWith('.png') ? 'image/png' : editFile.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
