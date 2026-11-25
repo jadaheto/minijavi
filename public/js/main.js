@@ -12,6 +12,8 @@ import { createDataPanel } from './panels.js';
 import { createDemoDoc } from './demo-doc.js';
 import { BrowserVoice } from './browser-voice.js';
 import { createGate } from './mic-gate.js';
+import { createCall } from './call.js';
+import { createLook } from './look.js';
 
 const $ = (id) => document.getElementById(id);
 const STATE_TEXT = { idle: 'En espera', listening: 'Escuchando', thinking: 'Pensando', speaking: 'Hablando', away: 'Suspendido' };
@@ -305,7 +307,7 @@ function stopSpeech() { player?.stop(); lips.reset(); speechId = -1; subChars = 
 function onMessage(msg) {
   switch (msg.type) {
     case 'ready':
-      live = true; connecting = false; $('gate').hidden = true; $('mic').hidden = false; setState('listening');
+      live = true; connecting = false; $('gate').hidden = true; $('mic').hidden = false; setState('listening'); call.show(!CAR); call.setLook(!!msg.look);
       gate = msg.gate > 0 ? createGate({ rms: msg.gate }) : null; lastTalk = performance.now();
       if (msg.wake) wakeWord = msg.wake[0].toUpperCase() + msg.wake.slice(1);
       car = !!msg.car; if (car) setState('listening'); // modo carro: el letrero dice como llamarlo
@@ -371,6 +373,8 @@ function onMessage(msg) {
       newsScene = news.active && typeof msg.scene === 'string' ? msg.scene : null; if (state !== 'speaking' || newsScene) backdrop.show(restScene()); break;
     case 'markets': // mercados de prediccion
       showMarkets(msg); break;
+    case 'look': // el avatar va a mirar porque la persona se lo pidio: una foto de la camara, o el aviso de que esta apagada
+      look.take(); break;
     case 'locate': // el servidor necesita la ubicacion (trayecto o cargadores): el navegador pide permiso una vez
       if (!navigator.geolocation) { socket?.send({ type: 'location', error: 'sin soporte' }); break; }
       navigator.geolocation.getCurrentPosition(
@@ -395,7 +399,7 @@ function onMessage(msg) {
 
 /** Fin de la conversacion: vuelve al modo espera (o a la tarjeta inicial si aun no hay microfono). */
 function shutdown(message) {
-  live = false; connecting = false; prebuffer.length = 0; loud = 0;
+  live = false; connecting = false; prebuffer.length = 0; loud = 0; call.show(false);
   retryAt = Math.max(retryAt, performance.now() + 2500);
   suspended = false; awayNotice = ''; $('away').hidden = true;
   setWork(null); music.stop(); tesla.hide(); news.hide(); markets.hide(); dataPanel.hide(); stopSpeech(); hideCard(); hideGallery(); setState(dormant ? 'away' : 'idle'); if (!dormant) { setActivity(null); backdrop.show(null); }
@@ -477,7 +481,17 @@ if (DEMO_PAGE) {
   if (!pic && /^\/p\/[a-z0-9-]+\/$/.test(cover)) { const f = document.createElement('iframe'); f.className = 'gate-hero'; f.src = cover; f.setAttribute('sandbox', ''); f.title = 'Portada'; f.loading = 'lazy'; $('gate-form').prepend(f); }
 }
 
+// Barra de la videollamada. Colgar cierra la conversacion y exige un toque para volver (no reabre con la voz).
+let micMuted = false;
+const call = createCall($('call'), $('self'), {
+  hang() { armed = false; closeReason = ''; socket?.close(); shutdown(''); },
+  look() { socket?.send({ type: 'look_now' }); },
+  mute(on) { micMuted = on; $('mic').classList.toggle('muted', on); $('mic').lastChild.textContent = on ? 'Micrófono en silencio' : 'Micrófono activo'; },
+});
+const look = createLook(call, $('self'), (m) => socket?.send(m));
+
 function onMicChunk(buffer) {
+  if (micMuted) return; // en silencio: no sale nada del microfono
   if (live) {
     const now = performance.now();
     if (state === 'speaking' || state === 'thinking') lastTalk = now;

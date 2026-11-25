@@ -535,3 +535,33 @@ body.demo-page .gate-card .avatar-opt.loading { opacity: .5; }
 .avatar-row[data-busy] .avatar-opt { cursor: progress; }
 .gate.standby .avatar-pick { display: none; }
 .avatar-own { font-size: 14px; font-weight: 600; color: #cfe0ff; text-decoration: underline; text-underline-offset: 3px; }
+
+/* Videollamada: barra de botones abajo al centro y la imagen propia en un recuadro (no sale del navegador). */
+.call { position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 9; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 999px; background: rgba(10, 13, 17, .72); backdrop-filter: blur(10px); box-shadow: 0 0 0 1px rgba(255, 255, 255, .08) inset; }
+.call[hidden] { display: none; }
+.call-btn { width: 46px; height: 46px; display: grid; place-items: center; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .1); color: #eef2f8; cursor: pointer; transition: background .15s ease, transform .15s ease; }
+.call-btn[hidden] { display: none; }
+.call-btn:hover { background: rgba(255, 255, 255, .18); } .call-btn:active { transform: scale(.94); }
+.call-btn:focus-visible { outline: 2px solid #8fb8ff; outline-offset: 2px; }
+.call-btn svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.call-btn[aria-pressed="true"]:not(.off) { background: #eef2f8; color: #0b0f15; }
+.call-btn.off { background: #f2c14e; color: #0b0f15; }
+.call-btn.hang { background: #e5484d; color: #fff; } .call-btn.hang:hover { background: #f05a5f; } .call-btn.hang svg { fill: currentColor; stroke: none; }
+.call-note { position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); margin: 0; padding: 6px 12px; border-radius: 10px; background: rgba(10, 13, 17, .82); font-size: 14px; white-space: nowrap; }
+.call-note:empty { display: none; }
+.self { position: fixed; left: 16px; top: calc(max(14px, env(safe-area-inset-top)) + 52px); z-index: 7; width: clamp(96px, 16vw, 190px); aspect-ratio: 3 / 4; border-radius: 16px; overflow: hidden; background: #000; box-shadow: 0 10px 34px rgba(0, 0, 0, .5), 0 0 0 1px rgba(255, 255, 255, .14); }
+.self[hidden] { display: none; }
+.self video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.self.mirror video { transform: scaleX(-1); }
+.mic.muted .mic-dot { background: #f2c14e; animation: none; }
+/* Con la barra a la vista, los subtitulos suben para no quedar debajo. */
+body:has(.call:not([hidden])) .subtitles { bottom: calc(84px + env(safe-area-inset-bottom)); }
+@media (prefers-reduced-motion: reduce) { .call-btn { transition: none; } }
+@media (orientation: portrait) { .self { width: clamp(84px, 24vw, 130px); } }
+body.showing .call { bottom: calc(var(--strip) + 14px + env(safe-area-inset-bottom)); }
+body.showing:has(.call:not([hidden])) .subtitles { bottom: calc(var(--strip) + 84px + env(safe-area-inset-bottom)); }
+@media (max-width: 640px) { body:has(.music:not([hidden])) .call { left: auto; right: 10px; transform: none; } }
+/* «Mira esto»: mientras el avatar ve, el recuadro lo dice. */
+.self-seeing { position: absolute; left: 6px; right: 6px; bottom: 6px; padding: 4px 6px; border-radius: 8px; background: rgba(10, 13, 17, .78); font-size: 13px; text-align: center; }
+.self-seeing[hidden] { display: none; }
+.self.seeing { box-shadow: 0 10px 34px rgba(0, 0, 0, .5), 0 0 0 3px #8fb8ff; }

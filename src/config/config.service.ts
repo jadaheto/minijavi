@@ -261,6 +261,9 @@ export class ConfigService {
   readonly imageOpenAiModel: string;
   readonly imageOpenAiQuality: string;
   readonly imagesPerSession: number;
+  /** «Mira esto»: el avatar ve por la camara cuando se lo piden (VISION=0 lo apaga) y cuantas veces por conversacion un visitante. */
+  readonly vision: boolean;
+  readonly visionPerSession: number;
   readonly imagesDailySearches: number;
   /** Precio en dolares por unidad de cada medida de consumo (opcional): USAGE_PRICES='{"deepgram_s":0.0001}'. */
   readonly usagePrices: Record<string, number>;
@@ -461,6 +464,8 @@ export class ConfigService {
     this.imageOpenAiModel = str('IMAGEN_OPENAI_MODELO') || str('IMAGEN_RESPALDO_MODELO') || 'gpt-image-2.6-flare'; // IMAGEN_RESPALDO_MODELO: el nombre que usa Javier en su .env
     this.imageOpenAiQuality = ['low', 'medium', 'high'].includes(str('IMAGEN_OPENAI_CALIDAD').toLowerCase()) ? str('IMAGEN_OPENAI_CALIDAD').toLowerCase() : 'medium';
     this.imagesPerSession = int('IMAGES_PER_SESSION', 4, 0);
+    this.vision = str('VISION', '1') !== '0';
+    this.visionPerSession = int('VISION_POR_SESION', 5, 0);
     this.imagesDailySearches = int('IMAGES_DAILY_SEARCHES', 150, 1);
     this.databaseUrl = (process.env.DATABASE_URL ?? '').trim();
     if (this.databaseUrl && !/^postgres(ql)?:\/\//.test(this.databaseUrl)) throw new Error('DATABASE_URL debe empezar por postgres://');
