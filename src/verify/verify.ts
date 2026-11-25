@@ -4061,6 +4061,23 @@ a:focus-visible{outline:3px solid var(--color-ink);outline-offset:3px}
     return `${(b.length / 1048576).toFixed(2)} MB con cara grande y pequeña; cabecera, medidas, nombres y posiciones iguales a cara.json; el programa de la placa y el servidor hablan los mismos mensajes; tarjetas de Tesla, clima, dólar, trayecto, servicios y resumen`;
   });
 
+  await check('Historial: una herramienta interrumpida no deja la conversación rechazada por el modelo', async () => {
+    const { healHistory } = await import('../session/session.gateway');
+    const A = (ids: string[], content: string | null = null) => ({ role: 'assistant', content, tool_calls: ids.map((id) => ({ id, type: 'function', function: { name: 'x', arguments: '{}' } })) }), T = (id: string, content = 'ok') => ({ role: 'tool', tool_call_id: id, content }), U = (content: string) => ({ role: 'user', content });
+    const shape = (h: any[]) => h.map((m) => (m.role === 'tool' ? `t:${m.tool_call_id}${/Sin resultado/.test(m.content) ? '!' : ''}` : m.role === 'assistant' ? `a${m.tool_calls ? `[${m.tool_calls.map((c: any) => c.id)}]` : ''}` : m.role[0])).join(' ');
+    const sys = { role: 'system', content: 's' }, okH = [sys, U('1'), A(['a']), T('a'), { role: 'assistant', content: 'listo' }];
+    must(shape(healHistory(okH)) === 's u a[a] t:a a' && healHistory(okH).every((m, i) => m === okH[i]), 'un historial sano no cambia');
+    // Javier habló encima mientras la herramienta trabajaba: su frase quedó antes del resultado (el caso visto en producción).
+    must(shape(healHistory([sys, U('1'), A(['a']), U('2'), T('a'), { role: 'assistant', content: 'r' }])) === 's u a[a] t:a u a', 'el resultado que llegó tarde vuelve a su sitio');
+    must(shape(healHistory([sys, U('1'), A(['a', 'b']), T('a'), U('2')])) === 's u a[a,b] t:a t:b! u' && shape(healHistory([sys, U('1'), A(['a']), U('2')])) === 's u a[a] t:a! u', 'la herramienta que no alcanzó a responder queda con un resultado de relleno');
+    // El recorte del historial dejó un resultado sin su llamada; y un resultado repetido.
+    must(shape(healHistory([sys, T('viejo'), U('1'), A(['a']), T('a'), T('a')])) === 's u a[a] t:a', 'los resultados sueltos o repetidos se quitan');
+    const twice = healHistory(healHistory([sys, U('1'), A(['a']), U('2')])); must(shape(twice) === 's u a[a] t:a! u', 'repararlo dos veces da lo mismo');
+    const gw = readFileSync(join(__dirname, '..', '..', 'src', 'session', 'session.gateway.ts'), 'utf8');
+    must(/s\.history\.splice\(0, s\.history\.length, \.\.\.healHistory\(s\.history\)\)/.test(gw) && /\[\.\.\.healHistory\(s\.history\), \{ role: 'user'/.test(gw) && /la herramienta \$\{c\.name\} falló/.test(gw), 'la sesión repara el historial antes de cada frase y una herramienta que falla deja su resultado');
+    return 'resultado tardío a su sitio, relleno para la que no respondió, sueltos fuera; se repara antes de cada frase y una herramienta que lanza un error no deja la llamada sin respuesta';
+  });
+
   await check('Conocimiento: Javier sube un documento por QR, el avatar lo lee y le cuenta, se guarda solo con su «sí», queda en Drive y se actualiza al editarlo ahí', async () => {
     const { KnowledgeDocsService, parseKnowReading, sniffKnow, line } = await import('../knowledge/knowledge-docs.service');
     const { KnowledgeDocsController } = await import('../knowledge/knowledge-docs.controller');

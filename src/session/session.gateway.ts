@@ -197,6 +197,29 @@ const FILLERS: Record<string, string | Record<string, string>> = {
 };
 const FILLER_GENERIC = ['Dame un segundo.', 'Ya te digo.', 'Un momento.', 'Déjame ver.', 'Ya lo reviso.'];
 /** La frase para esta llamada ('' = ninguna). `turnNumber` hace rotar las genericas dentro de la conversacion. */
+/**
+ * Deja el historial en una forma que el modelo acepta: cada respuesta que pidio herramientas va seguida, de inmediato, por
+ * el resultado de CADA una. Se rompe cuando Javier habla encima mientras una herramienta trabaja (su frase entra antes
+ * que el resultado), cuando una herramienta falla a medias o cuando el recorte del historial corta una pareja; y un
+ * historial roto hace que el modelo rechace TODAS las frases siguientes de esa conversacion (visto en produccion el
+ * 2026-11-25). Los resultados que llegaron tarde se suben a su sitio; los que faltan se rellenan; los sueltos se quitan.
+ */
+export function healHistory<T extends { role?: string; tool_call_id?: string; tool_calls?: { id: string }[]; content?: unknown }>(h: T[]): T[] {
+  const out: T[] = [], used = new Set<T>();
+  for (let i = 0; i < h.length; i++) {
+    const m = h[i];
+    if (m.role === 'tool') continue; // solo entra junto a quien lo pidio
+    out.push(m);
+    if (m.role !== 'assistant' || !Array.isArray(m.tool_calls) || !m.tool_calls.length) continue;
+    for (const c of m.tool_calls) {
+      const hit = h.find((x, k) => k > i && x.role === 'tool' && x.tool_call_id === c.id && !used.has(x));
+      if (hit) { used.add(hit); out.push(hit); }
+      else out.push({ role: 'tool', tool_call_id: c.id, content: '(Sin resultado: la respuesta se interrumpió antes de que la herramienta terminara. Si hace falta, vuelve a llamarla.)' } as unknown as T);
+    }
+  }
+  return out;
+}
+
 export function fillerFor(name: string, rawArgs: string, turnNumber: number): string {
   const f = FILLERS[name] ?? (name.startsWith('plane_') ? FILLERS.plane_ : name.startsWith(CX_PREFIX) ? FILLERS.cx_ : undefined);
   if (typeof f === 'string') return f;
@@ -868,7 +891,7 @@ export class SessionGateway implements OnGatewayConnection {
     s.spec = spec;
     (async () => {
       const [tools, ctx] = await Promise.all([this.biz?.on ? this.desk?.definitions() ?? [] : this.tools.definitions(s.owner), this.context(s, text)]);
-      for await (const ev of this.llm.chat([...s.history, { role: 'user', content: userMsg(text, lang) + ctx }], tools, spec.ctrl.signal, s.owner ? 2000 : 400)) {
+      for await (const ev of this.llm.chat([...healHistory(s.history), { role: 'user', content: userMsg(text, lang) + ctx }], tools, spec.ctrl.signal, s.owner ? 2000 : 400)) {
         if (ev.type === 'text') spec.tFirst ??= Date.now();
         spec.events.push(ev); spec.wake?.();
       }
@@ -932,6 +955,7 @@ export class SessionGateway implements OnGatewayConnection {
     const userEntry = { role: 'user', content: auto ? userText : userMsg(userText, lang) + demoNote };
     s.history.push(userEntry);
     if (s.history.length > 41) s.history.splice(1, s.history.length - 41); // system + ultimos 40 mensajes
+    s.history.splice(0, s.history.length, ...healHistory(s.history)); // un turno anterior interrumpido o el recorte pueden dejar una herramienta sin su resultado
     try {
       let buffer = '';
       let demoCtx: string | undefined; // fragmentos del documento de la demo: se buscan una vez por turno y sirven en todas sus rondas
@@ -973,6 +997,7 @@ export class SessionGateway implements OnGatewayConnection {
         for (const c of toolCalls) {
           toolsUsed.push(c.name);
           let result: string;
+          try { // pase lo que pase, esta llamada queda con su resultado en el historial
           if (c.name === 'registrar_interesado' && s.leads >= 3) result = 'No se guardó: ya se registraron varios contactos en esta conversación.';
           else if (c.name === 'buscar_imagenes' && !s.owner && s.imageSearches >= this.cfg.imagesPerSession) result = 'No se buscó: ya se mostraron varias tandas de imágenes en esta conversación. Dile que por ahora no puedes mostrar más.';
           else if (this.biz?.on) result = this.desk ? (await this.desk.run(c.name, c.arguments, { channel: 'voz', counts: (s.deskCounts ??= {}) })).text : 'Esa función no existe en este asistente.'; // MODO NEGOCIO: solo las funciones del negocio
@@ -1022,6 +1047,7 @@ export class SessionGateway implements OnGatewayConnection {
             if (out.panel && !turn.ctrl.signal.aborted) this.send(client, { type: 'panel', ...out.panel });
             if (out.panel || out.tesla || out.news || out.markets) turn.sceneLocked = true; // el panel trae su propio fondo: una etiqueta [f:...] de la respuesta no lo cambia
           }
+          } catch (e) { this.log.error(`sesion #${s.n}: la herramienta ${c.name} falló: ${(e as Error).message}`); result = 'NO se pudo: la herramienta falló por un error interno. Díselo así y no inventes el resultado.'; }
           this.log.log(`sesion #${s.n}: herramienta ${c.name} -> ${result.slice(0, 80)}`);
           s.history.push({ role: 'tool', tool_call_id: c.id, content: result });
         }
