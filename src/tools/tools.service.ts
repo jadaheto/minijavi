@@ -132,6 +132,22 @@ async function getJson(url: string): Promise<any> {
  * Registro de herramientas (function calling). Para agregar una: sumarla a `tools` con su esquema y su ejecutor.
  * APIs publicas sin clave, probadas el 2026-11-13: Open-Meteo (clima), datos.gov.co (TRM oficial) y open.er-api.com (otras monedas).
  */
+/**
+ * Crear algo en una aplicacion de Javier pide SIEMPRE su «sí» en una frase posterior. Lo impone esto, no el modelo: la
+ * primera llamada solo deja anotada la propuesta (que y en que intervencion); se crea si la herramienta vuelve a llamarse
+ * para lo MISMO en una intervencion posterior de Javier. Nunca en un aviso automatico. Devuelve que decir, o '' si ya puede crear.
+ */
+function needsYes(ctx: ToolContext, kind: string, title: string, what: string): string {
+  if (ctx.auto || typeof ctx.turn !== 'number') return 'NO se creó: en un aviso automático no se crea nada. Si Javier lo pide, se hace.';
+  const st = (ctx.docs ??= {}), key = `${kind}:${title.toLowerCase()}`;
+  if (!st.pending || st.pending.key !== key || ctx.turn <= st.pending.turn) {
+    st.pending = { key, turn: ctx.turn };
+    return `NO se ha creado nada todavía. Dile a Javier en una frase ${what}, y pregúntale si lo creas. Cuando diga que sí, vuelve a llamar esta herramienta con el mismo título.`;
+  }
+  st.pending = undefined;
+  return '';
+}
+
 @Injectable()
 export class ToolsService {
   private readonly tools: Record<string, Tool>;
@@ -844,13 +860,7 @@ export class ToolsService {
         if (title.length < 2) return 'NO se creó: falta el título. Pregúntaselo.';
         if (content.length < 30 && brief.length < 10) return 'NO se creó: falta qué debe decir el documento. Pregúntaselo.';
         if (!google.has('crear')) return `NO se creó: ${google.connected ? 'el permiso de Google guardado no incluye crear documentos; Javier debe pulsar «Volver a conectar» en el panel, en Dispositivos' : 'Google no está conectado'}. Díselo así.`;
-        if (ctx.auto || typeof ctx.turn !== 'number') return 'NO se creó: un documento no se crea en un aviso automático. Si Javier lo pide, se hace.';
-        const st = (ctx.docs ??= {}), key = title.toLowerCase();
-        if (!st.pending || st.pending.key !== key || ctx.turn <= st.pending.turn) {
-          st.pending = { key, turn: ctx.turn };
-          return `NO se ha creado nada todavía. Dile a Javier en una frase qué documento vas a crear («${title}») y de qué trata${material ? ', y que usarás lo que acabas de leer' : ''}, y pregúntale si lo creas. Cuando diga que sí, vuelve a llamar esta herramienta con el mismo título.`;
-        }
-        st.pending = undefined;
+        const wait = needsYes(ctx, 'documento', title, `qué documento vas a crear («${title}») y de qué trata${material ? ', y que usarás lo que acabas de leer' : ''}`); if (wait) return wait;
         const done = async (text: string, source: string) => {
           const f = await google.createDoc(title, text, source);
           const qr = await QRCode.toDataURL(f.link, { margin: 1, width: 360, errorCorrectionLevel: 'M' }).catch(() => undefined);
@@ -865,6 +875,84 @@ export class ToolsService {
             .catch((e) => notify({ text: `(Aviso del sistema: NO se pudo crear el documento «${title}»: ${(e as Error).message}. Díselo tal cual.)` }));
           return `El documento «${title}» se está redactando en segundo plano; tarda cerca de un minuto. Dile que le avisas cuando esté en su Drive.`;
         } catch (e) { return `NO se creó el documento: ${(e as Error).message}. Díselo tal cual.`; }
+      },
+    };
+    // Crear una HOJA DE CALCULO nueva: una tabla que dicta Javier, o la lista de sus interesados con su calificacion.
+    if (google?.configured) this.ownerTools.crear_hoja = {
+      description:
+        'Crea una hoja de cálculo de Google NUEVA y privada en el Drive de Javier (carpeta «minijavi») con una tabla. No edita, comparte ni borra archivos. Siempre en dos pasos: la primera llamada no crea nada; dile qué vas a crear y, cuando diga que sí, vuelve a llamarla con el MISMO título. ' +
+        'Para pasar sus interesados a una hoja usa origen «interesados» (y nivel si pidió solo calientes, tibios o fríos): las filas las pone el sistema. Para otra tabla, pasa «columnas» y «filas».',
+      parameters: { type: 'object', properties: {
+        titulo: { type: 'string', description: 'Título de la hoja.' },
+        origen: { type: 'string', enum: ['tabla', 'interesados'], description: 'tabla (por defecto: columnas y filas que das tú) o interesados (los llena el sistema).' },
+        nivel: { type: 'string', enum: ['todos', 'caliente', 'tibio', 'frio'], description: 'Solo con origen interesados: cuáles incluir. Por defecto, todos.' },
+        columnas: { type: 'array', items: { type: 'string' }, description: 'Nombres de las columnas (origen tabla).' },
+        filas: { type: 'array', items: { type: 'array', items: { type: 'string' } }, description: 'Las filas, cada una con un valor por columna (origen tabla). Solo con datos que dijo Javier.' },
+      }, required: ['titulo'] },
+      run: async (args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult | string> => {
+        const title = String(args.titulo ?? '').replace(/\s+/g, ' ').trim().slice(0, 120), fromLeads = args.origen === 'interesados';
+        if (title.length < 2) return 'NO se creó: falta el título. Pregúntaselo.';
+        if (!google.has('crear')) return `NO se creó: ${google.connected ? 'el permiso de Google guardado no incluye crear archivos; Javier debe pulsar «Volver a conectar» en el panel, en Dispositivos' : 'Google no está conectado'}. Díselo así.`;
+        let header: string[], rows: unknown[][], source = 'dictado';
+        if (fromLeads) {
+          const level = ['caliente', 'tibio', 'frio'].includes(String(args.nivel)) ? String(args.nivel) : '', all = await this.leads.list(200), scores = scoring ? await scoring.forLeads(all) : undefined;
+          const LEVEL: Record<string, string> = { caliente: 'Caliente', tibio: 'Tibio', frio: 'Frío', cliente: 'Cliente', descartado: 'Descartado', no_contactar: 'No contactar' };
+          const pick = all.map((l) => ({ l, r: scores?.get(l.id) })).filter((x) => !level || x.r?.level === level).sort((a, b) => (b.r?.score ?? -1) - (a.r?.score ?? -1));
+          if (!pick.length) return `NO se creó: no hay interesados${level ? ` ${level === 'frio' ? 'fríos' : `${level}s`}` : ''} para poner en la hoja. Díselo así.`;
+          header = ['Nombre', 'Empresa', 'Contacto', 'Interés', 'Estado', 'Nivel', 'Puntos', 'Registrado', 'Detalle'];
+          rows = pick.map(({ l, r }) => [l.name, l.company, l.contact, l.interest.replace(/_/g, ' '), l.status.replace(/_/g, ' '), r ? LEVEL[r.level] ?? r.level : '', r?.score ?? '', String(l.created_at).slice(0, 10), l.detail]);
+          source = `interesados${level ? ` (${level})` : ''}`;
+        } else {
+          header = (Array.isArray(args.columnas) ? args.columnas : []).map((x) => String(x)); rows = (Array.isArray(args.filas) ? args.filas : []).filter((r) => Array.isArray(r)) as unknown[][];
+          if (!header.length || !rows.length) return 'NO se creó: faltan las columnas o las filas de la tabla. Pregúntale qué debe llevar.';
+        }
+        const wait = needsYes(ctx, 'hoja', title, `qué hoja de cálculo vas a crear («${title}»): ${fromLeads ? `sus ${rows.length} interesados con su calificación y su contacto` : `una tabla de ${rows.length} fila${rows.length === 1 ? '' : 's'} y ${header.length} columnas`}`); if (wait) return wait;
+        try {
+          const f = await google.createSheet(title, header, rows, source);
+          const qr = await QRCode.toDataURL(f.link, { margin: 1, width: 360, errorCorrectionLevel: 'M' }).catch(() => undefined);
+          return { card: { title: 'Hoja creada', lines: [f.title, `${f.rows} filas. En tu Drive, carpeta «minijavi». Solo tú la ves.`], ...(qr ? { qr, caption: 'Ábrela desde el celular' } : {}) }, text: `Hoja de cálculo creada: «${f.title}» con ${f.rows} filas, privada, en la carpeta «minijavi» de su Drive. En pantalla está el código QR. Díselo en una frase; no leas el enlace.` };
+        } catch (e) { return `NO se creó la hoja: ${(e as Error).message}. Díselo tal cual.`; }
+      },
+    };
+    // Crear una PRESENTACION nueva: el guion lo arma el modelo capaz y, si Javier quiere, cada diapositiva lleva una
+    // imagen generada (cada imagen se cobra y cuenta en el tope diario de imagenes). Siempre en segundo plano.
+    if (google?.configured && writer) this.ownerTools.crear_presentacion = {
+      description:
+        'Crea una presentación de Google NUEVA y privada en el Drive de Javier (carpeta «minijavi»): portada y una diapositiva por punto, con imágenes generadas a la derecha del texto. No edita, comparte ni borra archivos. ' +
+        'Siempre en dos pasos: la primera llamada no crea nada; dile qué vas a crear (y cuántas imágenes, porque cada una se cobra) y, cuando diga que sí, vuelve a llamarla con el MISMO título. Se arma en segundo plano y tarda uno o dos minutos.',
+      parameters: { type: 'object', properties: {
+        titulo: { type: 'string', description: 'Título de la presentación.' },
+        encargo: { type: 'string', description: 'De qué trata y qué debe decir, con las indicaciones de Javier.' },
+        material: { type: 'string', description: 'Texto leído (correo o archivo) que Javier pidió usar como base. Solo si él lo pidió.' },
+        diapositivas: { type: 'integer', description: 'Cuántas diapositivas además de la portada (de 3 a 10; por defecto 6).' },
+        imagenes: { type: 'integer', description: 'Cuántas imágenes generar (de 0 a 6; por defecto 3). 0 = solo texto.' },
+      }, required: ['titulo', 'encargo'] },
+      run: async (args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult | string> => {
+        const title = String(args.titulo ?? '').replace(/\s+/g, ' ').trim().slice(0, 120), brief = String(args.encargo ?? '').trim(), material = String(args.material ?? '').trim();
+        if (title.length < 2) return 'NO se creó: falta el título. Pregúntaselo.';
+        if (brief.length < 10) return 'NO se creó: falta de qué trata la presentación. Pregúntaselo.';
+        if (!google.has('crear')) return `NO se creó: ${google.connected ? 'el permiso de Google guardado no incluye crear archivos; Javier debe pulsar «Volver a conectar» en el panel, en Dispositivos' : 'Google no está conectado'}. Díselo así.`;
+        const count = Math.min(10, Math.max(3, Math.round(Number(args.diapositivas)) || 6));
+        const canDraw = images.canGenerate && cfg.publicUrl.startsWith('https://'); // Google baja cada imagen de una dirección pública
+        const pics = canDraw ? Math.min(6, Math.max(0, args.imagenes === undefined || args.imagenes === null || args.imagenes === '' ? 3 : Math.round(Number(args.imagenes)) || 0)) : 0;
+        const wait = needsYes(ctx, 'presentacion', title, `qué presentación vas a crear («${title}»): unas ${count} diapositivas${pics ? ` y ${pics === 1 ? '1 imagen generada (se cobra)' : `${pics} imágenes generadas (cada una se cobra)`}` : ', solo texto'}${material ? ', usando lo que acabas de leer' : ''}`); if (wait) return wait;
+        if (!ctx.notify) return 'NO se creó: en esta conversación no se puede avisar después.';
+        const notify = ctx.notify;
+        void (async () => {
+          const o = await writer.outline(title, brief, material, count, pics > 0);
+          // Las imagenes, una tras otra (cada una tarda unos segundos y cuenta en el tope diario). La que falle se queda sin imagen.
+          const urls = new Map<number, string>(); let drawn = 0, failed = 0;
+          for (let k = 0; k < o.slides.length && drawn < pics; k++) {
+            if (!o.slides[k].picture) continue;
+            try { const r = await images.generate(`Ilustración limpia y moderna para una diapositiva, sin ningún texto ni letras, sin logos: ${o.slides[k].picture}`, 'horizontal'); urls.set(k, `${cfg.publicUrl}/imagenes/${r.name}`); drawn++; }
+            catch (e) { failed++; if (/tope|límite|limite/i.test((e as Error).message)) break; }
+          }
+          const f = await google.createSlides(title, o.subtitle, o.slides.map((s2, k) => ({ title: s2.title, points: s2.points, image: urls.get(k) })), `guion de ${o.by}${material ? ' + lo leído' : ''}`);
+          const qr = await QRCode.toDataURL(f.link, { margin: 1, width: 360, errorCorrectionLevel: 'M' }).catch(() => undefined);
+          notify({ card: { title: 'Presentación creada', lines: [f.title, `${f.slides} diapositivas${f.images ? ` · ${f.images} imágenes` : ''}. En tu Drive, carpeta «minijavi».`], ...(qr ? { qr, caption: 'Ábrela desde el celular' } : {}) },
+            text: `(Aviso del sistema: ya está creada la presentación «${f.title}» que Javier pidió: ${f.slides} diapositivas${f.images ? ` y ${f.images} imágenes generadas` : ', sin imágenes'}${drawn > (f.images ?? 0) ? ` (${drawn - (f.images ?? 0)} imagen(es) no entraron)` : ''}${failed ? `; ${failed} imagen(es) no se pudieron generar` : ''}. Es privada y quedó en la carpeta «minijavi» de su Drive. En pantalla está el código QR. Díselo en una frase y recuérdale revisarla.)` });
+        })().catch((e) => notify({ text: `(Aviso del sistema: NO se pudo crear la presentación «${title}»: ${(e as Error).message}. Díselo tal cual.)` }));
+        return `La presentación «${title}» se está armando en segundo plano${pics ? ` con ${pics === 1 ? '1 imagen' : `${pics} imágenes`}` : ''}; tarda uno o dos minutos. Dile que le avisas cuando esté en su Drive.${!canDraw && Number(args.imagenes) !== 0 ? ' Aquí no se pueden generar imágenes: irá solo con texto.' : ''}`;
       },
     };
     // Tesla de Javier: solo lectura. El servicio no pide el permiso de comandos, asi que aqui no hay como abrir ni mover nada.

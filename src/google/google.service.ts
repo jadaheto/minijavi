@@ -36,6 +36,14 @@ import { UsageService } from '../usage/usage.service';
  *    `POST docs.googleapis.com/v1/documents/{id}:batchUpdate` (insertText, updateParagraphStyle, createParagraphBullets)
  *    aceptan `drive.file`. El valor `BULLET_DISC_CIRCLE_SQUARE` de las viñetas y la forma exacta de las diapositivas
  *    vienen de conocimiento previo, no de esas paginas: si el formato falla, el documento queda en texto llano.
+ *  - Hojas y presentaciones nuevas (referencias de Sheets v4 y Slides v1 leidas el 2026-11-24): `POST
+ *    .../spreadsheets/{id}/values:batchUpdate` y `.../spreadsheets/{id}:batchUpdate`, y `POST
+ *    .../presentations/{id}:batchUpdate` (createSlide con `slideLayoutReference.predefinedLayout` y
+ *    `placeholderIdMappings`, insertText, deleteObject, createImage con una `url` PUBLICA de hasta 2 KB) aceptan
+ *    `drive.file`. Los identificadores propios van de 5 a 50 caracteres. De conocimiento previo, no de esas paginas: la
+ *    forma de `placeholderIdMappings` ({layoutPlaceholder: {type, index}, objectId}), las medidas en EMU y que un archivo
+ *    recien creado trae una diapositiva (o una hoja con id 0) por defecto. Por eso cada parte dudosa va en su propio
+ *    envio: si falla, lo demas queda.
  *  - Agenda: `GET https://www.googleapis.com/calendar/v3/calendars/primary/events` con timeMin, timeMax (RFC 3339),
  *    singleEvents=true y orderBy=startTime (solo vale con singleEvents), maxResults, timeZone.
  *
@@ -49,7 +57,8 @@ const CALENDAR = 'https://www.googleapis.com/calendar/v3';
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const DRIVE = 'https://www.googleapis.com/drive/v3';
 const DOCS = 'https://docs.googleapis.com/v1/documents', SHEETS = 'https://sheets.googleapis.com/v4/spreadsheets', SLIDES = 'https://slides.googleapis.com/v1/presentations';
-const FOLDER_KEY = 'google_folder', FOLDER_NAME = 'minijavi', MIME_FOLDER = 'application/vnd.google-apps.folder', MIME_DOC = 'application/vnd.google-apps.document';
+const FOLDER_KEY = 'google_folder', FOLDER_NAME = 'minijavi', MIME_FOLDER = 'application/vnd.google-apps.folder', MIME_DOC = 'application/vnd.google-apps.document', MIME_SHEET = 'application/vnd.google-apps.spreadsheet', MIME_SLIDES = 'application/vnd.google-apps.presentation';
+const ID = '[A-Za-z0-9_-]{10,100}';
 /** Permisos por parte. Cada parte nueva (correo, Drive) suma el suyo y pide volver a conectar: nunca se pide de mas. */
 export const GOOGLE_SCOPES = { agenda: 'https://www.googleapis.com/auth/calendar.readonly', correo: 'https://www.googleapis.com/auth/gmail.readonly', drive: 'https://www.googleapis.com/auth/drive.readonly', crear: 'https://www.googleapis.com/auth/drive.file' } as const;
 export type GooglePart = keyof typeof GOOGLE_SCOPES;
@@ -68,7 +77,8 @@ export interface MailItem { id: string; from: string; subject: string; date: str
 export interface MailFull extends MailItem { to: string; text: string; truncated: boolean; attachments: number }
 export interface DriveFile { id: string; name: string; kind: string; mime: string; when: string; owner: string; readable: boolean }
 export interface DriveDoc extends DriveFile { text: string; truncated: boolean; note: string; /** Hojas de calculo: nombres de sus pestañas y cual se leyo. */ tabs?: string[]; tab?: string }
-export interface CreatedFile { id: string; title: string; link: string; chars: number; styled: boolean }
+export interface CreatedFile { id: string; title: string; link: string; chars: number; styled: boolean; /** Presentaciones: cuantas diapositivas e imagenes quedaron. */ slides?: number; images?: number; rows?: number }
+export interface SlideSpec { title: string; points: string[]; /** Direccion publica de la imagen de esta diapositiva (opcional). */ image?: string }
 export class GoogleError extends Error { constructor(message: string, readonly status = 0) { super(message); } }
 
 const clean = (s: unknown, max: number) => String(s ?? '').replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -388,13 +398,14 @@ export class GoogleService implements OnModuleInit {
 
   // ---------- crear ----------
   /**
-   * Lo UNICO que esta clase envia para cambiar algo, y solo hacia dos direcciones: crear un archivo en Drive (una carpeta o
-   * un documento vacio) y escribir dentro de un documento. No hay borrar, mover, compartir ni cambiar permisos. Ademas el
+   * Lo UNICO que esta clase envia para cambiar algo, y solo hacia dos cosas: crear un archivo en Drive (una carpeta, o un
+   * documento, hoja o presentacion vacios) y escribir dentro de un archivo recien creado. No hay borrar, mover, compartir ni cambiar permisos. Ademas el
    * permiso (`drive.file`) solo alcanza a los archivos que esta aplicacion creo.
    */
   private async write(url: string, body: Record<string, unknown>, params: Record<string, string> = {}): Promise<any> {
     if (!this.has('crear')) throw new GoogleError(this.connected ? 'el permiso guardado no incluye crear documentos: vuelve a conectar Google en el panel' : 'Google no está conectado: se conecta en el panel, en Dispositivos');
-    const ok = url === `${DRIVE}/files` ? [MIME_FOLDER, MIME_DOC].includes(String(body.mimeType)) && !('permissions' in body) : /^https:\/\/docs\.googleapis\.com\/v1\/documents\/[A-Za-z0-9_-]{10,100}:batchUpdate$/.test(url);
+    const ok = url === `${DRIVE}/files` ? [MIME_FOLDER, MIME_DOC, MIME_SHEET, MIME_SLIDES].includes(String(body.mimeType)) && !('permissions' in body)
+      : new RegExp(`^https://docs\\.googleapis\\.com/v1/documents/${ID}:batchUpdate$`).test(url) || new RegExp(`^https://sheets\\.googleapis\\.com/v4/spreadsheets/${ID}(/values)?:batchUpdate$`).test(url) || new RegExp(`^https://slides\\.googleapis\\.com/v1/presentations/${ID}:batchUpdate$`).test(url);
     if (!ok) throw new GoogleError('esa operación no está permitida');
     const today = this.day(); if (this.used.day !== today) this.used = { day: today, n: 0 };
     if (this.used.n >= this.cfg.googleDailyCalls) throw new GoogleError('se llegó al tope de consultas a Google de hoy');
@@ -405,7 +416,7 @@ export class GoogleService implements OnModuleInit {
     if (!res.ok) {
       const err: any = await res.json().catch(() => ({})), why = JSON.stringify([err?.error?.status, err?.error?.errors, err?.error?.message]).slice(0, 800);
       this.log.warn(`Google respondió ${res.status} al crear (${new URL(url).hostname})`);
-      if (res.status === 403 && /accessNotConfigured|SERVICE_DISABLED|has not been used in project|is disabled/i.test(why)) throw new GoogleError(`la ${/docs\./.test(url) ? 'Google Docs API' : 'Google Drive API'} no está encendida en tu proyecto de Google Cloud`, 403);
+      if (res.status === 403 && /accessNotConfigured|SERVICE_DISABLED|has not been used in project|is disabled/i.test(why)) throw new GoogleError(`la ${/docs\./.test(url) ? 'Google Docs API' : /sheets\./.test(url) ? 'Google Sheets API' : /slides\./.test(url) ? 'Google Slides API' : 'Google Drive API'} no está encendida en tu proyecto de Google Cloud`, 403);
       throw new GoogleError(res.status === 403 ? 'Google no dejó crear el archivo (permiso insuficiente)' : `Google respondió ${res.status} al crear`, res.status);
     }
     return res.json().catch(() => ({}));
@@ -452,6 +463,83 @@ export class GoogleService implements OnModuleInit {
     const link = typeof made.webViewLink === 'string' && made.webViewLink.startsWith('https://docs.google.com/') ? made.webViewLink : `https://docs.google.com/document/d/${id}/edit`;
     return { id, title: name, link, chars: plain.length, styled };
   }
+
+  /** Crea el archivo vacio en la carpeta propia y lo anota. Comun a hojas y presentaciones. */
+  private async newFile(kind: 'hoja' | 'presentacion', mime: string, title: string, chars: number, source: string): Promise<{ id: string; name: string }> {
+    const name = clean(title, 120); if (name.length < 2) throw new GoogleError('falta el título');
+    const today = await this.createdToday();
+    if (today.limit <= 0) throw new GoogleError('crear archivos está apagado (GOOGLE_CREAR_DIA=0)');
+    if (today.n >= today.limit) throw new GoogleError(`ya se crearon ${today.n} archivos hoy, que es el tope`);
+    const made = await this.write(`${DRIVE}/files`, { name, mimeType: mime, parents: [await this.folder()] }, { fields: 'id' });
+    const id = String(made?.id ?? ''); if (!new RegExp(`^${ID}$`).test(id)) throw new GoogleError('Google no devolvió el archivo creado');
+    await this.db.query('INSERT INTO google_created (at, kind, file_id, title, chars, source) VALUES ($1, $2, $3, $4, $5, $6)', [new Date().toISOString(), kind, id, name, chars, clean(source, 60)]);
+    this.usage?.add('google_creados');
+    return { id, name };
+  }
+
+  /**
+   * Crea una hoja de calculo NUEVA y privada con una tabla. Los valores se escriben TAL CUAL (`RAW`): un texto que
+   * empiece por "=" queda como texto y no se ejecuta como formula (los datos pueden venir de terceros).
+   */
+  async createSheet(title: string, header: string[], rows: unknown[][], source = 'dictado'): Promise<CreatedFile> {
+    const cell = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : clean(v, 500));
+    const head = (Array.isArray(header) ? header : []).slice(0, 26).map((h) => clean(h, 80)), body = (Array.isArray(rows) ? rows : []).slice(0, 500).map((r) => (Array.isArray(r) ? r : [r]).slice(0, 26).map(cell));
+    if (!head.filter(Boolean).length) throw new GoogleError('faltan los nombres de las columnas');
+    if (!body.length) throw new GoogleError('la tabla no tiene filas');
+    const chars = JSON.stringify(body).length, f = await this.newFile('hoja', MIME_SHEET, title, chars, source);
+    await this.write(`${SHEETS}/${f.id}/values:batchUpdate`, { valueInputOption: 'RAW', data: [{ range: 'A1', values: [head, ...body] }] });
+    // Encabezado en negrita y fijo. Va aparte: si la primera pestaña no tiene el identificador esperado, la tabla ya quedo.
+    let styled = true;
+    await this.write(`${SHEETS}/${f.id}:batchUpdate`, { requests: [
+      { repeatCell: { range: { sheetId: 0, startRowIndex: 0, endRowIndex: 1 }, cell: { userEnteredFormat: { textFormat: { bold: true } } }, fields: 'userEnteredFormat.textFormat.bold' } },
+      { updateSheetProperties: { properties: { sheetId: 0, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } },
+    ] }).catch((e) => { styled = false; this.log.warn(`hoja creada sin formato: ${(e as Error).message}`); });
+    return { id: f.id, title: f.name, link: `https://docs.google.com/spreadsheets/d/${f.id}/edit`, chars, styled, rows: body.length };
+  }
+
+  /**
+   * Crea una presentacion NUEVA y privada: portada, y una diapositiva por punto con su titulo, sus viñetas y, si trae,
+   * su imagen a la derecha. Las imagenes las baja Google de la direccion publica que se le pasa; cada una va en su propio
+   * envio para que una que falle no deje la presentacion sin las demas.
+   */
+  async createSlides(title: string, subtitle: string, slides: SlideSpec[], source = 'redactado'): Promise<CreatedFile> {
+    const list = (Array.isArray(slides) ? slides : []).slice(0, 12).map((x) => ({ title: clean(x?.title, 120), points: (Array.isArray(x?.points) ? x.points : []).map((q) => clean(q, 220)).filter(Boolean).slice(0, 6), image: typeof x?.image === 'string' && /^https:\/\/[^\s]{8,1900}$/.test(x.image) ? x.image : '' })).filter((x) => x.title);
+    if (!list.length) throw new GoogleError('la presentación no tiene diapositivas');
+    const chars = JSON.stringify(list).length, f = await this.newFile('presentacion', MIME_SLIDES, title, chars, source);
+    // Lo que el archivo traia al nacer (una diapositiva vacia) se quita al final, cuando ya existen las nuestras.
+    const before: string[] = await this.get(`${SLIDES}/${f.id}`, { fields: 'slides(objectId)' }).then((d: any) => (Array.isArray(d?.slides) ? d.slides : []).map((x: any) => String(x?.objectId ?? '')).filter(Boolean)).catch(() => []);
+    const { requests, images } = slideRequests(f.name, clean(subtitle, 160), list);
+    await this.write(`${SLIDES}/${f.id}:batchUpdate`, { requests });
+    let placed = 0, styled = true;
+    for (const img of images) await this.write(`${SLIDES}/${f.id}:batchUpdate`, { requests: [img] }).then(() => { placed++; }).catch((e) => { styled = false; this.log.warn(`presentación: una imagen no entró (${(e as Error).message})`); });
+    if (before.length) await this.write(`${SLIDES}/${f.id}:batchUpdate`, { requests: before.map((objectId) => ({ deleteObject: { objectId } })) }).catch(() => { styled = false; });
+    return { id: f.id, title: f.name, link: `https://docs.google.com/presentation/d/${f.id}/edit`, chars, styled, slides: list.length + 1, images: placed };
+  }
+}
+
+/**
+ * Las ordenes para armar una presentacion: una portada (diseño TITLE) y, por cada punto, una diapositiva con titulo y
+ * viñetas. Si la diapositiva lleva imagen se usa el diseño de dos columnas: el texto a la izquierda y, en vez de la
+ * columna derecha, la imagen. Las imagenes se devuelven aparte para enviarlas una por una. Medidas en EMU (una
+ * diapositiva 16:9 mide 9.144.000 x 5.143.500).
+ */
+export function slideRequests(title: string, subtitle: string, slides: SlideSpec[]): { requests: Record<string, unknown>[]; images: Record<string, unknown>[] } {
+  const requests: Record<string, unknown>[] = [], images: Record<string, unknown>[] = [];
+  const map = (type: string, index: number, objectId: string) => ({ layoutPlaceholder: { type, index }, objectId });
+  requests.push({ createSlide: { objectId: 'mj_portada', insertionIndex: 0, slideLayoutReference: { predefinedLayout: 'TITLE' }, placeholderIdMappings: [map('CENTERED_TITLE', 0, 'mj_portada_t'), map('SUBTITLE', 0, 'mj_portada_s')] } });
+  requests.push({ insertText: { objectId: 'mj_portada_t', text: title } });
+  if (subtitle) requests.push({ insertText: { objectId: 'mj_portada_s', text: subtitle } });
+  slides.forEach((sl, k) => {
+    const n = String(k + 1).padStart(2, '0'), page = `mj_dia_${n}`, t = `${page}_t`, b = `${page}_b`, r = `${page}_r`;
+    requests.push({ createSlide: { objectId: page, insertionIndex: k + 1, slideLayoutReference: { predefinedLayout: sl.image ? 'TITLE_AND_TWO_COLUMNS' : 'TITLE_AND_BODY' }, placeholderIdMappings: [map('TITLE', 0, t), map('BODY', 0, b), ...(sl.image ? [map('BODY', 1, r)] : [])] } });
+    requests.push({ insertText: { objectId: t, text: sl.title } });
+    if (sl.points.length) requests.push({ insertText: { objectId: b, text: sl.points.join('\n') } });
+    if (sl.image) {
+      requests.push({ deleteObject: { objectId: r } });
+      images.push({ createImage: { objectId: `${page}_img`, url: sl.image, elementProperties: { pageObjectId: page, size: { width: { magnitude: 3_900_000, unit: 'EMU' }, height: { magnitude: 2_600_000, unit: 'EMU' } }, transform: { scaleX: 1, scaleY: 1, translateX: 4_850_000, translateY: 1_500_000, unit: 'EMU' } } } });
+    }
+  });
+  return { requests, images };
 }
 
 /**
