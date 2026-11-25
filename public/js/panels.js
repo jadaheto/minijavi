@@ -257,7 +257,28 @@ function files(msg) {
   return wrap;
 }
 
-const KINDS = { finance, status, usage, board, route, chargers, brief, agenda, mail, files };
+/** Búsqueda web: lo que respondió el buscador (si lo trae) y la lista numerada, o una página abierta con el comienzo de su texto. */
+function web(msg) {
+  const wrap = el('div', 'pnl-mail pnl-web');
+  if (msg.open) {
+    const o = msg.open, head = el('div', 'pnl-mail-head');
+    head.append(el('strong', '', String(o.title || '')), el('small', '', [o.site, o.part ? `parte ${o.part} de ${o.parts}` : o.parts > 1 ? `${o.parts} partes` : ''].filter(Boolean).join(' · ')));
+    wrap.append(head, el('p', 'pnl-mail-text', String(o.text || '') + (o.more ? ' …' : '')));
+    return wrap;
+  }
+  if (msg.query) wrap.append(el('p', 'pnl-web-q', `«${msg.query}»`));
+  if (msg.answer) wrap.append(el('p', 'pnl-web-a', String(msg.answer)));
+  const list = el('ul', 'pnl-events');
+  for (const r of (msg.items || []).slice(0, 6)) {
+    const li = el('li', ''), text = el('div', 'pnl-ev');
+    text.append(el('strong', '', String(r.title || '')), el('small', '', [r.site, r.snippet].filter(Boolean).join(' · ')));
+    li.append(el('time', '', String(r.n || '')), text); list.append(li);
+  }
+  if (list.children.length) wrap.append(list); else if (!msg.answer) wrap.append(el('p', 'pnl-empty', 'Sin resultados.'));
+  return wrap;
+}
+
+const KINDS = { finance, status, usage, board, route, chargers, brief, agenda, mail, files, web };
 export function createDataPanel(box) {
   let timer = 0;
   const hide = () => { clearTimeout(timer); box.hidden = true; box.replaceChildren(); document.body.classList.remove('panel'); };
@@ -271,7 +292,7 @@ export function createDataPanel(box) {
       box.append(head, render(msg));
       box.hidden = false; document.body.classList.add('panel');
       box.classList.remove('in'); void box.offsetWidth; box.classList.add('in');
-      timer = setTimeout(hide, ['board', 'route', 'chargers', 'brief', 'agenda', 'mail', 'files'].includes(msg.kind) ? 120000 : 45000); // son consultas puntuales: se van solas (el tablero dura mas)
+      timer = setTimeout(hide, ['board', 'route', 'chargers', 'brief', 'agenda', 'mail', 'files', 'web'].includes(msg.kind) ? 120000 : 45000); // son consultas puntuales: se van solas (el tablero dura mas)
     },
     hide,
     get active() { return !box.hidden; },

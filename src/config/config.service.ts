@@ -263,6 +263,16 @@ export class ConfigService {
   readonly imagesPerSession: number;
   /** «Mira esto»: el avatar ve por la camara cuando se lo piden (VISION=0 lo apaga) y cuantas veces por conversacion un visitante. */
   readonly vision: boolean;
+  /** Buscar en la web y leer paginas (solo dueño; WEB=0 lo apaga). Brave si hay clave; si no, OpenAI con la clave del modelo capaz. */
+  readonly web: boolean;
+  readonly tavilyKey: string;
+  readonly braveKey: string;
+  readonly webOpenAiKey: string;
+  readonly webOpenAiModel: string;
+  readonly webSearchesDay: number;
+  readonly webPagesDay: number;
+  readonly webCountry: string;
+  readonly webLang: string;
   readonly visionPerSession: number;
   readonly imagesDailySearches: number;
   /** Precio en dolares por unidad de cada medida de consumo (opcional): USAGE_PRICES='{"deepgram_s":0.0001}'. */
@@ -465,6 +475,15 @@ export class ConfigService {
     this.imageOpenAiQuality = ['low', 'medium', 'high'].includes(str('IMAGEN_OPENAI_CALIDAD').toLowerCase()) ? str('IMAGEN_OPENAI_CALIDAD').toLowerCase() : 'medium';
     this.imagesPerSession = int('IMAGES_PER_SESSION', 4, 0);
     this.vision = str('VISION', '1') !== '0';
+    this.web = str('WEB', '1') !== '0';
+    this.tavilyKey = str('TAVILY_API_KEY');
+    this.braveKey = str('BRAVE_API_KEY');
+    this.webOpenAiKey = str('OPENAI_API_KEY') || (this.capableProvider === 'openai' ? this.capableKey : '');
+    this.webOpenAiModel = str('WEB_OPENAI_MODELO') || (this.capableProvider === 'openai' ? this.capableModel : '');
+    this.webSearchesDay = int('WEB_BUSQUEDAS_DIA', 60, 0);
+    this.webPagesDay = int('WEB_PAGINAS_DIA', 60, 0);
+    this.webCountry = /^[A-Za-z]{2}$/.test(str('WEB_PAIS', 'CO')) ? str('WEB_PAIS', 'CO').toUpperCase() : '';
+    this.webLang = /^[a-z]{2}$/.test(str('WEB_IDIOMA', 'es').toLowerCase()) ? str('WEB_IDIOMA', 'es').toLowerCase() : 'es';
     this.visionPerSession = int('VISION_POR_SESION', 5, 0);
     this.imagesDailySearches = int('IMAGES_DAILY_SEARCHES', 150, 1);
     this.databaseUrl = (process.env.DATABASE_URL ?? '').trim();
@@ -569,7 +588,7 @@ ${readFileSync(costenoFile, 'utf8').trim()}` : '';
       Object.assign(this as any, {
         business: b, greeting: b.saludo, elevenVoiceId: b.voz || this.elevenVoiceId, costenoPrompt: '',
         ownerSecret: '', claudeToken: '', planeMcpUrl: '', youtubeApiKey: '', spotifyClientId: '', spotifyClientSecret: '', teslaClientId: '', teslaClientSecret: '',
-        googleMapsKey: '', openChargeMapKey: '', polymarket: false, newsUrl: '', newsColombia: false, unsplashAccessKey: '', magnificApiKey: '', imageOpenAiKey: '',
+        googleMapsKey: '', openChargeMapKey: '', polymarket: false, newsUrl: '', newsColombia: false, unsplashAccessKey: '', magnificApiKey: '', imageOpenAiKey: '', web: false, braveKey: '', tavilyKey: '',
         briefHour: -1, followupHour: -1, demoDocs: false, knowDocs: false, avatarCustom: false, vaultKey: '', callMode: 'rechazar', whatsappReplies: this.whatsappReplies === 'avatar' ? 'avatar' : 'off', n8nWebhookUrl: '', leadsWebhookUrl: '', visitorMemoryDays: 0, visitReports: false,
       });
     }
