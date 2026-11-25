@@ -115,6 +115,24 @@ export class KnowledgeService {
     await this.qdrant('POST', `/collections/${this.cfg.qdrantCollection}/points/delete?wait=true`, { filter: { must: [{ key: 'demo', match: { value: id } }] } });
   }
 
+  // ---- Documentos que Javier sube por voz (source `doc:<id>`, alcance publico o privado) ----
+  /** Guarda (reemplazando) los fragmentos de un documento. */
+  async addSource(source: string, scope: 'publico' | 'privado', texts: string[], extra: Record<string, unknown> = {}): Promise<number> {
+    if (!texts.length) { await this.deleteSource(source); return 0; }
+    const [probe] = await this.embed([texts[0]], 'passage');
+    await this.ensureCollection(probe.length);
+    await this.replaceSource(source, scope, texts, extra);
+    this.ready = null;
+    return texts.length;
+  }
+  /** Borra todos los fragmentos de un documento. */
+  async deleteSource(source: string): Promise<void> {
+    if (!this.enabled) return;
+    // Si la coleccion aun no existe no hay nada que borrar.
+    await this.qdrant('POST', `/collections/${this.cfg.qdrantCollection}/points/delete?wait=true`, { filter: { must: [{ key: 'source', match: { value: source } }] } }).catch((e) => { if (!/: 404 /.test(String((e as Error).message))) throw e; });
+    this.ready = null;
+  }
+
   /** Tras cargar documentos, para que la siguiente busqueda vuelva a comprobar el contenido. */
   refresh() { this.ready = null; }
 }

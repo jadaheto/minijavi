@@ -30,6 +30,8 @@ export const PRESETS: Record<string, Preset> = {
  * Recibe y devuelve lo mismo que DeepSeekService.chat (mensajes en formato OpenAI, eventos de texto y herramientas), asi
  * el resto del codigo no sabe que modelo respondio. Si falla antes de empezar a responder, quien llama usa el de siempre.
  */
+const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
 @Injectable()
 export class CapableModelService implements OnModuleInit {
   private readonly log = new Logger(CapableModelService.name);
@@ -94,6 +96,7 @@ export class CapableModelService implements OnModuleInit {
     if (!this.readsFiles) throw new Error('el modelo capaz no puede leer archivos (hace falta OpenAI)');
     const b64 = file.data.toString('base64');
     const part = file.mime === 'application/pdf' ? { type: 'input_file', filename: file.name, file_data: `data:application/pdf;base64,${b64}` }
+      : file.mime === DOCX ? { type: 'input_file', filename: file.name, file_data: `data:${DOCX};base64,${b64}` } // Word: el modelo recibe solo su texto
       : file.mime.startsWith('image/') ? { type: 'input_image', image_url: `data:${file.mime};base64,${b64}` }
       : { type: 'input_text', text: `Contenido del archivo ${file.name}:\n${file.data.toString('utf8').slice(0, 120_000)}` };
     const body = { model: this.cfg.capableModel, input: [{ role: 'user', content: [part, { type: 'input_text', text: prompt }] }], max_output_tokens: maxOut, ...extraForResponses(this.cfg.capableExtra) };

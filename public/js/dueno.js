@@ -68,7 +68,7 @@ const pretty = (k) => String(k).replace(/_/g, ' ').replace(/^formulario:/, 'form
 const SOURCE = (k) => (k === 'sin dato' ? 'Sin dato (anteriores)' : k === 'voz' ? 'Conversación en el sitio' : k === 'llamada' ? 'Llamada de WhatsApp' : pretty(k));
 
 // ---------- pestañas ----------
-const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, demos: loadDemos, avatares: loadAvatars, conexiones: loadConnections, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, creados: loadMade, dispositivos: loadDevices };
+const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, demos: loadDemos, avatares: loadAvatars, conexiones: loadConnections, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, creados: loadMade, conocimiento: loadKnow, dispositivos: loadDevices };
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
   for (const b of $('tabs').querySelectorAll('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
@@ -705,6 +705,45 @@ async function loadMade() {
         el('div', { className: 'row' }, el('a', { className: 'button small primary', href: f.link, target: '_blank', rel: 'noopener', textContent: 'Abrir en Google' }), show), qr)));
   }));
 }
+
+// Documentos que Javier le subio al avatar para que sepa mas. Aqui se confirma uno recien leido, se cambia quien lo
+// usa, se sincroniza con lo editado en Drive o se deja de usar. Los archivos de Drive no se borran desde aqui.
+async function knowAct(id, body, msg) {
+  $('know-msg').textContent = 'Un momento…';
+  const r = await api(`conocimiento/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), d = await r.json().catch(() => ({}));
+  await loadKnow();
+  $('know-msg').textContent = r.ok ? [msg, d.note].filter(Boolean).join(' ') : `No se pudo: ${d.message || r.status}.`;
+}
+async function loadKnow() {
+  const d = await json('conocimiento'), docs = d.docs || [], waiting = docs.filter((x) => x.status === 'por_confirmar').length;
+  $('know-count').textContent = `(${docs.length} de ${d.max})`; badge('conocimiento', waiting);
+  $('know-sync').hidden = !docs.some((x) => x.doc_id);
+  $('know-note').textContent = !d.enabled ? `No disponible: ${d.problem}.`
+    : !docs.length ? 'Todavía no hay documentos. En modo dueño dile al avatar «quiero subir un documento»: te muestra un código QR, lo lee y te cuenta de qué trata.'
+    : `Lo que el avatar sabe por documentos tuyos. Público = lo usa con visitantes y en el chat de WhatsApp; privado = solo contigo. ${d.google && d.canCreate ? `Cada uno tiene en tu Drive («minijavi / Conocimiento») un documento de Google con su texto: si lo editas ahí, el avatar se actualiza solo${d.syncMin ? ` (revisa cada ${d.syncMin} min)` : ''}; si lo mandas a la papelera, deja de usarlo.` : 'Google no está conectado o le falta el permiso de crear: los documentos nuevos quedan sin copia en Drive.'}`;
+  $('know-list').replaceChildren(...docs.map((k) => {
+    const pending = k.status === 'por_confirmar';
+    const chip = el('span', { className: `chip ${pending ? 'warn' : k.scope === 'publico' ? 'ok' : ''}`, textContent: pending ? 'Espera tu confirmación' : k.scope === 'publico' ? 'Público' : 'Privado' });
+    const btn = (text, fn, cls = 'small') => { const b = el('button', { type: 'button', className: cls, textContent: text }); b.addEventListener('click', () => fn(b)); return b; };
+    const sure = (text, fn) => btn(text, (b) => { if (b.dataset.sure) fn(); else { b.dataset.sure = '1'; b.textContent = '¿Seguro? Toca otra vez'; } }, 'small danger');
+    const actions = pending
+      ? [btn('Guardar como privado', () => knowAct(k.id, { accion: 'guardar', alcance: 'privado' }, 'Guardado como privado.'), 'small primary'), btn('Guardar como público', () => knowAct(k.id, { accion: 'guardar', alcance: 'publico' }, 'Guardado como público.')), sure('Descartar', () => knowAct(k.id, { accion: 'quitar' }, 'Descartado.'))]
+      : [k.link ? el('a', { className: 'button small primary', href: k.link, target: '_blank', rel: 'noopener', textContent: 'Editar en Google' }) : null, k.original ? el('a', { className: 'button small', href: k.original, target: '_blank', rel: 'noopener', textContent: 'Ver el original' }) : null,
+        btn(k.scope === 'publico' ? 'Pasar a privado' : 'Pasar a público', () => knowAct(k.id, { accion: 'alcance', alcance: k.scope === 'publico' ? 'privado' : 'publico' }, 'Cambiado.')),
+        k.doc_id ? btn('Sincronizar', () => knowAct(k.id, { accion: 'sincronizar' }, 'Revisado en Drive.')) : null, sure('Dejar de usar', () => knowAct(k.id, { accion: 'quitar' }, 'El avatar ya no lo usa. Los archivos siguen en tu Drive.'))];
+    return el('li', {}, el('div', { className: 'row between' }, el('strong', { textContent: `${k.title} ` }), chip),
+      el('p', { className: 'muted', textContent: k.summary || 'Sin resumen.' }),
+      el('small', { className: 'muted', textContent: [`#${k.id}`, `subido ${fecha(k.created_at)}`, k.kind.toUpperCase(), `${k.chars} caracteres`, pending ? '' : `${k.chunks} fragmentos`, k.synced_at && !pending ? `sincronizado ${fecha(k.synced_at)}` : '', !pending && !k.doc_id ? 'sin copia en Drive' : ''].filter(Boolean).join(' · ') }),
+      k.error ? el('small', { style: 'display:block;color:var(--warn)', textContent: `Nota: ${k.error}` }) : null,
+      el('div', { className: 'row', style: 'margin-top:8px' }, ...actions.filter(Boolean)));
+  }));
+}
+$('know-sync')?.addEventListener('click', async () => {
+  $('know-msg').textContent = 'Revisando en Drive…';
+  const r = await api('conocimiento/sincronizar', { method: 'POST' }), d = await r.json().catch(() => ({}));
+  await loadKnow();
+  $('know-msg').textContent = !r.ok ? 'No se pudo sincronizar.' : `Revisados: ${d.checked}. ${d.updated?.length ? `Actualizados: ${d.updated.join(', ')}.` : 'Ninguno había cambiado.'}${d.removed?.length ? ` Ya no están en Drive: ${d.removed.join(', ')}.` : ''}${d.problems?.length ? ` Con problema: ${d.problems.join('; ')}.` : ''}`;
+});
 
 async function loadImages() {
   const { enabled, images } = await json('images');

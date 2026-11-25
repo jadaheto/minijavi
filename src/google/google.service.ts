@@ -320,10 +320,10 @@ export class GoogleService implements OnModuleInit {
 
   // ---------- Drive ----------
   /** Igual que `get`, pero devuelve texto (el contenido de un archivo) y corta lo que pase de `maxBytes`. */
-  private async getText(url: string, params: Record<string, string>, maxBytes: number): Promise<{ text: string; cut: boolean }> {
+  private async getText(url: string, params: Record<string, string>, maxBytes: number, background = false): Promise<{ text: string; cut: boolean }> {
     const today = this.day(); if (this.used.day !== today) this.used = { day: today, n: 0 };
-    if (this.used.n >= this.cfg.googleDailyCalls) throw new GoogleError('se llegó al tope de consultas a Google de hoy');
-    this.used.n++; this.usage?.add('google_calls');
+    if (!background) { if (this.used.n >= this.cfg.googleDailyCalls) throw new GoogleError('se llegó al tope de consultas a Google de hoy'); this.used.n++; }
+    this.usage?.add(background ? 'google_fondo' : 'google_calls');
     const res = await fetch(`${url}?${new URLSearchParams(params).toString()}`, { headers: { Authorization: `Bearer ${await this.accessToken()}` }, signal: AbortSignal.timeout(15_000) });
     if (res.status === 401) this.access = undefined;
     if (!res.ok) { this.log.warn(`Google respondió ${res.status} en ${new URL(url).pathname.replace(/files\/[^/]+/, 'files/<id>')}`); throw new GoogleError(res.status === 403 ? 'Google no deja leer ese archivo (puede ser muy grande o no tener permiso de descarga)' : res.status === 404 ? 'Google no encontró ese archivo' : `Google respondió ${res.status}`, res.status); }
@@ -439,7 +439,7 @@ export class GoogleService implements OnModuleInit {
   /** Cuantos archivos ha creado hoy (hora del negocio) y el tope. */
   async createdToday(): Promise<{ n: number; limit: number }> {
     const since = this.startOf(this.day()).toISOString();
-    return { n: (await this.db.query<{ kind: string }>('SELECT kind FROM google_created WHERE at >= $1', [since])).filter((r) => !String(r.kind).startsWith('agregado')).length, limit: this.cfg.googleCreateDaily };
+    return { n: (await this.db.query<{ kind: string }>('SELECT kind FROM google_created WHERE at >= $1', [since])).filter((r) => !/^(agregado|conocimiento)/.test(String(r.kind))).length, limit: this.cfg.googleCreateDaily };
   }
   created(limit = 8) { return this.db.query<{ id: number; at: string; kind: string; file_id: string; title: string; chars: number; source: string }>('SELECT * FROM google_created ORDER BY id DESC LIMIT $1', [Math.min(50, limit)]); }
 
@@ -530,6 +530,67 @@ export class GoogleService implements OnModuleInit {
     const where = new Map<string, string>((Array.isArray(d?.slides) ? d.slides : []).map((x: any) => [String(x?.objectId ?? ''), String(x?.slideProperties?.notesPage?.notesProperties?.speakerNotesObjectId ?? '')]));
     const requests = notes.filter((n) => where.get(n.page)).map((n) => ({ insertText: { objectId: where.get(n.page), text: n.text } }));
     if (requests.length) await this.write(`${SLIDES}/${id}:batchUpdate`, { requests });
+  }
+
+  // ---------- documentos de conocimiento (los que Javier sube para que el avatar sepa mas) ----------
+  /** La carpeta «Conocimiento», dentro de «minijavi». Tambien la crea el avatar: por eso puede poner archivos ahi. */
+  private async knowledgeFolder(): Promise<string> {
+    const key = 'google_folder_conocimiento', saved = (await this.db.query<{ value: string }>('SELECT value FROM meta WHERE key = $1', [key]))[0]?.value;
+    if (saved && new RegExp(`^${ID}$`).test(saved)) { const f = await this.get(`${DRIVE}/files/${saved}`, { fields: 'id,trashed' }).catch(() => null); if (f?.id && !f.trashed) return saved; }
+    const made = await this.write(`${DRIVE}/files`, { name: 'Conocimiento', mimeType: MIME_FOLDER, parents: [await this.folder()] }, { fields: 'id' });
+    if (!new RegExp(`^${ID}$`).test(String(made?.id ?? ''))) throw new GoogleError('Google no devolvió la carpeta creada');
+    await this.db.query('DELETE FROM meta WHERE key = $1', [key]); await this.db.query('INSERT INTO meta (key, value) VALUES ($1, $2)', [key, made.id]);
+    return made.id;
+  }
+
+  /**
+   * Sube a la carpeta «Conocimiento» el archivo ORIGINAL que Javier entrego (PDF, foto, Word o texto), tal cual, privado.
+   * Subida reanudable de Drive (guia leida el 2026-11-25): un POST a `upload/drive/v3/files?uploadType=resumable` con los
+   * datos del archivo devuelve en `Location` la direccion de la sesion, y un PUT ahi con los bytes crea el archivo.
+   * Solo se acepta una direccion de sesion de ese mismo servicio de Google.
+   */
+  async uploadOriginal(name: string, mime: string, data: Buffer): Promise<string> {
+    if (!this.has('crear')) throw new GoogleError(this.connected ? 'el permiso guardado no incluye crear archivos: vuelve a conectar Google en el panel' : 'Google no está conectado');
+    if (!data.length || data.length > 40 * 1024 * 1024) throw new GoogleError('el archivo está vacío o es demasiado grande');
+    const parent = await this.knowledgeFolder(), token = await this.accessToken(); this.usage?.add('google_calls');
+    const start = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': mime, 'X-Upload-Content-Length': String(data.length) }, body: JSON.stringify({ name: clean(name, 120) || 'documento', parents: [parent] }), signal: AbortSignal.timeout(20_000) });
+    const session = start.headers.get('location') ?? '';
+    if (!start.ok || !/^https:\/\/www\.googleapis\.com\/upload\/drive\/v3\/files\?/.test(session)) { this.log.warn(`Google respondió ${start.status} al empezar a subir un archivo`); throw new GoogleError(start.status === 403 ? 'Google no dejó subir el archivo (¿está encendida la Drive API?)' : 'Google no aceptó la subida del archivo', start.status); }
+    const put = await fetch(session, { method: 'PUT', headers: { 'Content-Type': mime, 'Content-Length': String(data.length) }, body: new Uint8Array(data), signal: AbortSignal.timeout(120_000) });
+    const made: any = await put.json().catch(() => ({})), id = String(made?.id ?? '');
+    if (!put.ok || !new RegExp(`^${ID}$`).test(id)) { this.log.warn(`Google respondió ${put.status} al subir un archivo`); throw new GoogleError('Google no terminó de recibir el archivo', put.status); }
+    await this.db.query('INSERT INTO google_created (at, kind, file_id, title, chars, source) VALUES ($1, $2, $3, $4, $5, $6)', [new Date().toISOString(), 'conocimiento:original', id, clean(name, 120), data.length, 'subido por Javier']).catch(() => undefined);
+    return id;
+  }
+
+  /**
+   * Crea en «Conocimiento» el documento de Google con el TEXTO de lo que Javier subio: es la version que el edita y de la
+   * que el avatar aprende. Texto llano, por tramos (cada tramo entra al principio, del ultimo al primero).
+   */
+  async createKnowledgeDoc(title: string, text: string): Promise<{ id: string; link: string; modified: string }> {
+    const name = clean(title, 120) || 'Documento', body = String(text ?? '').replace(/\r/g, '').replace(/[\u0000-\u0008\u000b-\u001f]/g, ' ').trim().slice(0, 200_000);
+    if (body.length < 10) throw new GoogleError('el documento no tiene texto');
+    const made = await this.write(`${DRIVE}/files`, { name, mimeType: MIME_DOC, parents: [await this.knowledgeFolder()] }, { fields: 'id' });
+    const id = String(made?.id ?? ''); if (!new RegExp(`^${ID}$`).test(id)) throw new GoogleError('Google no devolvió el documento creado');
+    await this.db.query('INSERT INTO google_created (at, kind, file_id, title, chars, source) VALUES ($1, $2, $3, $4, $5, $6)', [new Date().toISOString(), 'conocimiento', id, name, body.length, 'subido por Javier']).catch(() => undefined);
+    const parts: string[] = []; for (let i = 0; i < body.length; i += 20_000) parts.push(body.slice(i, i + 20_000));
+    for (let i = parts.length - 1; i >= 0; i -= 4) await this.write(`${DOCS}/${id}:batchUpdate`, { requests: parts.slice(Math.max(0, i - 3), i + 1).reverse().map((t) => ({ insertText: { location: { index: 1 }, text: t } })) });
+    const st = await this.fileState(id).catch(() => null);
+    return { id, link: `https://docs.google.com/document/d/${id}/edit`, modified: st?.modified ?? '' };
+  }
+
+  /** Como esta un archivo en Drive: cuando cambio por ultima vez, su nombre y si esta en la papelera. `null` = ya no existe. No gasta el tope del dia. */
+  async fileState(id: string): Promise<{ modified: string; name: string; trashed: boolean } | null> {
+    if (!new RegExp(`^${ID}$`).test(String(id))) return null;
+    try { const f: any = await this.get(`${DRIVE}/files/${id}`, { fields: 'id,name,modifiedTime,trashed' }, true); return { modified: String(f?.modifiedTime ?? ''), name: clean(f?.name, 120), trashed: !!f?.trashed }; }
+    catch (e) { if ((e as GoogleError).status === 404) return null; throw e; }
+  }
+
+  /** El texto actual de un documento de Google de «Conocimiento» (como lo dejo Javier al editarlo). No gasta el tope del dia. */
+  async knowledgeText(id: string): Promise<{ text: string; cut: boolean }> {
+    if (!new RegExp(`^${ID}$`).test(String(id))) throw new GoogleError('archivo inválido');
+    const r = await this.getText(`${DRIVE}/files/${id}/export`, { mimeType: 'text/plain' }, 600_000, true);
+    return { text: r.text.replace(/^﻿/, '').replace(/\r/g, '').trim(), cut: r.cut };
   }
 
   // ---------- lo creado, para el panel ----------

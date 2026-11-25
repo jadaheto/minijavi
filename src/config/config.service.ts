@@ -183,6 +183,12 @@ export class ConfigService {
   readonly businessPanelKey: string;
   /** "Crea tu propio asistente": documentos subidos a una demo (DEMO_DOCUMENTOS=0 lo apaga). Topes de tamaño, paginas, por IP, por dia y dias que se guardan. */
   readonly demoDocs: boolean;
+  /** Documentos que Javier sube para que el avatar sepa mas (KNOW_*). */
+  readonly knowDocs: boolean;
+  readonly knowDocMb: number;
+  readonly knowDocPages: number;
+  readonly knowDocMax: number;
+  readonly knowSyncMin: number;
   readonly demoDocMb: number;
   readonly demoDocPages: number;
   readonly demoDocPerIpHour: number;
@@ -473,6 +479,11 @@ export class ConfigService {
     this.reportSecret = str('REPORTE_SECRET').length >= 16 ? str('REPORTE_SECRET') : '';
     this.businessPanelKey = str('NEGOCIO_PANEL_CLAVE').length >= 12 ? str('NEGOCIO_PANEL_CLAVE') : '';
     this.demoDocs = str('DEMO_DOCUMENTOS', '1') !== '0';
+    this.knowDocs = str('CONOCIMIENTO_DOCUMENTOS', '1') !== '0';
+    this.knowDocMb = Math.min(40, int('CONOCIMIENTO_DOC_MB', 10, 1));
+    this.knowDocPages = int('CONOCIMIENTO_DOC_PAGINAS', 30, 1);
+    this.knowDocMax = int('CONOCIMIENTO_DOC_MAX', 30, 1);
+    this.knowSyncMin = int('CONOCIMIENTO_SINCRONIZAR_MIN', 10, 0);
     this.demoDocMb = Math.min(40, int('DEMO_DOC_MB', 10, 1));
     this.demoDocPages = int('DEMO_DOC_PAGINAS', 20, 1);
     this.demoDocPerIpHour = int('DEMO_DOC_POR_IP_HORA', 3, 1);
@@ -554,7 +565,7 @@ ${readFileSync(costenoFile, 'utf8').trim()}` : '';
         business: b, greeting: b.saludo, elevenVoiceId: b.voz || this.elevenVoiceId, costenoPrompt: '',
         ownerSecret: '', claudeToken: '', planeMcpUrl: '', youtubeApiKey: '', spotifyClientId: '', spotifyClientSecret: '', teslaClientId: '', teslaClientSecret: '',
         googleMapsKey: '', openChargeMapKey: '', polymarket: false, newsUrl: '', newsColombia: false, unsplashAccessKey: '', magnificApiKey: '', imageOpenAiKey: '',
-        briefHour: -1, followupHour: -1, demoDocs: false, avatarCustom: false, vaultKey: '', callMode: 'rechazar', whatsappReplies: this.whatsappReplies === 'avatar' ? 'avatar' : 'off', n8nWebhookUrl: '', leadsWebhookUrl: '', visitorMemoryDays: 0, visitReports: false,
+        briefHour: -1, followupHour: -1, demoDocs: false, knowDocs: false, avatarCustom: false, vaultKey: '', callMode: 'rechazar', whatsappReplies: this.whatsappReplies === 'avatar' ? 'avatar' : 'off', n8nWebhookUrl: '', leadsWebhookUrl: '', visitorMemoryDays: 0, visitReports: false,
       });
     }
   }

@@ -356,6 +356,10 @@ function onMessage(msg) {
       $('demo').hidden = !msg.on; $('demo').textContent = msg.on ? `Demostración: asistente de ${msg.title}` : ''; demoDoc.demo(msg); break;
     case 'demo_doc': // lectura del documento del negocio (subido aqui o desde el celular)
       demoDoc.update(msg); break;
+    case 'know_upload': // modo dueño: boton y QR para subir un documento del que el avatar va a aprender
+      hideCard(); demoDoc.knowledge(msg); break;
+    case 'know_doc':
+      demoDoc.update(msg); break;
     case 'gallery': // fotos o bocetos al lado del avatar
       showGallery(msg); break;
     case 'music': // musica de fondo
@@ -543,7 +547,7 @@ window.addEventListener('pointerdown', () => { if (live && suspended) socket?.se
 // Con imagenes en pantalla el avatar esta pequeño en la esquina: tocarlo las quita y lo devuelve a su tamaño.
 $('stage').addEventListener('click', () => { if (gallery) { hideGallery(); socket?.send({ type: 'gallery', hide: true }); } });
 window.__avatarDebug = {
-  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, gallery: showGallery, work: setWork, music: onMusic, tesla: (d) => tesla.show(d), news: (d) => news.show(d), markets: showMarkets, panel: (d) => dataPanel.show(d), message: onMessage,
+  react: (n) => { avatar.react(n); emojiBurst($('fx'), n); }, scene: (n) => backdrop.show(n), card: showCard, know: (m) => demoDoc.knowledge(m), knowDoc: (m) => demoDoc.update(m), gallery: showGallery, work: setWork, music: onMusic, tesla: (d) => tesla.show(d), news: (d) => news.show(d), markets: showMarkets, panel: (d) => dataPanel.show(d), message: onMessage,
   standby: () => { armed = true; shutdown(''); }, suspend: setSuspended, activity: (n) => { setActivity(n); actUntil = performance.now() + 600000; },
   get weights() { return { ...lips.weights }; }, get state() { return state; }, get time() { return player ? player.time() : -1; }, morphNames: avatar.morphNames, missing,
 };

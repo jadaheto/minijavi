@@ -1,3 +1,4 @@
+import { KnowledgeDocsService } from '../knowledge/knowledge-docs.service';
 import { BusinessService } from '../business/business.service';
 import { BusinessDeskService } from '../business/desk.service';
 import { asData } from '../tools/data';
@@ -75,7 +76,7 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
     private readonly wa: WhatsAppService, private readonly knowledge: KnowledgeService, private readonly portfolio: PortfolioService,
     private readonly visits: VisitsService, private readonly leads: LeadsService, private readonly usage: UsageService, private readonly alerts: AlertsService,
     private readonly optout: OptOutService, private readonly guard: InjectionGuard, private readonly catalog: CatalogService,
-    @Optional() private readonly biz?: BusinessService, @Optional() private readonly desk?: BusinessDeskService) {}
+    @Optional() private readonly biz?: BusinessService, @Optional() private readonly desk?: BusinessDeskService, @Optional() private readonly knowDocs?: KnowledgeDocsService) {}
   /** Modo negocio: usos de cada funcion por conversacion abierta (topes). */
   private readonly deskCounts = new Map<string, Record<string, number>>();
 
@@ -183,7 +184,7 @@ export class WaChatService implements OnModuleInit, OnModuleDestroy {
     const screen = this.guard.screen(userText, 'un chat de WhatsApp'); // señal de inyeccion, en paralelo con la respuesta
     const context = await this.context(userText);
     const messages: any[] = [
-      { role: 'system', content: biz ? biz.prompt('whatsapp', { phone, name: name || chat.name }) : this.cfg.systemPrompt + this.cfg.costenoPrompt + this.portfolio.prompt(true) + this.catalog.prompt() + RULES(phone, name || chat.name, this.wa.canVoice) },
+      { role: 'system', content: biz ? biz.prompt('whatsapp', { phone, name: name || chat.name }) : this.cfg.systemPrompt + this.cfg.costenoPrompt + this.portfolio.prompt(true) + (this.knowDocs?.prompt(false) ?? '') + (this.knowDocs?.prompt(false) ?? '') + this.catalog.prompt() + RULES(phone, name || chat.name, this.wa.canVoice) },
       ...past.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.text })),
       { role: 'user', content: userText + (asVoice ? '\n\n(Mensaje recibido como nota de voz: responde para ser escuchado.)' : '') + context },
     ];

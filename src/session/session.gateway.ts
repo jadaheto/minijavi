@@ -1,3 +1,4 @@
+import { KnowledgeDocsService } from '../knowledge/knowledge-docs.service';
 import { CX_PREFIX, ConnectionsService } from '../connections/connections.service';
 import { carries, remember } from '../connections/leak';
 import { BriefService } from '../brief/brief.service';
@@ -366,6 +367,7 @@ export class SessionGateway implements OnGatewayConnection {
     @Optional() private readonly desk?: BusinessDeskService,
     @Optional() private readonly connections?: ConnectionsService,
     @Optional() private readonly notices?: NoticesService,
+    @Optional() private readonly knowDocs?: KnowledgeDocsService,
   ) {
     // Cuando Claude Code termina un encargo, se le cuenta a Javier en las sesiones de dueño abiertas.
     this.workshop.onDone((d) => { for (const [s, client] of this.owners) void this.workshopNote(client, s, d.project.slug); });
@@ -556,7 +558,7 @@ export class SessionGateway implements OnGatewayConnection {
       : '';
     if (this.biz?.on) s.history.push({ role: 'system', content: this.biz.prompt() + TAG_RULES }); // MODO NEGOCIO: el asistente de ese cliente, nada de Javier
     else if (s.page) s.history.push({ role: 'system', content: pagePrompt(s.page) + TAG_RULES });
-    else s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + (s.music?.remote ? REMOTE_MUSIC_RULES : s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery, this.workshop.enabled) : '') + (s.owner ? DATA_RULES + (this.connections?.voiceOn ? CONNECTION_RULES : '') : DEMO_RULES) + (s.gallery && (this.images.enabled || (s.owner && (this.workshop.enabled || this.images.canGenerate))) ? IMAGE_RULES(this.images.enabled, s.owner && this.workshop.enabled, s.owner && this.images.canGenerate) : '') + this.portfolio.prompt(!!s.gallery) + (s.owner ? '' : this.catalog.prompt()) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote + (s.gadget ? GADGET_RULES : '') + (s.car ? CAR_RULES : '') });
+    else s.history.push({ role: 'system', content: this.cfg.systemPrompt + this.cfg.costenoPrompt + (s.owner && this.cfg.ownerPrompt ? '\n\n' + this.cfg.ownerPrompt : LEAD_RULES) + (s.owner && this.workshop.enabled ? TALLER_RULES(this.workshop.defaultModel.label) : '') + (s.music?.remote ? REMOTE_MUSIC_RULES : s.music ? MUSIC_RULES(this.cfg.musicDefaultQuery, this.workshop.enabled) : '') + (s.owner ? DATA_RULES + (this.connections?.voiceOn ? CONNECTION_RULES : '') : DEMO_RULES) + (s.gallery && (this.images.enabled || (s.owner && (this.workshop.enabled || this.images.canGenerate))) ? IMAGE_RULES(this.images.enabled, s.owner && this.workshop.enabled, s.owner && this.images.canGenerate) : '') + this.portfolio.prompt(!!s.gallery) + (this.knowDocs?.prompt(s.owner) ?? '') + (s.owner ? '' : this.catalog.prompt()) + TAG_RULES + (s.callerPhone ? '' : cardRules) + callNote + memoryNote + (s.gadget ? GADGET_RULES : '') + (s.car ? CAR_RULES : '') });
     s.stt = this.stt.open({
       // Idioma: en modo carro la escucha es solo en español (con ruido y musica la deteccion de idioma falla y el avatar
       // terminaba respondiendo en ingles). En una sesion del dueño con musica sonando tampoco se cambia de idioma por lo
@@ -663,7 +665,7 @@ export class SessionGateway implements OnGatewayConnection {
 
   private end(s: Session) {
     if (!s.ready) return;
-    s.ready = false; this.active--; this.owners.delete(s); clearTimeout(s.noteTimer); this.demoDocs?.forget(s.n);
+    s.ready = false; this.active--; this.owners.delete(s); clearTimeout(s.noteTimer); this.demoDocs?.forget(s.n); this.knowDocs?.forget(s.n);
     s.turn?.ctrl.abort(); s.stt?.close(); s.spec?.ctrl.abort(); clearTimeout(s.specTimer);
     // B3: el visitante subio el documento de su negocio: al terminar se le propone a Javier enviarle el enlace de su demo.
     if (!s.owner && !s.page && s.demo.doc?.state === 'listo' && s.demo.doc.id) void this.demoSend?.offer(s.demo.doc.id);
@@ -989,7 +991,7 @@ export class SessionGateway implements OnGatewayConnection {
             result = 'NO se ejecutó. Por seguridad, esta acción no corre en la misma respuesta en que leíste datos de terceros ni en un aviso automático. Dile a Javier qué ibas a hacer y pídele que te lo confirme; si dice que sí, vuelve a llamar la herramienta.';
           }
           else {
-            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, news: (s.news ??= { index: 0 }), mail: (s.mail ??= { items: [] }), files: (s.files ??= { items: [] }), docs: (s.docs ??= {}), turn: s.userTurns, auto, marketList: (s.marketList ??= { items: [], title: '' }), places: (s.places ??= { chargers: [] }), locate: s.owner && !s.callerPhone && !s.gadget ? () => this.locate(client, s) : undefined, demo: s.demo, canUpload: !!this.demoDocs?.enabled && !s.callerPhone && !s.gadget && (!s.demo.doc || s.demo.doc.state === 'esperando'), source: s.callerPhone ? 'llamada' : 'voz',
+            const out = await this.tools.run(c.name, c.arguments, s.owner, { leadIds: s.leadIds, origin: s.origin, music: s.music, gallery: s.gallery, news: (s.news ??= { index: 0 }), mail: (s.mail ??= { items: [] }), files: (s.files ??= { items: [] }), docs: (s.docs ??= {}), turn: s.userTurns, auto, session: s.n, show: s.owner && !s.callerPhone && !s.gadget ? (m) => { if (s.ready && (m?.type === 'know_upload' || m?.type === 'know_doc')) { this.send(client, m); s.lastActivity = Date.now(); } } : undefined, marketList: (s.marketList ??= { items: [], title: '' }), places: (s.places ??= { chargers: [] }), locate: s.owner && !s.callerPhone && !s.gadget ? () => this.locate(client, s) : undefined, demo: s.demo, canUpload: !!this.demoDocs?.enabled && !s.callerPhone && !s.gadget && (!s.demo.doc || s.demo.doc.state === 'esperando'), source: s.callerPhone ? 'llamada' : 'voz',
               notify: (note) => { if (s.ready) { s.notes.push(note as Session['notes'][number]); this.pumpNotes(client, s); } },
               cxRead: (slug, raw) => { const all = (s.cxSeen ??= new Map<string, Set<string>>()); if (!all.has(slug)) all.set(slug, new Set()); remember(all.get(slug)!, raw); } });
             if (c.name === 'buscar_imagenes' && out.gallery) s.imageSearches++;

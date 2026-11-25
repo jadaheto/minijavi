@@ -1,3 +1,4 @@
+import { KnowledgeDocsService } from '../knowledge/knowledge-docs.service';
 import { SLIDE_THEMES, slideImagePrompt, themeName } from '../google/slide-design';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
@@ -107,6 +108,8 @@ export interface ToolContext { /** Interesados registrados en esta conversacion 
   notify?: (note: { text: string; image?: GalleryItem; images?: GalleryItem[]; card?: unknown }) => void;
   /** Numero de la intervencion de la persona en curso, y si este turno es un aviso automatico (para pedir confirmacion en una frase posterior). */
   turn?: number; auto?: boolean;
+  /** Numero de la sesion, y como mostrarle algo en SU pantalla (la tarjeta para subir un documento). Sin pantalla no existe. */
+  session?: number; show?: (msg: Record<string, unknown>) => void;
   /** Documento que el avatar propuso crear y espera el «sí» de Javier. */
   docs?: { pending?: { key: string; turn: number } };
   /** Se llama con lo que se leyo de una conexion (tambien cuando llega tarde), para que la sesion sepa que no debe salir hacia otros lados. */
@@ -154,7 +157,7 @@ export class ToolsService {
   private readonly tools: Record<string, Tool>;
   /** Herramientas locales que solo existen en sesiones del dueño. */
   private readonly ownerTools: Record<string, Tool>;
-  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService, news?: NewsService, markets?: PolymarketService, panels?: PanelsService, maps?: MapsService, newsCo?: ColombiaNewsService, brief?: BriefService, demos?: DemoDocsService, private readonly connections?: ConnectionsService, google?: GoogleService, scoring?: ScoringService, writer?: DocWriterService) {
+  constructor(cfg: ConfigService, private readonly plane: PlaneMcpService, private readonly leads: LeadsService, private readonly workshop: WorkshopService, private readonly music: MusicService, usage: UsageService, images: ImagesService, portfolio: PortfolioService, visits: VisitsService, actions?: ActionsService, approvals?: ApprovalsService, tesla?: TeslaService, news?: NewsService, markets?: PolymarketService, panels?: PanelsService, maps?: MapsService, newsCo?: ColombiaNewsService, brief?: BriefService, demos?: DemoDocsService, private readonly connections?: ConnectionsService, google?: GoogleService, scoring?: ScoringService, writer?: DocWriterService, know?: KnowledgeDocsService) {
     this.tools = {
       hora_actual: {
         description: 'Devuelve la fecha y la hora actuales. Usala cuando pregunten que hora es o que dia es hoy.',
@@ -964,6 +967,75 @@ export class ToolsService {
     };
     // Agregar a un archivo que el avatar creo: texto al final de un documento, filas al final de una hoja o una diapositiva
     // al final de una presentacion. Solo AGREGA (no borra ni reemplaza) y solo en archivos creados por el avatar.
+    // Documentos que Javier sube para que el avatar sepa mas: pedir el enlace (boton y QR) y, ya leido, guardarlo,
+    // cambiar quien lo usa, quitarlo o sincronizar con lo que edito en Drive. Nada se guarda sin que el lo diga.
+    if (know?.enabled) this.ownerTools.subir_documento = {
+      description:
+        'Muestra en la pantalla un botón y un código QR para que Javier suba un documento (PDF, foto, Word o texto) del que quiere que aprendas. Úsala cuando diga que quiere subir, cargar o enseñarte un documento. ' +
+        'Tú lo lees y después le cuentas de qué trata; no se guarda hasta que él lo confirme.',
+      parameters: { type: 'object', properties: { tema: { type: 'string', description: 'De qué es el documento, si lo dijo (por ejemplo "lista de precios").' } } },
+      run: async (args: Record<string, unknown>, ctx: ToolContext): Promise<string> => {
+        if (!ctx.show || typeof ctx.session !== 'number') return 'Aquí no hay pantalla para mostrar el código. Dile que lo pida desde la página del avatar en el computador.';
+        const show = ctx.show, notify = ctx.notify, hint = String(args.tema ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+        const o = await know.offer(ctx.session, hint, (u) => {
+          show({ type: 'know_doc', state: u.state, message: u.message });
+          if (u.state === 'listo' && u.doc) notify?.({ text: `(Aviso del sistema: ya leíste el documento que Javier subió. ${know.describe(u.doc)}\nCuéntale en una o dos frases de qué trata y pregúntale dos cosas: si lo guardas, y si es público (lo usarás con visitantes y en el chat de WhatsApp) o privado (solo con él). NO está guardado todavía: se guarda con la herramienta conocimiento cuando él responda.)` });
+          if (u.state === 'error') notify?.({ text: `(Aviso del sistema: el documento que Javier subió NO se pudo usar: ${u.message} Díselo tal cual.)` });
+        });
+        if ('error' in o) return `NO se puede: ${o.error}. Díselo así.`;
+        show({ type: 'know_upload', token: o.token, qr: o.qr, mb: o.mb, title: hint });
+        return `En la pantalla ya están el botón para subirlo y un código QR para hacerlo desde el celular (sirve 15 minutos, para un solo archivo de hasta ${o.mb} MB: PDF, foto, Word o texto). Díselo en una frase y espera: cuando lo leas te llega un aviso.`;
+      },
+    };
+    if (know?.enabled) this.ownerTools.conocimiento = {
+      description:
+        'Los documentos que Javier te ha subido para que sepas más. accion: ver (lista), guardar (confirmar uno recién leído, diciendo si es publico o privado), descartar (uno recién leído que no quiere), alcance (cambiar entre publico y privado), quitar (dejar de usar uno guardado) o sincronizar (volver a leer los que editó en Google Drive). ' +
+        'Público = lo usas con visitantes y en el chat de WhatsApp; privado = solo con Javier. Nunca guardes ni cambies nada que él no haya pedido en su última frase.',
+      parameters: { type: 'object', properties: {
+        accion: { type: 'string', enum: ['ver', 'guardar', 'descartar', 'alcance', 'quitar', 'sincronizar'] },
+        documento: { type: 'string', description: 'Número (#3) o parte del título. Vacío = el que acaba de subir.' },
+        alcance: { type: 'string', enum: ['publico', 'privado'], description: 'Para guardar o cambiar el alcance. Solo el que Javier dijo; si no lo dijo, pregúntale.' },
+        titulo: { type: 'string', description: 'Al guardar: otro título, solo si Javier lo pidió.' },
+      }, required: ['accion'] },
+      run: async (args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult | string> => {
+        const action = String(args.accion ?? 'ver'), q = String(args.documento ?? '').trim(), scope = args.alcance === 'publico' || args.alcance === 'privado' ? args.alcance : undefined;
+        const names = (l: { id: number; title: string }[]) => l.slice(0, 6).map((d) => `#${d.id} ${d.title}`).join(' | ');
+        if (action === 'ver') {
+          const all = know.list(); if (!all.length) return 'Todavía no hay documentos. Si Javier quiere subir uno, usa subir_documento.';
+          return { untrusted: true, text: asData('los documentos de conocimiento (títulos y resúmenes hechos a partir de cada documento)', all.map((d) => `#${d.id} ${d.title} — ${d.status === 'listo' ? (d.scope === 'publico' ? 'público' : 'privado') : 'ESPERA que Javier diga si se guarda'}${d.summary ? `: ${d.summary}` : ''}${d.error ? ` (nota: ${d.error})` : ''}`).join('\n')) + '\nCuéntaselo en pocas frases.' };
+        }
+        if (ctx.auto || typeof ctx.turn !== 'number') return 'NO se hizo: en un aviso automático no se guarda ni se cambia nada. Pregúntale a Javier y hazlo cuando él responda.';
+        try {
+          if (action === 'sincronizar') {
+            const r = await know.sync();
+            return `Sincronización con Drive: ${r.checked} revisado${r.checked === 1 ? '' : 's'}; ${r.updated.length ? `actualizados: ${r.updated.join(', ')}` : 'ninguno había cambiado'}${r.removed.length ? `; ya no están en Drive y dejé de usarlos: ${r.removed.join(', ')}` : ''}${r.problems.length ? `; con problema: ${r.problems.join('; ')}` : ''}. ${r.checked ? '' : 'No hay documentos con copia en Drive o Google no está conectado. '}Díselo en una frase.`;
+          }
+          if (action === 'guardar' || action === 'descartar') {
+            const l = know.find(q, 'por_confirmar');
+            if (!l.length) return 'No hay ningún documento recién leído esperando con ese nombre. Díselo.';
+            if (l.length > 1) return `Hay ${l.length} documentos esperando: ${names(l)}. Pregúntale cuál.`;
+            if (action === 'descartar') { await know.remove(l[0].id); return `Listo: descartado «${l[0].title}»; no se guardó nada. Díselo en una frase.`; }
+            if (!scope) return `NO se guardó todavía: falta saber si «${l[0].title}» es público (visitantes y chat de WhatsApp) o privado (solo él). Pregúntaselo.`;
+            const r = await know.confirm(l[0].id, scope, typeof args.titulo === 'string' ? args.titulo : undefined);
+            return `Listo: «${r.doc.title}» quedó guardado como ${scope === 'publico' ? 'público' : 'privado'} (${r.doc.chunks} fragmentos) y ya lo puedes usar para responder. ${r.drive ? 'En su Drive, carpeta «minijavi / Conocimiento», quedó el original y un documento de Google con el texto: si edita ese documento, tú te actualizas solo en unos minutos.' : `OJO: ${r.note}.`}${r.drive && r.note ? ` Nota: ${r.note}.` : ''} Díselo en una o dos frases.`;
+          }
+          const l = know.find(q, 'listo');
+          if (!q || !l.length) return `${q ? 'No hay un documento guardado con ese nombre.' : 'Falta decir cuál documento.'} Guardados: ${names(know.find('', 'listo')) || 'ninguno'}. Pregúntale.`;
+          if (l.length > 1) return `Hay ${l.length} que coinciden: ${names(l)}. Pregúntale cuál.`;
+          if (action === 'alcance') {
+            if (!scope) return 'Falta saber si lo quiere público o privado. Pregúntaselo.';
+            await know.setScope(l[0].id, scope); return `Listo: «${l[0].title}» ahora es ${scope === 'publico' ? 'público (lo usas con visitantes y en el chat)' : 'privado (solo con Javier)'}. Díselo en una frase.`;
+          }
+          if (action === 'quitar') {
+            const st = (ctx.docs ??= {}), key = `quitar:${l[0].id}`;
+            if (!st.pending || st.pending.key !== key || ctx.turn <= st.pending.turn) { st.pending = { key, turn: ctx.turn }; return `NO se ha quitado nada todavía. Dile que vas a dejar de usar «${l[0].title}» (los archivos de su Drive no se borran) y pregúntale si lo confirmas. Cuando diga que sí, vuelve a llamar igual.`; }
+            st.pending = undefined; await know.remove(l[0].id);
+            return `Listo: dejaste de usar «${l[0].title}». Los archivos siguen en su Drive por si los quiere. Díselo en una frase.`;
+          }
+          return 'Esa acción no existe.';
+        } catch (e) { return `NO se pudo: ${(e as Error).message}. Díselo tal cual.`; }
+      },
+    };
     if (google?.configured) this.ownerTools.agregar_a_archivo = {
       description:
         'Agrega contenido AL FINAL de un archivo que tú mismo creaste antes en el Drive de Javier: una sección a un documento, filas a una hoja de cálculo o una diapositiva a una presentación. No puede borrar, reemplazar ni corregir lo que ya está, ni tocar archivos que no creaste. ' +

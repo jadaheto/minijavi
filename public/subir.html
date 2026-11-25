@@ -15,18 +15,19 @@
     input[type=checkbox] { width: 20px; height: 20px; margin-top: 1px; flex: none; }
     button { padding: 14px; border: 0; border-radius: 14px; background: #3987e5; color: #fff; font: inherit; font-weight: 700; }
     button:disabled { opacity: .5; }
+    label[hidden] { display: none; }
     small { color: #8f9aac; }
     #estado[data-tone=bad] { color: #ffb4b0; } #estado[data-tone=ok] { color: #7dffc0; } #estado[data-tone=busy] { color: #f0d07a; }
   </style>
 </head>
 <body>
   <main>
-    <h1>📄 Sube el documento de tu negocio</h1>
-    <p>Un PDF (también escaneado) o una foto con tus productos y precios. El asistente de la pantalla te atenderá con tu información.</p>
-    <label><input type="checkbox" id="ok"> Autorizo guardar este documento 7 días para armar mi demostración.</label>
+    <h1 id="titulo">📄 Sube el documento de tu negocio</h1>
+    <p id="texto">Un PDF (también escaneado) o una foto con tus productos y precios. El asistente de la pantalla te atenderá con tu información.</p>
+    <label id="permiso"><input type="checkbox" id="ok"> Autorizo guardar este documento 7 días para armar mi demostración.</label>
     <input type="file" id="file" accept="application/pdf,image/jpeg,image/png,image/webp,text/plain,.pdf,.txt" hidden>
     <button type="button" id="pick">Elegir documento</button>
-    <small>Máximo 10 MB · PDF, JPG, PNG o texto</small>
+    <small id="tope">Máximo 10 MB · PDF, JPG, PNG o texto</small>
     <p id="estado" aria-live="polite"></p>
   </main>
   <script src="/js/subir.js"></script>
