@@ -72,12 +72,22 @@ const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVis
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
   for (const b of $('tabs').querySelectorAll('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+  const now = $('tabs').querySelector(`[data-tab="${tab}"]`); if ($('here') && now) $('here').textContent = now.firstChild.textContent.trim(); // en celular, el nombre de la sección va en la barra
+  menu(false);
   for (const v of document.querySelectorAll('[data-view]')) v.hidden = v.dataset.view !== tab;
   try { history.replaceState(null, '', `#${tab}`); } catch { /* sin historial */ }
   loaders[tab]().catch((e) => console.warn('panel:', e.message));
 }
+/** Menú del celular: abrir o cerrar. Se cierra al elegir una sección, con Escape o al tocar fuera. */
+function menu(open) {
+  const btn = $('menu-btn'), rail = btn?.closest('.rail'); if (!btn || !rail) return;
+  rail.classList.toggle('open', open); btn.setAttribute('aria-expanded', String(open)); btn.setAttribute('aria-label', open ? 'Cerrar el menú' : 'Abrir el menú');
+}
+$('menu-btn')?.addEventListener('click', () => menu($('menu-btn').getAttribute('aria-expanded') !== 'true'));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('menu-btn')?.getAttribute('aria-expanded') === 'true') { menu(false); $('menu-btn').focus(); } });
+document.addEventListener('click', (e) => { if ($('menu-btn')?.getAttribute('aria-expanded') === 'true' && !e.target.closest('.rail')) menu(false); });
 /** Contador de pendientes junto al nombre de una sección del menú (vacío = sin pendientes). */
-const badge = (tab, count) => { const b = document.querySelector(`[data-count="${tab}"]`); if (b) b.textContent = count > 0 ? String(count) : ''; };
+const badge = (tab, count) => { const b = document.querySelector(`[data-count="${tab}"]`); if (b) b.textContent = count > 0 ? String(count) : ''; if ($('menu-dot')) $('menu-dot').hidden = ![...document.querySelectorAll('[data-count]')].some((x) => x.textContent); };
 window.addEventListener('hashchange', () => { const t = location.hash.slice(1); if (loaders[t] && document.querySelector(`[data-view="${t}"]`).hidden) show(t); });
 $('tabs').addEventListener('click', (ev) => { const t = ev.target.closest('button[data-tab]'); if (t) show(t.dataset.tab); });
 

@@ -29,6 +29,7 @@ import { TeslaService } from './tesla/tesla.service';
 import { TeslaController } from './tesla/tesla.controller';
 import { GoogleService } from './google/google.service';
 import { GoogleController } from './google/google.controller';
+import { MailWatchService } from './google/mail-watch.service';
 import { NewsService } from './news/news.service';
 import { ColombiaNewsService } from './news/colombia.service';
 import { PolymarketService } from './markets/polymarket.service';
@@ -81,6 +82,6 @@ import { VisitsService } from './visits/visits.service';
     }),
   ],
   controllers: [GoogleController, NoticesController, ConnectionsController, ConnectionsPublicController, AvatarRequestsController, AvatarOwnerController, DemoDocsController, DemoPageController, BusinessController, BusinessPanelController, HealthController, OwnerController, CallsController, KnowledgeController, N8nController, SitesController, WorkshopBackupController, SpotifyController, TeslaController, MapsController],
-  providers: [GoogleService, NoticesService, ConfigService, DbService, AlertsService, OpsService, UsageService, ImagesService, PortfolioService, WorkshopService, WorkshopBackupService, SpotifyService, TeslaService, NewsService, ColombiaNewsService, PolymarketService, PanelsService, MapsService, BriefService, DemoDocsService, DemoSendService, AvatarRequestsService, AvatarGeneratorService, AvatarCareService, ConnectionsService, BusinessService, BusinessDeskService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, PolicyService, ActionsService, ApprovalsService, CatalogService, TelegramService, OptOutService, InjectionGuard],
+  providers: [GoogleService, MailWatchService, NoticesService, ConfigService, DbService, AlertsService, OpsService, UsageService, ImagesService, PortfolioService, WorkshopService, WorkshopBackupService, SpotifyService, TeslaService, NewsService, ColombiaNewsService, PolymarketService, PanelsService, MapsService, BriefService, DemoDocsService, DemoSendService, AvatarRequestsService, AvatarGeneratorService, AvatarCareService, ConnectionsService, BusinessService, BusinessDeskService, MusicService, ElevenLabsService, DeepgramService, DeepSeekService, ToolsService, OwnerService, PlaneMcpService, WhatsAppService, KnowledgeService, LeadsService, VisitsService, CardsService, MemoryService, SessionGateway, WaChatService, SettingsService, DecisionsService, CapableModelService, PolicyService, ActionsService, ApprovalsService, CatalogService, TelegramService, OptOutService, InjectionGuard],
 })
 export class AppModule {}

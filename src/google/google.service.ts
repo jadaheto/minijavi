@@ -175,15 +175,21 @@ export class GoogleService implements OnModuleInit {
   private day(at = this.now()) { return new Intl.DateTimeFormat('en-CA', { timeZone: this.cfg.timezone }).format(at); }
 
   /** Unica forma de hablar con Google: GET. Cuenta para el tope diario propio. */
-  private async get(url: string, params: Record<string, string> | URLSearchParams = {}): Promise<any> {
+  private async get(url: string, params: Record<string, string> | URLSearchParams = {}, background = false): Promise<any> {
     const today = this.day(); if (this.used.day !== today) this.used = { day: today, n: 0 };
-    if (this.used.n >= this.cfg.googleDailyCalls) throw new GoogleError('se llegó al tope de consultas a Google de hoy');
-    this.used.n++; this.usage?.add('google_calls');
+    // Las consultas de fondo (revisar si llego correo) no gastan el tope de las que pide Javier; se cuentan aparte.
+    if (!background) { if (this.used.n >= this.cfg.googleDailyCalls) throw new GoogleError('se llegó al tope de consultas a Google de hoy'); this.used.n++; }
+    this.usage?.add(background ? 'google_fondo' : 'google_calls');
     const token = await this.accessToken(), q = (params instanceof URLSearchParams ? params : new URLSearchParams(params)).toString();
     const res = await fetch(q ? `${url}?${q}` : url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
     if (res.status === 401) this.access = undefined;
     if (!res.ok) {
-      const why: Record<number, string> = { 401: 'Google rechazó el acceso', 403: 'Google no permite esa consulta con el permiso actual (o se llegó a su límite)', 404: 'Google no encontró lo pedido', 429: 'Google pide esperar un momento' };
+      // Google explica el motivo en el cuerpo. El mas comun al estrenar una parte: la API no esta encendida en el proyecto.
+      const body: any = await res.json().catch(() => ({})), reasons = JSON.stringify([body?.error?.status, body?.error?.errors, body?.error?.details] ).slice(0, 1500), api = /gmail/.test(url) ? 'Gmail API' : /calendar/.test(url) ? 'Google Calendar API' : /drive/.test(url) ? 'Google Drive API' : 'esa API';
+      if (res.status === 403 && /accessNotConfigured|SERVICE_DISABLED|has not been used in project|is disabled/i.test(reasons + String(body?.error?.message ?? ''))) { this.log.warn(`Google: ${api} no está encendida en el proyecto`); throw new GoogleError(`la ${api} no está encendida en tu proyecto de Google Cloud: hay que habilitarla ahí (APIs y servicios → Biblioteca) y esperar un par de minutos`, 403); }
+      if (res.status === 403 && /insufficient|ACCESS_TOKEN_SCOPE_INSUFFICIENT|insufficientPermissions/i.test(reasons + String(body?.error?.message ?? ''))) throw new GoogleError('el permiso guardado no alcanza para eso: vuelve a conectar Google en el panel y acepta todos los permisos', 403);
+      if ((res.status === 403 || res.status === 429) && /rateLimit|quota|RESOURCE_EXHAUSTED/i.test(reasons)) throw new GoogleError('Google pide esperar: se llegó a su límite de consultas por ahora', res.status);
+      const why: Record<number, string> = { 401: 'Google rechazó el acceso', 403: 'Google no permite esa consulta (403, sin más detalle)', 404: 'Google no encontró lo pedido', 429: 'Google pide esperar un momento' };
       this.log.warn(`Google respondió ${res.status} en ${new URL(url).pathname}`);
       throw new GoogleError(why[res.status] ?? `Google respondió ${res.status}`, res.status);
     }
@@ -252,15 +258,15 @@ export class GoogleService implements OnModuleInit {
    * los mas recientes de la bandeja de entrada. Devuelve remitente, asunto, fecha y un trozo corto: no el cuerpo.
    * Todo es texto de terceros.
    */
-  async mail(query = '', max = 6): Promise<MailItem[]> {
+  async mail(query = '', max = 6, background = false): Promise<MailItem[]> {
     if (!this.has('correo')) throw new GoogleError(this.connected ? 'el permiso guardado no incluye el correo: vuelve a conectar Google en el panel' : 'Google no está conectado: se conecta en el panel, en Dispositivos');
     const q = clean(query, 200), n = Math.max(1, Math.min(10, Math.floor(max) || 6)), key = `${q}/${n}`;
     const hit = this.mailCache.get(key); if (hit && Date.now() - hit.at < 45_000) return hit.value;
-    const list = await this.get(`${GMAIL}/messages`, { maxResults: String(n), ...(q ? { q } : { labelIds: 'INBOX' }) });
+    const list = await this.get(`${GMAIL}/messages`, { maxResults: String(n), ...(q ? { q } : { labelIds: 'INBOX' }) }, background);
     const ids: string[] = (Array.isArray(list?.messages) ? list.messages : []).map((m: any) => String(m?.id ?? '')).filter((id: string) => /^[A-Za-z0-9_-]{6,40}$/.test(id)).slice(0, n);
     const out: MailItem[] = [];
     for (const id of ids) { // uno por uno: son pocos, y asi no se dispara el limite por segundo de Gmail
-      const m = await this.get(`${GMAIL}/messages/${id}`, new URLSearchParams([['format', 'metadata'], ['metadataHeaders', 'From'], ['metadataHeaders', 'Subject'], ['metadataHeaders', 'Date']])).catch(() => null);
+      const m = await this.get(`${GMAIL}/messages/${id}`, new URLSearchParams([['format', 'metadata'], ['metadataHeaders', 'From'], ['metadataHeaders', 'Subject'], ['metadataHeaders', 'Date']]), background).catch(() => null);
       if (m) out.push(this.mailItem(m));
     }
     this.mailCache.set(key, { at: Date.now(), value: out }); if (this.mailCache.size > 30) this.mailCache.delete(this.mailCache.keys().next().value!);
