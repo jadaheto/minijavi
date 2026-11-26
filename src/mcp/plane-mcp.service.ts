@@ -64,6 +64,21 @@ export class PlaneMcpService {
     try { return JSON.parse(text); } catch { if (out?.structuredContent) return out.structuredContent; throw new Error('Plane respondió algo que no se pudo leer'); }
   }
 
+  /**
+   * La UNICA escritura en Plane: agregar un comentario a una tarea (AD4, decidido por Javier el 2026-11-26). No se le
+   * ofrece al modelo como herramienta: solo la usa el servicio de tareas de ADK, con un texto armado por el servidor y
+   * despues del «sí» de Javier. Crear, cambiar o borrar tareas sigue sin existir aqui.
+   */
+  async comment(projectId: string, workItemId: string, text: string): Promise<void> {
+    if (!this.enabled) throw new Error('Plane no está configurado');
+    const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const html = text.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 12).map((l) => `<p>${esc(l.slice(0, 400))}</p>`).join('');
+    if (!html || !/^[0-9a-f-]{8,}$/i.test(projectId) || !/^[0-9a-f-]{8,}$/i.test(workItemId)) throw new Error('falta la tarea o el texto');
+    const out = await this.rpc('tools/call', { name: 'add_comment', arguments: { project_id: projectId, work_item_id: workItemId, comment_html: html } });
+    if (out?.isError) throw new Error(`Plane no aceptó el comentario: ${(out?.content ?? []).map((c: any) => c.text).join(' ').slice(0, 160)}`);
+    this.log.log('comentario agregado a una tarea de Plane');
+  }
+
   async call(name: string, rawArgs: string): Promise<string> {
     const tool = name.slice(PLANE_PREFIX.length);
     if (!this.enabled || !READ_ONLY.has(tool)) return 'Error: esa herramienta no está permitida.';

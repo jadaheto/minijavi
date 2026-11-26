@@ -27,10 +27,21 @@ RUN mkdir -p /app/data && chown node:node /app/data
 # ejecute no puedan leer las claves ni los datos del avatar. sudo solo permite al avatar lanzar `claude` como ese usuario
 # y `rm` (para borrar un proyecto: sus archivos son de "taller"; no le da al avatar nada que no pueda ya).
 # umask 0022 para el taller: el avatar crea sus archivos privados (umask 077) pero debe poder leer los sitios que publica.
+# Agentes Google ADK (tareas de Plane): la plantilla estandar en un commit FIJO (el taller parte de esa copia, no de lo
+# ultimo que haya en GitHub) y un entorno de Python con sus dependencias, para que el servidor corra las mismas pruebas
+# del CI de la plantilla. Cambiar de version de la plantilla = cambiar ADK_PLANTILLA_COMMIT y volver a construir.
+ARG ADK_PLANTILLA_REPO=https://github.com/jadaheto/adk-starter-template.git
+ARG ADK_PLANTILLA_COMMIT=e3f3946af5ac
+RUN apk add --no-cache git python3 py3-pip \
+ && git clone -q "$ADK_PLANTILLA_REPO" /opt/adk-plantilla && git -C /opt/adk-plantilla checkout -q "$ADK_PLANTILLA_COMMIT" \
+ && rm -rf /opt/adk-plantilla/.git \
+ && python3 -m venv /opt/adk && /opt/adk/bin/pip install -q --no-cache-dir --disable-pip-version-check -r /opt/adk-plantilla/requirements.txt -r /opt/adk-plantilla/requirements-dev.txt \
+ && find /opt/adk -type d -name __pycache__ -prune -exec rm -rf {} + \
+ && chmod -R a+rX /opt/adk /opt/adk-plantilla
 RUN apk add --no-cache bash git sudo \
  && npm install -g @anthropic-ai/claude-code@2.1.326 && npm cache clean --force \
  && adduser -D -s /bin/bash taller \
- && printf '%s\n' 'Defaults:node umask=0022, umask_override, !lecture' 'Defaults:node secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' 'Defaults:node env_keep += "CI"' 'node ALL=(taller) NOPASSWD:SETENV: /usr/local/bin/claude' 'node ALL=(taller) NOPASSWD: /bin/rm' 'node ALL=(taller) NOPASSWD: /usr/local/bin/npm test, /usr/local/bin/npm run lint' 'node ALL=(taller) NOPASSWD: /usr/local/bin/node /app/vendor/hallmark/sloplint.mjs sitio --json --scope page' > /etc/sudoers.d/taller && chmod 440 /etc/sudoers.d/taller
+ && printf '%s\n' 'Defaults:node umask=0022, umask_override, !lecture' 'Defaults:node secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' 'Defaults:node env_keep += "CI"' 'node ALL=(taller) NOPASSWD:SETENV: /usr/local/bin/claude' 'node ALL=(taller) NOPASSWD: /bin/rm' 'node ALL=(taller) NOPASSWD: /usr/local/bin/npm test, /usr/local/bin/npm run lint' 'node ALL=(taller) NOPASSWD: /usr/local/bin/node /app/vendor/hallmark/sloplint.mjs sitio --json --scope page' 'node ALL=(taller) NOPASSWD: /bin/sh /app/vendor/adk/gate.sh pruebas, /bin/sh /app/vendor/adk/gate.sh ruff, /bin/sh /app/vendor/adk/gate.sh formato, /bin/sh /app/vendor/adk/gate.sh env' > /etc/sudoers.d/taller && chmod 440 /etc/sudoers.d/taller
 ENV TALLER_USER=taller CLAUDE_BIN=/usr/local/bin/claude
 USER node
 EXPOSE 3000

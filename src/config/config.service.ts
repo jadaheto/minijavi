@@ -263,6 +263,17 @@ export class ConfigService {
   readonly imagesPerSession: number;
   /** «Mira esto»: el avatar ve por la camara cuando se lo piden (VISION=0 lo apaga) y cuantas veces por conversacion un visitante. */
   readonly vision: boolean;
+  /** Tareas de agentes ADK en Plane (ADK_TAREAS=0 lo apaga): etiqueta que las marca, cada cuantos minutos se mira, proyectos (vacio = todos) y tope del PDF del flujo. */
+  readonly adk: boolean;
+  readonly adkLabel: string;
+  readonly adkCheckMin: number;
+  readonly adkProjects: string[];
+  readonly adkFlowMb: number;
+  /** Entorno de Python con las dependencias de la plantilla ADK (para las comprobaciones) y carpeta con la plantilla en un commit fijo. */
+  readonly adkVenv: string;
+  /** Minutos que puede durar el encargo de un agente ADK (es mas largo que un encargo normal del taller). */
+  readonly adkMinutes: number;
+  readonly adkTemplateDir: string;
   /** Memoria del dueño entre conversaciones (MEMORIA_DUENO=0 la apaga): tope de la memoria fija y dias que vive una nota sin usar. */
   readonly ownerMemory: boolean;
   readonly ownerMemoryReview: boolean;
@@ -480,6 +491,14 @@ export class ConfigService {
     this.imageOpenAiQuality = ['low', 'medium', 'high'].includes(str('IMAGEN_OPENAI_CALIDAD').toLowerCase()) ? str('IMAGEN_OPENAI_CALIDAD').toLowerCase() : 'medium';
     this.imagesPerSession = int('IMAGES_PER_SESSION', 4, 0);
     this.vision = str('VISION', '1') !== '0';
+    this.adk = str('ADK_TAREAS', '1') !== '0';
+    this.adkLabel = str('ADK_ETIQUETA', 'adk').slice(0, 40) || 'adk';
+    this.adkCheckMin = int('ADK_REVISAR_MIN', 10, 0);
+    this.adkProjects = str('ADK_PROYECTOS').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 30);
+    this.adkFlowMb = Math.min(40, int('ADK_FLUJO_MB', 15, 1));
+    this.adkVenv = str('ADK_VENV', '/opt/adk');
+    this.adkMinutes = Math.min(240, int('ADK_MAX_MINUTOS', 90, 10));
+    this.adkTemplateDir = str('ADK_PLANTILLA_DIR', '/opt/adk-plantilla');
     this.ownerMemory = str('MEMORIA_DUENO', '1') !== '0' && str('OWNER_SECRET').length >= 16;
     this.ownerMemoryReview = str('MEMORIA_REPASO', '1') !== '0';
     this.ownerMemoryChars = Math.min(6000, int('MEMORIA_CARACTERES', 2000, 300));
@@ -597,7 +616,7 @@ ${readFileSync(costenoFile, 'utf8').trim()}` : '';
       Object.assign(this as any, {
         business: b, greeting: b.saludo, elevenVoiceId: b.voz || this.elevenVoiceId, costenoPrompt: '',
         ownerSecret: '', claudeToken: '', planeMcpUrl: '', youtubeApiKey: '', spotifyClientId: '', spotifyClientSecret: '', teslaClientId: '', teslaClientSecret: '',
-        googleMapsKey: '', openChargeMapKey: '', polymarket: false, newsUrl: '', newsColombia: false, unsplashAccessKey: '', magnificApiKey: '', imageOpenAiKey: '', web: false, braveKey: '', tavilyKey: '', ownerMemory: false,
+        googleMapsKey: '', openChargeMapKey: '', polymarket: false, newsUrl: '', newsColombia: false, unsplashAccessKey: '', magnificApiKey: '', imageOpenAiKey: '', web: false, braveKey: '', tavilyKey: '', ownerMemory: false, adk: false,
         briefHour: -1, followupHour: -1, demoDocs: false, knowDocs: false, avatarCustom: false, vaultKey: '', callMode: 'rechazar', whatsappReplies: this.whatsappReplies === 'avatar' ? 'avatar' : 'off', n8nWebhookUrl: '', leadsWebhookUrl: '', visitorMemoryDays: 0, visitReports: false,
       });
     }

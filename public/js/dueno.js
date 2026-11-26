@@ -68,7 +68,7 @@ const pretty = (k) => String(k).replace(/_/g, ' ').replace(/^formulario:/, 'form
 const SOURCE = (k) => (k === 'sin dato' ? 'Sin dato (anteriores)' : k === 'voz' ? 'Conversación en el sitio' : k === 'llamada' ? 'Llamada de WhatsApp' : pretty(k));
 
 // ---------- pestañas ----------
-const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, demos: loadDemos, avatares: loadAvatars, conexiones: loadConnections, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, creados: loadMade, conocimiento: loadKnow, memoria: loadMemory, dispositivos: loadDevices };
+const loaders = { resumen: loadSummary, interesados: loadLeads, visitas: loadVisits, portafolio: loadCases, imagenes: loadImages, demos: loadDemos, avatares: loadAvatars, conexiones: loadConnections, catalogo: loadCatalog, aprobaciones: loadApprovals, autonomia: loadPolicy, bitacora: loadActions, decisiones: loadDecisions, conversaciones: loadConversations, consumo: loadUsage, taller: loadProjects, creados: loadMade, conocimiento: loadKnow, memoria: loadMemory, adk: loadAdk, dispositivos: loadDevices };
 function show(tab) {
   if (!loaders[tab]) tab = 'resumen';
   for (const b of $('tabs').querySelectorAll('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
@@ -787,6 +787,53 @@ $('mem-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (await memAct('', { text: $('mem-text').value, section: $('mem-section').value }, 'Guardado.')) $('mem-text').value = '';
 });
+
+// Agentes ADK: las tareas de Plane con la etiqueta, en qué va cada una, la ficha del flujo y cómo le fue al taller.
+// Construir se pide por voz (necesita el PDF y tu «sí»); aquí se descarta, se recupera y se deja el comentario en Plane.
+async function adkAct(path, body, working) {
+  $('adk-msg').textContent = working || 'Un momento…';
+  const r = await api(`adk${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }), d = await r.json().catch(() => ({}));
+  await loadAdk();
+  $('adk-msg').textContent = r.ok ? d.message || (d.found !== undefined ? `Revisado: ${d.found} con la etiqueta${d.fresh ? `, ${d.fresh} nueva${d.fresh === 1 ? '' : 's'}` : ', ninguna nueva'}.` : 'Listo.') : d.message || `No se pudo (${r.status}).`;
+}
+async function loadAdk() {
+  const d = await json('adk'), tasks = d.tasks || [], open = tasks.filter((t) => ['nueva', 'aceptada'].includes(t.status));
+  badge('adk', open.length);
+  $('adk-count').textContent = d.enabled ? `(${open.length} pendiente${open.length === 1 ? '' : 's'})` : '';
+  $('adk-scan').hidden = !d.enabled;
+  $('adk-note').textContent = !d.enabled ? 'Apagado: hace falta la conexión con Plane (PLANE_MCP_URL) y ADK_TAREAS distinto de 0.'
+    : [d.everyMin ? `Se revisan cada ${d.everyMin} min las tareas asignadas a ti con la etiqueta «${d.label}».` : `La revisión automática está apagada; se miran las tareas asignadas a ti con la etiqueta «${d.label}» cuando pulsas el botón o le preguntas al avatar.`, d.lastScan ? `Última revisión: ${fecha(d.lastScan)}` : 'Todavía no se ha revisado.', d.problem ? `Problema con Plane: ${d.problem}.` : '',
+      d.buildProblem ? `No se puede construir: ${d.buildProblem}.` : '', !d.canRead ? 'No se puede leer el PDF del flujo: falta el modelo capaz de OpenAI.' : '', d.buildProblem || d.canTest ? '' : 'Este servidor no tiene el entorno de Python: el taller construiría sin correr las pruebas.',
+      'Para empezar una, dile al avatar «ejecuta la tarea de ADK».'].filter(Boolean).join(' ');
+  const STATUS = { nueva: ['Sin empezar', 'warn'], aceptada: ['En preparación', 'warn'], en_curso: ['Construyendo', ''], hecha: ['Construido', 'ok'], descartada: ['Descartada', ''] };
+  const btn = (text, fn, cls = 'small') => { const b = el('button', { type: 'button', className: cls, textContent: text }); b.addEventListener('click', () => fn(b)); return b; };
+  const sure = (text, fn, cls = 'small danger') => btn(text, (b) => { if (b.dataset.sure) fn(); else { b.dataset.sure = '1'; b.textContent = '¿Seguro? Toca otra vez'; } }, cls);
+  const fold = (title, text) => { const dt = el('details', {}, el('summary', { textContent: title }), el('pre', { className: 'adk-pre', textContent: text })); return dt; };
+  const row = (t) => {
+    const [label, tone] = STATUS[t.status] || [t.status, ''], w = t.work;
+    const next = t.status === 'nueva' ? 'Falta que digas que la ejecutas y subas el PDF del flujo.'
+      : t.status === 'aceptada' ? (w ? 'El taller la dejó a medias: dile al avatar que continúe.' : t.spec ? 'Flujo leído: falta tu «sí» para construir.' : 'Falta subir el PDF del flujo.')
+      : t.status === 'en_curso' ? `El taller está trabajando (hasta ${d.minutes} min).` : t.status === 'hecha' ? (t.comment_at ? `Comentario en Plane dejado el ${fecha(t.comment_at)}.` : 'Sin comentario en Plane todavía.') : '';
+    const gates = w && w.gates.length ? el('div', { className: 'row' }, ...w.gates.map((g) => el('span', { className: `chip ${g.ok ? 'ok' : 'bad'}`, textContent: `${g.ok ? '✓' : '✗'} ${g.label}` }))) : null;
+    const result = w && w.stop ? el('small', { className: 'muted', textContent: `Taller: ${w.stopText}${w.passes > 1 ? ` (${w.passes} pasadas)` : ''}${w.seconds ? ` · ${Math.round(w.seconds / 60)} min` : ''}${w.model ? ` · ${w.model}` : ''}` }) : null;
+    const actions = [
+      w ? el('a', { className: 'button small primary', href: w.download, textContent: 'Descargar el código' }) : null,
+      t.comment ? sure('Dejar comentario en Plane', () => adkAct(`/${encodeURIComponent(t.id)}`, { accion: 'comentar' }, 'Escribiendo en Plane…'), 'small') : null,
+      ['nueva', 'aceptada', 'hecha'].includes(t.status) ? sure('Descartar', () => adkAct(`/${encodeURIComponent(t.id)}`, { accion: 'descartar' })) : null,
+      t.status === 'descartada' ? btn('Recuperar', () => adkAct(`/${encodeURIComponent(t.id)}`, { accion: 'recuperar' })) : null];
+    return el('li', {}, el('div', { className: 'row between' }, el('strong', { textContent: `${t.key} · ${t.name}` }), el('span', { className: `chip ${tone}`, textContent: label })),
+      el('small', { className: 'muted', textContent: [t.project, t.due ? `para el ${t.due}` : '', t.agent ? `agente ${t.agent}` : '', `vista ${fecha(t.seen_at)}`].filter(Boolean).join(' · ') }),
+      next ? el('p', { className: 'muted', style: 'margin:6px 0 0', textContent: next }) : null,
+      t.summary ? el('p', { style: 'margin:6px 0 0', textContent: t.summary }) : null, result, gates,
+      t.spec ? fold('Ficha del flujo', t.spec) : null, w && w.summary ? fold('Informe del taller', w.summary) : null, t.comment ? fold('Comentario que se dejaría en Plane', t.comment) : null,
+      el('div', { className: 'row', style: 'margin-top:8px' }, ...actions.filter(Boolean)));
+  };
+  const groups = [], shown = (title, list) => { if (list.length) groups.push(el('h3', { textContent: `${title} (${list.length})` }), el('ul', { className: 'list' }, ...list.map(row))); };
+  shown('Pendientes', open); shown('Construyendo', tasks.filter((t) => t.status === 'en_curso')); shown('Construidos', tasks.filter((t) => t.status === 'hecha')); shown('Descartadas', tasks.filter((t) => t.status === 'descartada'));
+  if (d.enabled && !tasks.length) groups.push(el('p', { className: 'muted', textContent: 'No hay tareas con la etiqueta asignadas a ti.' }));
+  $('adk-list').replaceChildren(...groups);
+}
+$('adk-scan')?.addEventListener('click', () => adkAct('/revisar', {}, 'Revisando Plane…'));
 
 async function loadImages() {
   const { enabled, images } = await json('images');

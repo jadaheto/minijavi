@@ -1,3 +1,4 @@
+import { AdkTasksService } from '../adk/adk-tasks.service';
 import { emitNotice } from '../notices/bus';
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, Optional } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
@@ -50,6 +51,8 @@ export interface Brief {
   mail?: { unread: number; items: { from: string; subject: string }[] };
   /** Interesados calientes segun su puntaje (nombres escritos por ellos). */
   hot?: { count: number; names: string[] };
+  /** Tareas de agentes ADK de Plane que esperan a Javier (sin empezar o a medias). */
+  adk?: { count: number; names: string[] };
   tasks?: { project: string; late: number; today: number; open: number; items: { name: string; late: boolean; due?: string }[] };
   money: { id: string; name: string; value: number; unit: string; change?: number; changeLabel?: string }[];
   news: { ia: string[]; colombia: string[] };
@@ -71,7 +74,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
   constructor(private readonly cfg: ConfigService, private readonly db: DbService, private readonly leads: LeadsService, private readonly visits: VisitsService,
     private readonly usage: UsageService, private readonly workshop: WorkshopService, private readonly llm: DeepSeekService, private readonly alerts: AlertsService,
     private readonly plane: PlaneMcpService, @Optional() private readonly tesla?: TeslaService, @Optional() private readonly panels?: PanelsService,
-    @Optional() private readonly news?: NewsService, @Optional() private readonly newsCo?: ColombiaNewsService, @Optional() private readonly approvals?: ApprovalsService, @Optional() private readonly google?: GoogleService, @Optional() private readonly scoring?: ScoringService) {}
+    @Optional() private readonly news?: NewsService, @Optional() private readonly newsCo?: ColombiaNewsService, @Optional() private readonly approvals?: ApprovalsService, @Optional() private readonly google?: GoogleService, @Optional() private readonly scoring?: ScoringService, @Optional() private readonly adk?: AdkTasksService) {}
 
   onApplicationBootstrap() { if (this.cfg.briefHour >= 0) { this.timer = setInterval(() => void this.tick(), 60_000); this.timer.unref(); } }
   onModuleDestroy() { clearInterval(this.timer); }
@@ -147,6 +150,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
       agenda,
       mail,
       hot,
+      adk: (() => { const p = this.adk?.enabled ? this.adk.pending() : []; return p.length ? { count: p.length, names: p.slice(0, 3).map((t) => `${t.key} ${t.name}`.slice(0, 70)) } : undefined; })(),
       money: (money ?? []).map((m) => ({ id: m.id, name: m.name, value: m.value, unit: m.unit, change: m.change, changeLabel: m.changeLabel })),
       news: { ia: (this.news?.items ?? []).slice(0, 3).map((n) => n.title), colombia: (newsCo ?? []).slice(0, 3).map((n) => n.title) },
       workshop: wk,
@@ -154,7 +158,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
       failed: [...new Set(failed)],
       quiet: false,
     };
-    brief.quiet = !(hot && hot.count) && !(agenda && agenda.total) && !brief.leads.length && !brief.calls.length && !brief.approvals && !brief.waitingOld && !(tasks && (tasks.late || tasks.today)) && !(wk && (wk.done.length || wk.failed.length));
+    brief.quiet = !(hot && hot.count) && !brief.adk && !(agenda && agenda.total) && !brief.leads.length && !brief.calls.length && !brief.approvals && !brief.waitingOld && !(tasks && (tasks.late || tasks.today)) && !(wk && (wk.done.length || wk.failed.length));
     return brief;
   }
 
@@ -181,6 +185,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
     if (b.approvals) p.push(`Acciones esperando su aprobación en la bandeja: ${b.approvals}.`);
     if (b.agenda) p.push(b.agenda.total ? `Agenda de hoy: ${b.agenda.total} ${b.agenda.total === 1 ? 'evento' : 'eventos'}. ` + asData('la agenda de Google (títulos escritos por quien creó cada evento)', b.agenda.items.map((e) => `${e.time}: ${e.title}`).join('; ')) : 'Agenda de hoy: nada.');
     if (b.mail) p.push(b.mail.unread ? `Correo: ${b.mail.unread}${b.mail.unread >= 8 ? ' o más' : ''} sin leer en la bandeja principal desde ayer. ` + asData('el correo de Gmail (remitentes y asuntos escritos por terceros)', b.mail.items.map((m) => `${m.from}: ${m.subject}`).join('; ')) : 'Correo: nada sin leer desde ayer.');
+    if (b.adk?.count) p.push(`Tareas de agentes ADK pendientes en Plane: ${b.adk.count}. ` + asData('las tareas de Plane (nombres escritos por quien las creó)', b.adk.names.join('; ')) + ' Al final pregúntale si quiere ejecutar alguna (herramienta tareas_adk).');
     if (b.hot?.count) p.push(`Interesados calientes (por puntaje): ${b.hot.count}. ` + asData('los interesados (nombres escritos por ellos)', b.hot.names.join(', ')));
     if (b.tasks) p.push(`Tareas de Plane (${b.tasks.project}): ${b.tasks.open} abiertas, ${b.tasks.late} atrasadas, ${b.tasks.today} vencen hoy.` + (b.tasks.items.length ? ' ' + asData('Plane (tareas)', b.tasks.items.map((k) => `${k.name} (${k.late ? `atrasada desde ${k.due}` : 'vence hoy'})`).join(' | ')) : ''));
     const m = this.moneyLine(b); if (m) p.push(`${m}.`);
@@ -204,6 +209,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
     if (b.approvals) l.push(`✅ Por aprobar en la bandeja: ${b.approvals}.`);
     if (b.agenda?.total) l.push(`📅 Agenda: ${b.agenda.total} hoy${b.agenda.items[0] ? `; lo primero, ${b.agenda.items[0].time.toLowerCase()}: ${b.agenda.items[0].title}` : ''}.`);
     if (b.mail?.unread) l.push(`✉️ Correo: ${b.mail.unread}${b.mail.unread >= 8 ? '+' : ''} sin leer${b.mail.items[0] ? `; el más reciente, de ${b.mail.items[0].from}` : ''}.`);
+    if (b.adk?.count) l.push(`🧩 Tareas de ADK pendientes: ${b.adk.count} (${b.adk.names.slice(0, 2).join('; ')}).`);
     if (b.hot?.count) l.push(`🔥 Interesados calientes: ${b.hot.count} (${b.hot.names.slice(0, 3).join(', ')}).`);
     if (b.tasks && (b.tasks.late || b.tasks.today)) l.push(`📋 Plane: ${b.tasks.late} atrasadas, ${b.tasks.today} vencen hoy.`);
     if (b.workshop?.done.length) l.push(`🛠 El taller terminó: ${b.workshop.done.join(', ')}.`);
@@ -242,6 +248,7 @@ export class BriefService implements OnApplicationBootstrap, OnModuleDestroy {
     if (b.approvals) cards.push({ id: 'aprobaciones', icon: '✅', label: 'Por aprobar', value: b.approvals, alert: true, note: 'en la bandeja' });
     if (b.agenda) cards.push({ id: 'agenda', icon: '📅', label: 'Agenda de hoy', value: b.agenda.total, note: b.agenda.items.slice(0, 2).map((e) => `${e.time} ${e.title}`.slice(0, 40)).join(' · ') || 'Nada en la agenda' });
     if (b.mail) cards.push({ id: 'correo', icon: '✉️', label: 'Correo sin leer', value: b.mail.unread, alert: b.mail.unread > 0, note: b.mail.items.slice(0, 2).map((m) => m.from).join(' · ') || 'Nada desde ayer' });
+    if (b.adk?.count) cards.push({ id: 'adk', icon: '🧩', label: 'Tareas de ADK', value: b.adk.count, alert: true, note: b.adk.names.slice(0, 2).join(' · ') });
     if (b.hot?.count) cards.push({ id: 'calientes', icon: '🔥', label: 'Interesados calientes', value: b.hot.count, alert: true, note: b.hot.names.slice(0, 3).join(' · ') });
     if (b.tasks) cards.push({ id: 'tareas', icon: '📋', label: `Plane · ${b.tasks.project}`, value: b.tasks.late + b.tasks.today, alert: b.tasks.late > 0, note: `${b.tasks.late} atrasadas · ${b.tasks.today} hoy · ${b.tasks.open} abiertas`, list: b.tasks.items.slice(0, 3).map((k) => k.name) });
     for (const m of b.money) cards.push({ id: m.id, icon: m.id === 'trm' ? '💵' : '₿', label: m.id === 'trm' ? 'Dólar (TRM)' : 'Bitcoin', value: m.value, unit: m.id === 'trm' ? 'COP' : 'USD', decimals: m.id === 'trm' ? 2 : 0, change: m.change, changeUnit: m.id === 'trm' ? 'pesos' : '%' });

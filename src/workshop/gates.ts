@@ -1,6 +1,6 @@
 import { ChildProcess, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, readdirSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkSite, SiteCheck } from './site-check';
 import { runDesign } from './design-check';
@@ -32,7 +32,13 @@ export const STOP_TEXT: Record<StopReason, string> = {
   fallo: 'Claude Code no pudo terminar la pasada',
 };
 
-export interface Gate { id: 'sitio' | 'diseno' | 'pruebas' | 'lint'; kind: 'sitio' | 'diseno' | 'comando'; argv?: string[]; label: string; }
+export interface Gate { id: string; kind: 'sitio' | 'diseno' | 'comando'; argv?: string[]; label: string; /** Programa que se ejecuta (por defecto npm). */ bin?: string; env?: Record<string, string>; }
+
+/** Comprobaciones de un agente Google ADK hecho con la plantilla: las mismas de su CI, por el guion fijo vendor/adk/gate.sh. */
+export const ADK_GATE_SCRIPT = join(__dirname, '..', '..', 'vendor', 'adk', 'gate.sh');
+const ADK_GATES: [string, string, string][] = [['adk-pruebas', 'pruebas', 'pytest (pruebas, arquitectura y cobertura de 80 %)'], ['adk-ruff', 'ruff', 'ruff check'], ['adk-formato', 'formato', 'ruff format --check'], ['adk-env', 'env', 'variables de entorno sincronizadas con el despliegue']];
+/** ¿La carpeta es un agente ADK de la plantilla? (pyproject + agents/ + tests/). */
+export function isAdkProject(dir: string): boolean { try { return lstatSync(join(dir, 'pyproject.toml')).isFile() && lstatSync(join(dir, 'agents')).isDirectory() && lstatSync(join(dir, 'tests')).isDirectory(); } catch { return false; } }
 export interface GateResult {
   id: string; kind: 'sitio' | 'diseno' | 'comando'; label: string; ok: boolean;
   exit: number | null;   // codigo de salida del comando (null: no es un comando, no llego a ejecutarse o se corto)
@@ -59,8 +65,15 @@ function scripts(dir: string): Record<string, string> {
 }
 
 /** Comprobaciones que aplican HOY al proyecto. */
-export function detectGates(dir: string, opts: { design?: boolean } = {}): Gate[] {
+export function detectGates(dir: string, opts: { design?: boolean; adkVenv?: string } = {}): Gate[] {
   const out: Gate[] = [];
+  // Agente ADK: solo si este servidor tiene el entorno de Python (si no, no hay como comprobarlo y se dice).
+  if (opts.adkVenv && isAdkProject(dir) && existsSync(join(opts.adkVenv, 'bin', 'pytest'))) {
+    for (const [id, arg, label] of ADK_GATES) {
+      if (arg === 'env' && !(existsSync(join(dir, 'scripts', 'check_env_vars.py')) && existsSync(join(dir, '.github', 'workflows', 'deploy.yml')))) continue;
+      out.push({ id, kind: 'comando', bin: '/bin/sh', argv: [ADK_GATE_SCRIPT, arg], label, env: { ADK_VENV: opts.adkVenv } });
+    }
+  }
   try { if (lstatSync(join(dir, 'sitio', 'index.html')).isFile()) { out.push({ id: 'sitio', kind: 'sitio', label: 'revisión del sitio publicado' });
     // «diseño»: solo si hay sitio y el encargo no es de bocetos (las propuestas deben salir rapido).
     if (opts.design) out.push({ id: 'diseno', kind: 'diseno', label: DESIGN_LABEL }); } } catch { /* sin sitio */ }
@@ -74,6 +87,8 @@ export function detectGates(dir: string, opts: { design?: boolean } = {}): Gate[
 /** Un gate que existia en una pasada anterior y ya no aplica cuenta como fallo: quitar la prueba no es pasarla. */
 export function missingGate(id: string): GateResult {
   // «diseño» depende de que haya sitio: si el sitio desaparece ya lo dice «sitio».
+  const adk = ADK_GATES.find((g) => g[0] === id);
+  if (adk) return { id, kind: 'comando', label: adk[2], ok: false, exit: null, seconds: 0, output: `La comprobación «${adk[2]}» ya no se puede ejecutar (falta pyproject.toml, agents/, tests/ o el guion que revisa). Quitar una comprobación no cuenta como pasarla: hay que restaurarlo y dejarla en verde.` };
   const label = id === 'sitio' ? 'revisión del sitio publicado' : id === 'diseno' ? DESIGN_LABEL : id === 'pruebas' ? 'npm test' : 'npm run lint';
   return { id, kind: id === 'sitio' ? 'sitio' : id === 'diseno' ? 'diseno' : 'comando', label, ok: false, exit: null, seconds: 0,
     output: id === 'sitio' ? 'El sitio publicado (sitio/index.html) ya no existe.' : `El script de "${label}" ya no está en package.json. Quitar una comprobación no cuenta como pasarla: hay que restaurarla y dejarla en verde.` };
@@ -108,9 +123,10 @@ export function runGate(gate: Gate, dir: string, r: GateRunner): Promise<GateRes
   return new Promise((done) => {
     // Entorno minimo: ni las claves del avatar ni el token de Claude Code llegan a los comandos del proyecto.
     const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, LANG: 'C.UTF-8', CI: '1' };
-    let cmd = r.npmBin, argv = gate.argv ?? [];
+    const bin = gate.bin ?? r.npmBin;
+    let cmd = bin, argv = gate.argv ?? [];
     // sudo solo permite estos dos comandos exactos como el usuario del taller (ver Dockerfile).
-    if (r.user) { argv = ['-n', '-H', '-u', r.user, r.npmBin, ...argv]; cmd = 'sudo'; } else env.HOME = process.env.HOME;
+    if (r.user) { argv = ['-n', '-H', '-u', r.user, bin, ...argv]; cmd = 'sudo'; } else { env.HOME = process.env.HOME; Object.assign(env, gate.env ?? {}); } // con sudo el entorno se limpia: el guion usa su ruta fija
     let out = '', settled = false, timedOut = false;
     const finish = (exit: number | null, extra = '') => {
       if (settled) return; settled = true; clearTimeout(timer); r.onProc?.(undefined);
@@ -139,7 +155,7 @@ export function treeHash(dir: string): string {
   const walk = (d: string, rel: string) => {
     let names: string[]; try { names = readdirSync(d).sort(); } catch { return; }
     for (const n of names) {
-      if (files >= 4000 || n === 'node_modules' || n === '.git' || (rel === '' && n === 'ESTADO.md')) continue;
+      if (files >= 4000 || n === 'node_modules' || n === '.git' || n === '__pycache__' || n === '.pytest_cache' || n === '.ruff_cache' || n === '.coverage' || n === '.venv' || (rel === '' && n === 'ESTADO.md')) continue;
       const full = join(d, n);
       let st; try { st = lstatSync(full); } catch { continue; }
       if (st.isDirectory()) { walk(full, `${rel}${n}/`); continue; }

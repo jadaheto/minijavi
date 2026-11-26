@@ -42,6 +42,7 @@
           <button role="tab" data-tab="catalogo">Catálogo</button>
           <button role="tab" data-tab="imagenes">Imágenes</button>
           <button role="tab" data-tab="taller">Taller</button>
+          <button role="tab" data-tab="adk">Agentes ADK <span class="count" data-count="adk"></span></button>
           <button role="tab" data-tab="creados">Creados</button>
           <button role="tab" data-tab="conocimiento">Conocimiento <span class="count" data-count="conocimiento"></span></button>
         </div>
@@ -247,6 +248,13 @@
           <p class="muted" id="know-note">Los documentos que le has subido al avatar para que sepa más.</p>
           <p class="muted" id="know-msg" aria-live="polite"></p>
           <ul class="list" id="know-list"></ul>
+        </section>
+
+        <section data-view="adk" class="card" hidden>
+          <div class="row between"><h2>Agentes ADK <small id="adk-count"></small></h2><button type="button" class="small" id="adk-scan">Revisar Plane ahora</button></div>
+          <p class="muted" id="adk-note">Las tareas de agentes ADK que te asignan en Plane.</p>
+          <p class="muted" id="adk-msg" aria-live="polite"></p>
+          <div id="adk-list"></div>
         </section>
 
         <section data-view="memoria" class="card" hidden>

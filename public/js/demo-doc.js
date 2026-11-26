@@ -48,13 +48,15 @@ export function createDemoDoc(box) {
     /** Modo dueño: Javier quiere subir un documento para que el avatar sepa mas (sin casilla: es su propio avatar). */
     knowledge(msg) {
       if (!/^[0-9a-f]{32}$/.test(String(msg.token || ''))) return;
-      clearTimeout(hideTimer); token = msg.token; endpoint = '/api/conocimiento/documento'; box.replaceChildren();
-      const head = el('header', 'dd-head'); head.append(el('strong', '', `📚 Sube el documento${msg.title ? `: ${msg.title}` : ''}`));
+      const flow = msg.kind === 'adk'; // el PDF del flujo de una tarea de ADK
+      clearTimeout(hideTimer); token = msg.token; endpoint = flow ? '/api/adk/flujo' : '/api/conocimiento/documento'; box.replaceChildren();
+      const head = el('header', 'dd-head'); head.append(el('strong', '', flow ? `🧩 Sube el ${msg.title || 'flujo'}` : `📚 Sube el documento${msg.title ? `: ${msg.title}` : ''}`));
       const x = el('button', 'nws-close', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Ocultar'); x.addEventListener('click', hide); head.append(x);
-      const hint = el('p', 'dd-hint', 'Un PDF (también escaneado), una foto, un Word o un texto. Lo leo, te cuento de qué trata y tú decides si lo guardo.');
+      const hint = el('p', 'dd-hint', flow ? 'El PDF del Figma con el flujo del agente (o una imagen). Lo leo, te cuento lo que entendí y tú me dices si así es.' : 'Un PDF (también escaneado), una foto, un Word o un texto. Lo leo, te cuento de qué trata y tú decides si lo guardo.');
       const input = el('input'); input.type = 'file'; input.accept = 'application/pdf,image/jpeg,image/png,image/webp,text/plain,.pdf,.txt,.md,.docx'; input.hidden = true;
       input.addEventListener('change', () => send(input.files?.[0], null));
-      const pick = el('button', 'dd-pick', 'Subir documento'); pick.type = 'button'; pick.addEventListener('click', () => input.click());
+      const pick = el('button', 'dd-pick', flow ? 'Subir el PDF del flujo' : 'Subir documento'); pick.type = 'button'; pick.addEventListener('click', () => input.click());
+      if (flow) input.accept = 'application/pdf,image/jpeg,image/png,image/webp,.pdf';
       const row = el('div', 'dd-row'), left = el('div', 'dd-left');
       left.append(hint, pick, input, el('small', 'dd-max', `Máximo ${msg.mb || 10} MB · sirve 15 minutos`));
       row.append(left);

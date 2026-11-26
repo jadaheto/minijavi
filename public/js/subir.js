@@ -1,12 +1,17 @@
 // Pagina del celular para subir el documento de la demo (enlace de un solo uso que trae el QR de la pantalla).
 (() => {
   const qs = new URLSearchParams(location.search), t = qs.get('t') || '', know = qs.get('c') === '1'; // c=1: documento de conocimiento del dueño
-  const api = know ? '/api/conocimiento/documento' : '/demo/documento';
+  const flow = qs.get('a') === '1'; // a=1: PDF del flujo de una tarea de ADK
+  const api = flow ? '/api/adk/flujo' : know ? '/api/conocimiento/documento' : '/demo/documento';
   const $ = (id) => document.getElementById(id), estado = $('estado'), pick = $('pick'), file = $('file'), ok = $('ok');
   const say = (text, tone = '') => { estado.textContent = text; estado.dataset.tone = tone; };
   if (know) {
     document.title = 'Sube el documento'; $('titulo').textContent = '📚 Sube el documento'; $('permiso').hidden = true; ok.checked = true; file.accept += ',.md,.docx';
     $('texto').textContent = 'Un PDF (también escaneado), una foto, un Word o un texto. El avatar lo lee, te cuenta de qué trata y tú decides si lo guarda.'; $('tope').textContent = 'PDF, JPG, PNG, Word o texto · el enlace sirve 15 minutos';
+  }
+  if (flow) {
+    document.title = 'Sube el flujo'; $('titulo').textContent = '🧩 Sube el flujo del agente'; $('permiso').hidden = true; ok.checked = true; file.accept = 'application/pdf,image/jpeg,image/png,image/webp,.pdf';
+    $('texto').textContent = 'El PDF del Figma con el flujo (o una imagen). El avatar lo lee, te cuenta lo que entendió y tú le dices si así es.'; $('tope').textContent = 'PDF, JPG o PNG · el enlace sirve 15 minutos';
   }
   if (!/^[0-9a-f]{32}$/.test(t)) { say('Este enlace no es válido. Escanea de nuevo el código de la pantalla.', 'bad'); pick.disabled = true; return; }
   pick.addEventListener('click', () => { if (!ok.checked) return say('Primero marca la autorización.', 'bad'); file.click(); });

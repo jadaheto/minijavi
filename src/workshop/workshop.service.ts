@@ -25,6 +25,7 @@ export interface Project {
   updatedAt: string;
   sessionId?: string;        // sesion de Claude Code: se retoma en cada encargo para que recuerde lo hecho
   status: 'libre' | 'trabajando' | 'error';
+  rules?: string;            // reglas propias del proyecto que se suman a las del taller en cada encargo (agentes ADK)
   lastTask?: string;
   lastSummary?: string;      // informe final del ultimo encargo
   model?: string;            // modelo del ultimo encargo
@@ -253,7 +254,7 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
    * pasada en la misma sesion con la salida literal del gate mas debil. Se detiene cuando todo pasa o por un limite
    * (pasadas, sin progreso, tiempo). A Javier se le avisa UNA vez, al cerrar el ciclo, con el resultado real.
    */
-  start(projectName: string, task: string, formUrl: string, createIfMissing: boolean, modelName?: string, decision?: number | null): string {
+  start(projectName: string, task: string, formUrl: string, createIfMissing: boolean, modelName?: string, decision?: number | null, opts: { seed?: (dir: string) => void; rules?: string; minutes?: number } = {}): string {
     if (!this.enabled) return 'El taller no está configurado (falta CLAUDE_CODE_OAUTH_TOKEN).';
     task = task.trim();
     if (task.length < 8) return 'Falta describir el encargo con más detalle.';
@@ -284,9 +285,12 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     const model = this.model(modelName);
     const cwd = this.dir(project.slug);
     try { mkdirSync(cwd, { recursive: true, mode: 0o777 }); if (this.cfg.tallerUser) chmodSync(cwd, 0o777); } catch (e) { return `No se pudo crear la carpeta del proyecto: ${(e as Error).message}`; }
+    // Proyecto que nace de una plantilla (agentes ADK): se siembra una sola vez, con la carpeta todavia vacia.
+    if (opts.seed && project.jobs === 0) { try { if (readdirSync(cwd).length === 0) opts.seed(cwd); } catch (e) { return `No se pudo preparar el proyecto desde la plantilla: ${(e as Error).message}`; } }
+    if (opts.rules) project.rules = opts.rules.slice(0, 4000);
 
     const t0 = Date.now();
-    const run: Run = { project, task, formUrl, model, t0, deadline: t0 + this.cfg.tallerMaxMinutes * 60_000, pass: 0, maxPasses: this.cfg.tallerAutoFix ? this.cfg.tallerMaxPasses : 1, stale: 0, seen: new Set(), usd: 0, turns: 0, decision };
+    const run: Run = { project, task, formUrl, model, t0, deadline: t0 + (opts.minutes && opts.minutes > 0 ? opts.minutes : this.cfg.tallerMaxMinutes) * 60_000, pass: 0, maxPasses: this.cfg.tallerAutoFix ? this.cfg.tallerMaxPasses : 1, stale: 0, seen: new Set(), usd: 0, turns: 0, decision };
     const job: Job = { slug: project.slug, t0, activity: 'empezando', spoken: 'está empezando', steps: 0, model: model.id, agents: new Set(), agentsTotal: 0, code: [], run };
     this.job = job;
     const err = this.pass(job, prompt);
@@ -306,7 +310,7 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
     const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits',
       // Con el respaldo no hay busqueda web: es una herramienta del servidor de Anthropic.
       '--allowedTools', `Bash,Read,Edit,Write,Glob,Grep,WebFetch,${run.backup ? '' : 'WebSearch,'}TodoWrite,Agent,Task`, '--max-turns', String(this.cfg.tallerMaxTurns),
-      '--append-system-prompt', RULES(project.slug, run.formUrl) + (this.cfg.tallerDesign && designRules() ? `\n${designRules()}\n` : '')];
+      '--append-system-prompt', RULES(project.slug, run.formUrl) + (project.rules ? `\n${project.rules}\n` : '') + (this.cfg.tallerDesign && designRules() && !project.rules ? `\n${designRules()}\n` : '')];
     if (project.sessionId) args.push('--resume', project.sessionId);
     if (model.id && !run.backup) args.push('--model', model.id);
     // Entorno minimo: nada de las claves del avatar llega a Claude Code ni a los comandos que ejecute.
@@ -426,7 +430,7 @@ export class WorkshopService implements OnModuleInit, OnApplicationBootstrap, On
 
     // CHECK: lo ejecuta el servidor, diga lo que diga el informe. Si la pasada no termino bien solo se mira el sitio
     // (no ejecuta nada), para que el panel muestre en que estado quedo lo publicado.
-    const gates = detectGates(dir, { design: this.cfg.tallerDesign && !run.task.startsWith('Encargo de BOCETOS') }).filter((g) => !stop || g.kind === 'sitio');
+    const gates = detectGates(dir, { design: this.cfg.tallerDesign && !run.task.startsWith('Encargo de BOCETOS'), adkVenv: this.cfg.adkVenv }).filter((g) => !stop || g.kind === 'sitio');
     const results: GateResult[] = [];
     job.checking = true;
     for (const g of gates) {
